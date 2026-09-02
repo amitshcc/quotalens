@@ -114,6 +114,8 @@ footer{margin-top:var(--sp-5);padding-top:var(--sp-3);border-top:var(--hair) sol
 [data-link=lost] .bar{background:repeating-linear-gradient(-45deg,var(--st-stale-bg) 0 3px,transparent 3px 6px)}
 [data-link=lost] .meter{background:var(--case)}
 [data-link=lost] .chip:not(#link){display:none}
+[data-link=lost] .why,[data-link=lost] .foot span+span{visibility:hidden}
+.readout.off .num,[data-link=lost] .readout .dash{font-size:var(--fs-metric)}
 
 @media (max-width:1000px){.meters{grid-template-columns:1fr}.cols{grid-template-columns:1fr}
   .side{border-left:0;padding-left:0}}

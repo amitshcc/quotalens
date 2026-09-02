@@ -221,10 +221,12 @@ def build_dashboard(
 
     burns = {w: burn_rate(w, series_rows.get(w, []), lookback_s, now) for w in order}
     rate_burn = burns.get(RATE_WINDOW)
+    # The alert needs evidence: at least half the lookback, not two samples a minute apart.
     burn_elevated = bool(
         rate_burn
         and rate_burn.rate_pct_per_hour is not None
         and rate_burn.rate_pct_per_hour >= burn_alert
+        and rate_burn.span_s >= lookback_s / 2
     )
 
     windows = [

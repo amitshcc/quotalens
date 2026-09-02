@@ -31,7 +31,7 @@
     if (failures < 2) return;
     if (!root.dataset.link) {
       var since = document.getElementById("lost-since");
-      if (since) since.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      if (since) since.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
       root.dataset.link = "lost";
     }
   }
