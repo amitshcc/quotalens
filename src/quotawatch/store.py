@@ -16,9 +16,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from quotawatch.parse import OverageReading, QuotaReading
+from quotawatch.parse import QuotaReading, SpendReading
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+# Statements that bring an older database up to each version, in order.
+_MIGRATIONS: dict[int, tuple[str, ...]] = {
+    2: (
+        "ALTER TABLE quota ADD COLUMN severity TEXT",
+        "ALTER TABLE quota ADD COLUMN is_active INTEGER",
+        "ALTER TABLE overage ADD COLUMN exponent INTEGER NOT NULL DEFAULT 2",
+    ),
+}
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -39,6 +48,8 @@ CREATE TABLE IF NOT EXISTS quota (
     label TEXT NOT NULL,
     pct REAL NOT NULL,
     resets_at TEXT,
+    severity TEXT,
+    is_active INTEGER,
     PRIMARY KEY (ts, window)
 );
 CREATE INDEX IF NOT EXISTS quota_window_ts ON quota (window, ts);
@@ -46,7 +57,8 @@ CREATE TABLE IF NOT EXISTS overage (
     ts INTEGER PRIMARY KEY,
     spent_minor INTEGER NOT NULL,
     cap_minor INTEGER NOT NULL,
-    currency TEXT NOT NULL
+    currency TEXT NOT NULL,
+    exponent INTEGER NOT NULL DEFAULT 2
 );
 -- one row per Claude Code turn, from JSONL (populated from M3)
 CREATE TABLE IF NOT EXISTS local_turn (
@@ -84,6 +96,8 @@ class QuotaRow:
     label: str
     pct: float
     resets_at: str | None
+    severity: str | None = None
+    is_active: bool | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -92,7 +106,16 @@ class QuotaRow:
             "label": self.label,
             "pct": self.pct,
             "resets_at": self.resets_at,
+            "severity": self.severity,
+            "is_active": self.is_active,
         }
+
+
+def _row_to_quota(row: sqlite3.Row) -> QuotaRow:
+    data = dict(row)
+    active = data.get("is_active")
+    data["is_active"] = None if active is None else bool(active)
+    return QuotaRow(**data)
 
 
 @dataclass(frozen=True)
@@ -142,13 +165,28 @@ class Store:
 
     def _migrate(self) -> None:
         with self._tx() as cur:
+            had_tables = bool(
+                cur.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'"
+                ).fetchone()
+            )
             cur.executescript(_SCHEMA)
             row = cur.execute("SELECT MAX(version) AS v FROM schema_version").fetchone()
             current = row["v"] if row and row["v"] is not None else 0
-            if current < SCHEMA_VERSION:
+            if not had_tables:  # fresh file: the CREATE statements are already current
                 cur.execute(
                     "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
                     (SCHEMA_VERSION, now_ts()),
+                )
+                return
+            if current == 0:
+                current = 1  # tables without a version row predate versioning
+            for version in range(current + 1, SCHEMA_VERSION + 1):
+                for statement in _MIGRATIONS.get(version, ()):
+                    cur.execute(statement)
+                cur.execute(
+                    "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
+                    (version, now_ts()),
                 )
 
     def close(self) -> None:
@@ -165,21 +203,33 @@ class Store:
             )
 
     def record_quota(self, ts: int, readings: Iterable[QuotaReading]) -> int:
-        rows = [(ts, r.window, r.label, r.pct, r.resets_at) for r in readings]
+        rows = [
+            (
+                ts,
+                r.window,
+                r.label,
+                r.pct,
+                r.resets_at,
+                r.severity,
+                None if r.is_active is None else int(r.is_active),
+            )
+            for r in readings
+        ]
         with self._tx() as cur:
             cur.executemany(
-                "INSERT OR REPLACE INTO quota (ts, window, label, pct, resets_at) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO quota "
+                "(ts, window, label, pct, resets_at, severity, is_active) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
         return len(rows)
 
-    def record_overage(self, ts: int, reading: OverageReading) -> None:
+    def record_overage(self, ts: int, spend: SpendReading) -> None:
         with self._tx() as cur:
             cur.execute(
-                "INSERT OR REPLACE INTO overage (ts, spent_minor, cap_minor, currency) "
-                "VALUES (?, ?, ?, ?)",
-                (ts, reading.spent_minor, reading.cap_minor, reading.currency),
+                "INSERT OR REPLACE INTO overage "
+                "(ts, spent_minor, cap_minor, currency, exponent) VALUES (?, ?, ?, ?, ?)",
+                (ts, spend.used_minor, spend.limit_minor or 0, spend.currency, spend.exponent),
             )
 
     def record_event(self, kind: str, detail: str, ts: int | None = None) -> None:
@@ -195,16 +245,19 @@ class Store:
         """Most recent reading for every window ever seen."""
         with self._tx() as cur:
             rows = cur.execute(
-                "SELECT q.ts, q.window, q.label, q.pct, q.resets_at FROM quota q "
+                "SELECT q.ts, q.window, q.label, q.pct, q.resets_at, q.severity, q.is_active "
+                "FROM quota q "
                 "JOIN (SELECT window, MAX(ts) AS ts FROM quota GROUP BY window) m "
                 "ON q.window = m.window AND q.ts = m.ts ORDER BY q.window"
             ).fetchall()
-        return [QuotaRow(**dict(r)) for r in rows]
+        return [_row_to_quota(r) for r in rows]
 
     def quota_series(
         self, since_ts: int, window: str | None = None, until_ts: int | None = None
     ) -> list[QuotaRow]:
-        sql = "SELECT ts, window, label, pct, resets_at FROM quota WHERE ts >= ?"
+        sql = (
+            "SELECT ts, window, label, pct, resets_at, severity, is_active FROM quota WHERE ts >= ?"
+        )
         params: list[Any] = [since_ts]
         if until_ts is not None:
             sql += " AND ts <= ?"
@@ -215,7 +268,7 @@ class Store:
         sql += " ORDER BY ts, window"
         with self._tx() as cur:
             rows = cur.execute(sql, params).fetchall()
-        return [QuotaRow(**dict(r)) for r in rows]
+        return [_row_to_quota(r) for r in rows]
 
     def windows(self) -> list[str]:
         with self._tx() as cur:
@@ -225,7 +278,8 @@ class Store:
     def latest_overage(self) -> dict[str, Any] | None:
         with self._tx() as cur:
             row = cur.execute(
-                "SELECT ts, spent_minor, cap_minor, currency FROM overage ORDER BY ts DESC LIMIT 1"
+                "SELECT ts, spent_minor, cap_minor, currency, exponent FROM overage "
+                "ORDER BY ts DESC LIMIT 1"
             ).fetchone()
         return dict(row) if row else None
 
@@ -240,6 +294,21 @@ class Store:
         with self._tx() as cur:
             rows = cur.execute(sql, params).fetchall()
         return [EventRow(**dict(r)) for r in rows]
+
+    def oldest_ts(self) -> int | None:
+        with self._tx() as cur:
+            row = cur.execute("SELECT MIN(ts) AS t FROM quota").fetchone()
+        return row["t"] if row else None
+
+    def db_size_bytes(self) -> int | None:
+        if not isinstance(self.path, Path):
+            return None
+        total = 0
+        for suffix in ("", "-wal"):
+            candidate = Path(str(self.path) + suffix)
+            if candidate.exists():
+                total += candidate.stat().st_size
+        return total
 
     def counts(self) -> dict[str, int]:
         with self._tx() as cur:

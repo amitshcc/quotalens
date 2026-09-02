@@ -62,7 +62,7 @@ def test_probe_prints_warning_raw_and_parsed(monkeypatch, capsys) -> None:
     assert out.startswith("!! WARNING")
     assert '"five_hour"' in out
     assert "limit:opus" in out
-    assert "overage: 2.50 / 10.00 USD" in out
+    assert "extra usage: $2.50 / $10.00  25%" in out
     assert SECRET not in out
 
 
@@ -144,3 +144,18 @@ def test_user_agent_flag_and_env(monkeypatch) -> None:
     monkeypatch.setattr(cli, "_verify", fake_verify)
     assert cli.main(["--user-agent", "FlagUA/3", "probe"], secrets=MemorySecretStore(COOKIE)) == 0
     assert captured["ua"] == "FlagUA/3"
+
+
+def test_probe_masks_uuids_unless_no_redact(monkeypatch, capsys) -> None:
+    payload = dict(USAGE_DOCUMENTED, organization_uuid="123e4567-e89b-12d3-a456-426614174000")
+
+    async def fake_verify(cookie: str, settings):
+        return payload, None
+
+    monkeypatch.setattr(cli, "_verify", fake_verify)
+    assert cli.main(["probe"], secrets=MemorySecretStore(COOKIE)) == 0
+    out = capsys.readouterr().out
+    assert "123e4567-e89b-12d3-a456-426614174000" not in out
+    assert "<uuid>" in out
+    assert cli.main(["probe", "--no-redact"], secrets=MemorySecretStore(COOKIE)) == 0
+    assert "123e4567-e89b-12d3-a456-426614174000" in capsys.readouterr().out

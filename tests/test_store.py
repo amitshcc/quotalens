@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from quotawatch.parse import OverageReading, QuotaReading
+from quotawatch.parse import QuotaReading, SpendReading
 from quotawatch.store import SCHEMA_VERSION, Store
 
 
@@ -51,7 +51,7 @@ def test_quota_roundtrip_latest_and_series(store: Store) -> None:
 
 def test_sample_overage_events_and_counts(store: Store) -> None:
     store.record_sample(1, "usage", {"a": 1})
-    store.record_overage(1, OverageReading(100, 500, "USD"))
+    store.record_overage(1, SpendReading(100, 500, 2, "USD", "spend"))
     store.record_event("poll_error", "boom", ts=5)
     store.record_event("auth_expired", "401", ts=6)
     assert store.latest_overage() == {
@@ -59,6 +59,7 @@ def test_sample_overage_events_and_counts(store: Store) -> None:
         "spent_minor": 100,
         "cap_minor": 500,
         "currency": "USD",
+        "exponent": 2,
     }
     assert [e.kind for e in store.recent_events()] == ["auth_expired", "poll_error"]
     assert [e.kind for e in store.recent_events(kind="poll_error")] == ["poll_error"]
@@ -70,3 +71,39 @@ def test_memory_store() -> None:
     s.record_quota(1, [QuotaReading("w", "w", 1, None)])
     assert s.counts()["quota"] == 1
     s.close()
+
+
+V1_SCHEMA = """
+CREATE TABLE schema_version (version INTEGER NOT NULL, applied_at INTEGER NOT NULL);
+CREATE TABLE sample (ts INTEGER NOT NULL, source TEXT NOT NULL, payload TEXT NOT NULL);
+CREATE TABLE quota (ts INTEGER NOT NULL, window TEXT NOT NULL, label TEXT NOT NULL,
+    pct REAL NOT NULL, resets_at TEXT, PRIMARY KEY (ts, window));
+CREATE TABLE overage (ts INTEGER PRIMARY KEY, spent_minor INTEGER NOT NULL,
+    cap_minor INTEGER NOT NULL, currency TEXT NOT NULL);
+CREATE TABLE event (ts INTEGER NOT NULL, kind TEXT NOT NULL, detail TEXT NOT NULL);
+INSERT INTO schema_version VALUES (1, 0);
+INSERT INTO quota VALUES (10, 'five_hour', '5-hour', 42.0, 'r1');
+INSERT INTO overage VALUES (10, 316, 200, 'USD');
+"""
+
+
+def test_v1_database_is_migrated_without_losing_rows(tmp_path) -> None:
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(V1_SCHEMA)
+    conn.close()
+
+    store = Store(path)
+    rows = store.latest_quota()
+    assert rows[0].pct == 42.0 and rows[0].severity is None and rows[0].is_active is None
+    assert store.latest_overage()["exponent"] == 2
+    store.record_quota(20, [QuotaReading("five_hour", "5-hour", 43, "r1", "warning", True)])
+    latest = store.latest_quota()[0]
+    assert (latest.severity, latest.is_active) == ("warning", True)
+    conn = sqlite3.connect(path)
+    assert [r[0] for r in conn.execute("SELECT version FROM schema_version ORDER BY version")] == [
+        1,
+        2,
+    ]
+    conn.close()
+    store.close()

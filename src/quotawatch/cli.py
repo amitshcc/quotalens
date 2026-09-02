@@ -8,6 +8,7 @@ import getpass
 import json
 import logging
 import os
+import re
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -22,7 +23,7 @@ from quotawatch.config import (
     settings_from_env,
     validate,
 )
-from quotawatch.parse import ParseError, parse_overage, parse_usage
+from quotawatch.parse import ParseError, parse_spend, parse_usage
 from quotawatch.secrets import (
     KeyringSecretStore,
     SecretStore,
@@ -34,10 +35,18 @@ from quotawatch.secrets import (
 log = logging.getLogger("quotawatch")
 
 PROBE_WARNING = """\
-!! WARNING: the output below is your account's usage data and may include
-!! organisation ids and reset timestamps. It never includes your cookie, but
-!! redact anything you consider identifying before pasting it into an issue.
+!! WARNING: the output below is your account's usage data. It never includes
+!! your cookie, and UUID-shaped values are masked unless --no-redact is given.
+!! Still read it over before pasting it into an issue.
 """
+
+_UUID_RE = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+
+
+def mask_uuids(text: str) -> str:
+    return _UUID_RE.sub("<uuid>", text)
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -146,7 +155,7 @@ def cmd_auth(args: argparse.Namespace, settings: Settings, secrets: SecretStore)
     print("Verifying with one request to claude.ai ...")
     try:
         usage, _ = asyncio.run(_verify(cookie, settings))
-        readings = parse_usage(usage)
+        readings = parse_usage(usage).readings
     except ClientError as exc:
         print(f"verification failed: {global_redactor().redact(str(exc))}", file=sys.stderr)
         if not args.force:
@@ -175,27 +184,37 @@ def cmd_probe(args: argparse.Namespace, settings: Settings, secrets: SecretStore
     except ClientError as exc:
         print(f"request failed: {global_redactor().redact(str(exc))}", file=sys.stderr)
         return 2
+    redact = (lambda text: text) if args.no_redact else mask_uuids
     print(PROBE_WARNING)
     print("== raw /usage ==")
-    print(json.dumps(usage, indent=2, sort_keys=True))
+    print(redact(json.dumps(usage, indent=2, sort_keys=True)))
     print("\n== raw /overage_spend_limit ==")
-    print(json.dumps(overage, indent=2, sort_keys=True) if overage is not None else "(unavailable)")
+    overage_text = json.dumps(overage, indent=2, sort_keys=True) if overage is not None else None
+    print(redact(overage_text) if overage_text else "(unavailable)")
     print("\n== parsed ==")
     try:
-        readings = parse_usage(usage)
+        parsed = parse_usage(usage)
     except ParseError as exc:
         print(f"PARSE FAILED: {exc}")
         return 4
-    for r in readings:
+    for r in parsed.readings:
         reset = f"resets {r.resets_at}" if r.resets_at else "no reset time"
-        print(f"  {r.window:<28} {r.label:<20} {r.pct:6.1f}%  {reset}")
-    parsed_overage = parse_overage(overage)
-    if parsed_overage:
-        print(
-            f"  overage: {parsed_overage.spent_minor / 100:.2f} / "
-            f"{parsed_overage.cap_minor / 100:.2f} {parsed_overage.currency}"
+        flags = " ".join(f for f in (r.severity or "", "active" if r.is_active else "") if f)
+        print(f"  {r.window:<24} {r.label:<16} {r.pct:6.1f}%  {reset}  {flags}")
+    for block in parsed.ignored:
+        print(f"  (ignored) {block.key}: {block.reason}")
+    spend = parse_spend(usage, overage)
+    if spend is not None:
+        pct = f"{spend.pct:.0f}%" if spend.pct is not None else "n/a"
+        money = (
+            f"{spend.used_text} / {spend.limit_text}" if spend.used_text else "(figures suppressed)"
         )
-    if any(r.window.startswith("unknown:") for r in readings):
+        state = (
+            "enabled" if spend.is_enabled else f"disabled ({spend.disabled_reason or 'no reason'})"
+        )
+        until = f" until {spend.disabled_until}" if spend.disabled_until else ""
+        print(f"  extra usage: {money}  {pct}  {state}{until}  [source: {spend.source}]")
+    if parsed.fallback_used:
         print("\nNOTE: parsed via generic fallback; the endpoint shape may have drifted.")
     return 0
 
@@ -247,7 +266,10 @@ def build_parser() -> argparse.ArgumentParser:
     auth.add_argument(
         "--force", action="store_true", help="store the cookie even if verification fails"
     )
-    sub.add_parser("probe", help="fetch once and print raw + parsed output")
+    probe = sub.add_parser("probe", help="fetch once and print raw + parsed output")
+    probe.add_argument(
+        "--no-redact", action="store_true", help="do not mask UUID-shaped values in the output"
+    )
     serve = sub.add_parser("serve", help="run the poller and the local API")
     serve.add_argument("--port", type=int, help="loopback port (default 8787)")
     serve.add_argument(

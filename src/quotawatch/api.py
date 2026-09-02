@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 from quotawatch import __version__
 from quotawatch.burn import burn_rate
 from quotawatch.config import Settings
-from quotawatch.poller import ClientFactory, Poller
+from quotawatch.poller import ClientFactory, Poller, spend_as_dict
 from quotawatch.secrets import Redactor, SecretStore, global_redactor
 from quotawatch.store import Store
 
@@ -83,6 +83,7 @@ def create_app(
             "poller": poller_status.as_dict(),
             "poll_interval_s": settings.poll_interval_s,
             "store": {"db_path": str(state.store.path), "rows": counts},
+            "diagnostics": poller_status.diagnostics(),
             "recent_events": events,
             "note": (
                 "Uses undocumented claude.ai endpoints; a parse_failed or shape_drift "
@@ -96,6 +97,7 @@ def create_app(
         return {
             "readings": [r.as_dict() for r in rows],
             "overage": state.store.latest_overage(),
+            "spend": spend_as_dict(state.poller.status.spend),
             "last_success_ts": state.poller.status.last_success_ts,
         }
 

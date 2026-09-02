@@ -22,13 +22,7 @@ from quotawatch.client import (
     RateLimitedError,
 )
 from quotawatch.config import Settings
-from quotawatch.parse import (
-    OverageReading,
-    ParseError,
-    parse_overage,
-    parse_spend_from_usage,
-    parse_usage,
-)
+from quotawatch.parse import ParseError, SpendReading, UsageParse, parse_spend, parse_usage
 from quotawatch.secrets import Redactor, SecretStore, SecretStoreError
 from quotawatch.store import Store
 
@@ -90,6 +84,9 @@ class PollerStatus:
     polls_failed: int = 0
     org_resolved: bool = False
     overage_available: bool | None = None
+    ignored_blocks: list[dict[str, str]] = field(default_factory=list)
+    generic_fallback: bool = False
+    spend: SpendReading | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
@@ -106,6 +103,33 @@ class PollerStatus:
             "org_resolved": self.org_resolved,
             "overage_available": self.overage_available,
         }
+
+    def diagnostics(self) -> dict[str, Any]:
+        return {
+            "unrecognised_blocks": list(self.ignored_blocks),
+            "generic_fallback": self.generic_fallback,
+            "spend": spend_as_dict(self.spend),
+        }
+
+
+def spend_as_dict(spend: SpendReading | None) -> dict[str, Any] | None:
+    if spend is None:
+        return None
+    return {
+        "used_minor": spend.used_minor,
+        "limit_minor": spend.limit_minor,
+        "exponent": spend.exponent,
+        "currency": spend.currency,
+        "used_text": spend.used_text,
+        "limit_text": spend.limit_text,
+        "pct": spend.pct,
+        "source": spend.source,
+        "is_enabled": spend.is_enabled,
+        "disabled_reason": spend.disabled_reason,
+        "disabled_until": spend.disabled_until,
+        "spend_limit_reached": spend.spend_limit_reached,
+        "conflict": spend.conflict,
+    }
 
 
 class Poller:
@@ -126,6 +150,7 @@ class Poller:
         self._clock = clock
         self._client: ClaudeClient | None = None
         self._overage_failed_once = False
+        self._last_ignored: frozenset[str] = frozenset()
         self.schedule = Schedule(interval_s=float(settings.poll_interval_s))
         self.status = PollerStatus()
         self._stop = asyncio.Event()
@@ -232,35 +257,48 @@ class Poller:
         usage_raw = await client.fetch_usage()
         self.status.org_resolved = client.org_id is not None
         self._store.record_sample(now, "usage", usage_raw)  # keep raw even if parsing fails
-        readings = parse_usage(usage_raw)
-        self._store.record_quota(now, readings)
-        if any(r.window.startswith("unknown:") for r in readings):
-            self._store.record_event(
-                "shape_drift",
-                "usage payload parsed via generic fallback; check `quotawatch probe`",
-                ts=now,
-            )
+        parsed = parse_usage(usage_raw)
+        self._store.record_quota(now, parsed.readings)
+        self._note_diagnostics(parsed, now)
 
-        await self._poll_overage(client, now, fallback=parse_spend_from_usage(usage_raw))
+        await self._poll_overage(client, now, usage_raw)
 
         self.status.state = "ok"
         self.status.last_success_ts = now
         self.status.consecutive_failures = 0
         self.status.polls_ok += 1
-        log.info("poll ok: %d readings", len(readings))
+        log.info("poll ok: %d readings", len(parsed.readings))
         return self.schedule.on_success()
 
-    async def _poll_overage(
-        self, client: ClaudeClient, now: int, fallback: OverageReading | None = None
-    ) -> None:
-        """Overage is optional; its failure must never fail the poll.
+    def _note_diagnostics(self, parsed: UsageParse, now: int) -> None:
+        self.status.generic_fallback = parsed.fallback_used
+        self.status.ignored_blocks = [{"key": b.key, "reason": b.reason} for b in parsed.ignored]
+        if parsed.fallback_used:
+            self._store.record_event(
+                "shape_drift",
+                "usage payload parsed via generic fallback; check `quotawatch probe`",
+                ts=now,
+            )
+        ignored = frozenset(b.key for b in parsed.ignored)
+        if ignored and ignored != self._last_ignored:
+            self._store.record_event(
+                "unrecognised_block",
+                "usage payload has blocks without resets_at, not charted: "
+                + ", ".join(sorted(ignored)),
+                ts=now,
+            )
+        self._last_ignored = ignored
 
-        ``fallback`` is the spend figure embedded in the usage payload, used when the
-        dedicated endpoint is unavailable or unparseable.
+    async def _poll_overage(self, client: ClaudeClient, now: int, usage_raw: Any) -> None:
+        """Spend figures. The dedicated endpoint is optional; its failure never fails the poll.
+
+        The usage payload's ``spend`` block is the primary source (it carries an
+        explicit exponent); the endpoint only fills in ``disabled_until`` or serves
+        as a last resort.
         """
-        reading: OverageReading | None = None
+        overage_raw: Any = None
         try:
-            raw = await client.fetch_overage()
+            overage_raw = await client.fetch_overage()
         except AuthError:
             raise  # a 401 here means the same thing as on usage
         except ClientError as exc:
@@ -270,12 +308,12 @@ class Poller:
                 )
                 self._overage_failed_once = True
         else:
-            self._store.record_sample(now, "overage", raw)
+            self._store.record_sample(now, "overage", overage_raw)
             self._overage_failed_once = False  # a later failure is news again
-            reading = parse_overage(raw)
-        reading = reading or fallback
-        if reading is None:
+        spend = parse_spend(usage_raw, overage_raw)
+        self.status.spend = spend
+        if spend is None:
             self.status.overage_available = False
             return
-        self._store.record_overage(now, reading)
+        self._store.record_overage(now, spend)
         self.status.overage_available = True
