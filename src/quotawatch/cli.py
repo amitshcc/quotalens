@@ -112,6 +112,7 @@ async def _verify(cookie: str, settings: Settings) -> tuple[object, object | Non
         base_url=settings.base_url,
         timeout_s=settings.http_timeout_s,
         user_agent=settings.user_agent,
+        impersonate=settings.impersonate,
     ) as client:
         usage = await client.fetch_usage()
         try:
@@ -237,8 +238,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
     parser.add_argument(
         "--user-agent",
-        help="User-Agent to send; must match the browser the cookie was copied from "
-        "(env: QUOTAWATCH_USER_AGENT)",
+        help="override the User-Agent (default: the impersonated browser's; "
+        "env: QUOTAWATCH_USER_AGENT)",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 

@@ -17,6 +17,15 @@ quotawatch serve             # binds 127.0.0.1:8787, polls every 60s
 curl 'http://127.0.0.1:8787/api/quota/current'
 ```
 
+## How it reaches claude.ai
+
+claude.ai sits behind Cloudflare bot protection that fingerprints the TLS
+handshake. A plain Python HTTP client is served a challenge page even with a
+valid session cookie, so quotawatch talks to claude.ai through
+[`curl_cffi`](https://github.com/lexiforest/curl_cffi), which impersonates a
+browser's TLS and HTTP/2 fingerprint. If you ever see a `blocked` state on
+`/api/health`, try `QUOTAWATCH_IMPERSONATE=safari` (default `chrome`).
+
 ## Security note
 
 The session cookie is equivalent to your claude.ai password. quotawatch stores

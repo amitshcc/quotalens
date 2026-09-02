@@ -2,9 +2,16 @@ from __future__ import annotations
 
 import asyncio
 
-import httpx
-
-from conftest import COOKIE, USAGE_DOCUMENTED, json_response, make_client, make_handler
+from conftest import (
+    COOKIE,
+    USAGE_DOCUMENTED,
+    USAGE_LIVE_2026_09,
+    FakeRequest,
+    RawResponse,
+    json_response,
+    make_client,
+    make_handler,
+)
 from quotawatch.poller import (
     AUTH_RETRY_S,
     MAX_BACKOFF_S,
@@ -84,7 +91,7 @@ def test_poll_429_backs_off_hard(settings, store, secrets) -> None:
 def test_poll_500_then_recovery(settings, store, secrets) -> None:
     calls = {"n": 0}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: FakeRequest) -> RawResponse:
         calls["n"] += 1
         if calls["n"] == 1:
             return json_response(500, {"error": "oops"})
@@ -164,7 +171,7 @@ def test_run_loop_polls_and_stops(settings, store, secrets) -> None:
 def test_overage_401_is_auth_expired_and_loop_survives(settings, store, secrets) -> None:
     """A 401 on the optional endpoint must not escape poll_once (it used to kill the task)."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: FakeRequest) -> RawResponse:
         if request.url.path.endswith("/overage_spend_limit"):
             return json_response(401, {"error": "unauthorized"})
         return make_handler()(request)
@@ -199,7 +206,7 @@ def test_unexpected_store_error_does_not_kill_loop(settings, store, secrets, mon
 def test_overage_flapping_is_reported_each_time(settings, store, secrets) -> None:
     calls = {"n": 0}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: FakeRequest) -> RawResponse:
         if request.url.path.endswith("/overage_spend_limit"):
             calls["n"] += 1
             if calls["n"] in (1, 3):
@@ -213,10 +220,36 @@ def test_overage_flapping_is_reported_each_time(settings, store, secrets) -> Non
 
 
 def test_cloudflare_block_is_reported_as_blocked(settings, store, secrets) -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(403, headers={"cf-mitigated": "challenge"}, content=b"<html>")
+    def handler(request: FakeRequest) -> RawResponse:
+        return RawResponse(403, {"cf-mitigated": "challenge"}, "<html>")
 
     poller = _poller(settings, store, secrets, handler)
     assert asyncio.run(poller.poll_once()) == AUTH_RETRY_S
     assert poller.status.state == "blocked"
     assert [e.kind for e in store.recent_events()] == ["blocked"]
+
+
+def test_live_shape_stores_windows_and_spend_fallback(settings, store, secrets) -> None:
+    """The 2026-09 payload: overage endpoint 404s, spend comes from the usage payload."""
+    poller = _poller(
+        settings, store, secrets, make_handler(usage=USAGE_LIVE_2026_09, overage_status=404)
+    )
+    asyncio.run(poller.poll_once())
+    assert poller.status.state == "ok"
+    windows = {r.window: r.pct for r in store.latest_quota()}
+    assert windows == {
+        "five_hour": 71,
+        "seven_day": 38,
+        "nimbus_quill": 0,
+        "limit:session": 71,
+        "limit:weekly_all": 38,
+        "limit:sonnet": 66,
+    }
+    assert store.latest_overage() == {
+        "ts": 1_000_000,
+        "spent_minor": 316,
+        "cap_minor": 200,
+        "currency": "USD",
+    }
+    assert poller.status.overage_available is True
+    assert [e.kind for e in store.recent_events()] == ["overage_unavailable"]

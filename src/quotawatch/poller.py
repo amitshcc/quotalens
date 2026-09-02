@@ -22,7 +22,13 @@ from quotawatch.client import (
     RateLimitedError,
 )
 from quotawatch.config import Settings
-from quotawatch.parse import ParseError, parse_overage, parse_usage
+from quotawatch.parse import (
+    OverageReading,
+    ParseError,
+    parse_overage,
+    parse_spend_from_usage,
+    parse_usage,
+)
 from quotawatch.secrets import Redactor, SecretStore, SecretStoreError
 from quotawatch.store import Store
 
@@ -131,6 +137,7 @@ class Poller:
             base_url=self._settings.base_url,
             timeout_s=self._settings.http_timeout_s,
             user_agent=self._settings.user_agent,
+            impersonate=self._settings.impersonate,
         )
 
     # -- lifecycle ------------------------------------------------------------
@@ -234,7 +241,7 @@ class Poller:
                 ts=now,
             )
 
-        await self._poll_overage(client, now)
+        await self._poll_overage(client, now, fallback=parse_spend_from_usage(usage_raw))
 
         self.status.state = "ok"
         self.status.last_success_ts = now
@@ -243,8 +250,15 @@ class Poller:
         log.info("poll ok: %d readings", len(readings))
         return self.schedule.on_success()
 
-    async def _poll_overage(self, client: ClaudeClient, now: int) -> None:
-        """Overage is optional; its failure must never fail the poll."""
+    async def _poll_overage(
+        self, client: ClaudeClient, now: int, fallback: OverageReading | None = None
+    ) -> None:
+        """Overage is optional; its failure must never fail the poll.
+
+        ``fallback`` is the spend figure embedded in the usage payload, used when the
+        dedicated endpoint is unavailable or unparseable.
+        """
+        reading: OverageReading | None = None
         try:
             raw = await client.fetch_overage()
         except AuthError:
@@ -255,11 +269,11 @@ class Poller:
                     "overage_unavailable", self._redactor.redact(str(exc)), ts=now
                 )
                 self._overage_failed_once = True
-            self.status.overage_available = False
-            return
-        self._store.record_sample(now, "overage", raw)
-        self._overage_failed_once = False  # a later failure is news again
-        reading = parse_overage(raw)
+        else:
+            self._store.record_sample(now, "overage", raw)
+            self._overage_failed_once = False  # a later failure is news again
+            reading = parse_overage(raw)
+        reading = reading or fallback
         if reading is None:
             self.status.overage_available = False
             return
