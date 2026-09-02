@@ -7,15 +7,18 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from importlib import resources
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from quotalens import __version__
 from quotalens.burn import burn_rate
 from quotalens.config import Settings
+from quotalens.dashboard import as_json, build_dashboard
 from quotalens.poller import ClientFactory, Poller, spend_as_dict
+from quotalens.render import render_app, render_page
 from quotalens.secrets import Redactor, SecretStore, global_redactor
 from quotalens.store import Store
 
@@ -23,6 +26,16 @@ log = logging.getLogger(__name__)
 
 MAX_SERIES_HOURS = 24 * 90
 MAX_LOOKBACK_MIN = 24 * 60
+STATIC_FILES = {
+    "tokens.css": "text/css; charset=utf-8",
+    "app.css": "text/css; charset=utf-8",
+    "app.js": "text/javascript; charset=utf-8",
+    "favicon.svg": "image/svg+xml",
+}
+
+
+def _static_bytes(name: str) -> bytes:
+    return resources.files("quotalens.web").joinpath(name).read_bytes()
 
 
 @dataclass
@@ -68,6 +81,42 @@ def create_app(
         # Never echo exception text to the client: it could carry a header or a URL.
         log.error("unhandled error on %s: %s", request.url.path, redactor.redact(str(exc)))
         return JSONResponse(status_code=500, content={"error": "internal error; see server log"})
+
+    def _dashboard():
+        return build_dashboard(
+            settings,
+            state.store,
+            state.poller.status,
+            int(time.time()),
+            settings.burn_alert_pts_per_hour,
+        )
+
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    def index() -> HTMLResponse:
+        return HTMLResponse(render_page(_dashboard()), headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/dashboard/fragment", response_class=HTMLResponse)
+    def dashboard_fragment() -> HTMLResponse:
+        """The header and main content, re-rendered; the page swaps it in place."""
+        return HTMLResponse(render_app(_dashboard()), headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/dashboard")
+    def dashboard_json() -> dict[str, Any]:
+        return as_json(_dashboard())
+
+    @app.get("/static/{name}", include_in_schema=False)
+    def static(name: str) -> Response:
+        if name not in STATIC_FILES:
+            raise HTTPException(status_code=404)
+        return Response(
+            _static_bytes(name),
+            media_type=STATIC_FILES[name],
+            headers={"Cache-Control": "no-cache"},
+        )
+
+    @app.get("/favicon.svg", include_in_schema=False)
+    def favicon() -> Response:
+        return Response(_static_bytes("favicon.svg"), media_type="image/svg+xml")
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:

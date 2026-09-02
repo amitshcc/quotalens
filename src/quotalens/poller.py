@@ -87,6 +87,7 @@ class PollerStatus:
     ignored_blocks: list[dict[str, str]] = field(default_factory=list)
     generic_fallback: bool = False
     spend: SpendReading | None = None
+    last_windows: list[str] = field(default_factory=list)  # payload order of the last parse
     extra: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
@@ -213,6 +214,7 @@ class Poller:
         self.status.state = state
         self.status.last_error = safe
         self.status.last_error_ts = now
+        self.status.extra["last_error_kind"] = kind
         self.status.consecutive_failures += 1
         self.status.polls_failed += 1
         self._store.record_event(kind, safe, ts=now)
@@ -272,6 +274,7 @@ class Poller:
 
     def _note_diagnostics(self, parsed: UsageParse, now: int) -> None:
         self.status.generic_fallback = parsed.fallback_used
+        self.status.last_windows = [r.window for r in parsed.readings]
         self.status.ignored_blocks = [{"key": b.key, "reason": b.reason} for b in parsed.ignored]
         if parsed.fallback_used:
             self._store.record_event(
