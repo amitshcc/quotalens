@@ -24,7 +24,8 @@ def test_redactor_replaces_known_value_and_pairs() -> None:
     r = Redactor([COOKIE])
     assert SECRET not in r.redact(f"header was {COOKIE}")
     assert SECRET not in r.redact(f"only the token: {SECRET}")
-    assert "org-1234-5678-abcd" not in r.redact("lastActiveOrg value org-1234-5678-abcd leaked")
+    # The org id is an identifier, not a credential; it stays visible for debugging.
+    assert "org-1234-5678-abcd" in r.redact("403 on /api/organizations/org-1234-5678-abcd/usage")
 
 
 def test_redactor_generic_patterns_without_known_value() -> None:

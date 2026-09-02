@@ -118,3 +118,29 @@ def test_read_hidden_line_survives_paste_longer_than_tty_line_limit(capsys) -> N
         os.close(master)
         if not reader.is_alive():
             stream.close()
+
+
+def test_auth_force_stores_despite_failure(monkeypatch, capsys) -> None:
+    secrets = MemorySecretStore(None)
+    monkeypatch.setattr(cli, "read_hidden_line", lambda prompt: COOKIE)
+
+    async def fake_verify(cookie: str, settings):
+        raise AuthError("rejected", 403)
+
+    monkeypatch.setattr(cli, "_verify", fake_verify)
+    assert cli.main(["auth", "--force"], secrets=secrets) == 0
+    assert secrets.get_cookie() == COOKIE
+
+
+def test_user_agent_flag_and_env(monkeypatch) -> None:
+    monkeypatch.setenv("QUOTAWATCH_USER_AGENT", "EnvUA/2")
+    assert cli.settings_from_env().user_agent == "EnvUA/2"
+    captured = {}
+
+    async def fake_verify(cookie: str, settings):
+        captured["ua"] = settings.user_agent
+        return USAGE_DOCUMENTED, None
+
+    monkeypatch.setattr(cli, "_verify", fake_verify)
+    assert cli.main(["--user-agent", "FlagUA/3", "probe"], secrets=MemorySecretStore(COOKIE)) == 0
+    assert captured["ua"] == "FlagUA/3"

@@ -210,3 +210,13 @@ def test_overage_flapping_is_reported_each_time(settings, store, secrets) -> Non
     for _ in range(3):
         asyncio.run(poller.poll_once())
     assert [e.kind for e in store.recent_events()] == ["overage_unavailable", "overage_unavailable"]
+
+
+def test_cloudflare_block_is_reported_as_blocked(settings, store, secrets) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, headers={"cf-mitigated": "challenge"}, content=b"<html>")
+
+    poller = _poller(settings, store, secrets, handler)
+    assert asyncio.run(poller.poll_once()) == AUTH_RETRY_S
+    assert poller.status.state == "blocked"
+    assert [e.kind for e in store.recent_events()] == ["blocked"]
