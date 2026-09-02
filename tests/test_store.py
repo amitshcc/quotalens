@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import sqlite3
 
-from quotawatch.parse import QuotaReading, SpendReading
-from quotawatch.store import SCHEMA_VERSION, Store
+from quotalens.parse import QuotaReading, SpendReading
+from quotalens.store import SCHEMA_VERSION, Store
 
 
 def test_schema_created_and_versioned(store: Store) -> None:

@@ -1,7 +1,7 @@
 [project]
-name = "quotawatch"
+name = "quotalens"
 version = "0.1.0.dev0"
-description = "Local, self-hosted monitor for Claude subscription quota: burn rate and history."
+description = "QuotaLens: local, self-hosted monitor for Claude subscription quota, with burn rate and history."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
@@ -31,14 +31,14 @@ dev = [
 ]
 
 [project.scripts]
-quotawatch = "quotawatch.cli:main"
+quotalens = "quotalens.cli:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/quotawatch"]
+packages = ["src/quotalens"]
 
 [tool.ruff]
 line-length = 100

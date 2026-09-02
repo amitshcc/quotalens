@@ -2,7 +2,7 @@
 
 These endpoints are undocumented and may change. The client's job is to fetch
 raw JSON and translate HTTP failures into a small set of typed errors; parsing
-lives in :mod:`quotawatch.parse` so drift is handled in one place.
+lives in :mod:`quotalens.parse` so drift is handled in one place.
 
 claude.ai is behind Cloudflare bot protection that fingerprints the TLS
 handshake. A plain Python client gets a challenge page even with a valid
@@ -20,7 +20,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from quotawatch.config import (
+from quotalens.config import (
     DEFAULT_BASE_URL,
     DEFAULT_HTTP_TIMEOUT_S,
     DEFAULT_IMPERSONATE,
@@ -258,8 +258,8 @@ class ClaudeClient:
         if is_cloudflare_challenge(response):
             raise BlockedError(
                 f"blocked by Cloudflare's bot challenge ({status}) on {path}; the request never "
-                "reached claude.ai. Try QUOTAWATCH_IMPERSONATE=safari or chrome, and if it "
-                "persists open an issue with `quotawatch probe` output",
+                "reached claude.ai. Try QUOTALENS_IMPERSONATE=safari or chrome, and if it "
+                "persists open an issue with `quotalens probe` output",
                 status,
             )
         if status in (401, 403):

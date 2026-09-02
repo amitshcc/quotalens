@@ -15,7 +15,7 @@ from conftest import (
     make_handler,
     raise_transport,
 )
-from quotawatch.client import (
+from quotalens.client import (
     AuthError,
     BlockedError,
     RateLimitedError,

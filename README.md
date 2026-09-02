@@ -1,6 +1,6 @@
-# quotawatch
+# QuotaLens
 
-A local, self-hosted monitor for Claude Pro/Max subscription usage. It records
+QuotaLens is a local, self-hosted monitor for Claude Pro/Max subscription usage. It records
 your quota over time and leads with the **burn rate** (percentage points per
 hour), so you can tell not just where you are but whether something is running.
 
@@ -10,10 +10,10 @@ storage, read APIs) are in progress. No dashboard yet.
 ## Quick start
 
 ```sh
-pipx install quotawatch      # or: uv tool install quotawatch
-quotawatch auth              # paste your claude.ai session cookie once (stored in the OS keychain)
-quotawatch probe             # one fetch, prints raw + parsed output for debugging
-quotawatch serve             # binds 127.0.0.1:8787, polls every 60s
+pipx install quotalens      # or: uv tool install quotalens
+quotalens auth              # paste your claude.ai session cookie once (stored in the OS keychain)
+quotalens probe             # one fetch, prints raw + parsed output for debugging
+quotalens serve             # binds 127.0.0.1:8787, polls every 60s
 curl 'http://127.0.0.1:8787/api/quota/current'
 ```
 
@@ -21,17 +21,17 @@ curl 'http://127.0.0.1:8787/api/quota/current'
 
 claude.ai sits behind Cloudflare bot protection that fingerprints the TLS
 handshake. A plain Python HTTP client is served a challenge page even with a
-valid session cookie, so quotawatch talks to claude.ai through
+valid session cookie, so QuotaLens talks to claude.ai through
 [`curl_cffi`](https://github.com/lexiforest/curl_cffi), which impersonates a
 browser's TLS and HTTP/2 fingerprint. If you ever see a `blocked` state on
-`/api/health`, try `QUOTAWATCH_IMPERSONATE=safari` (default `chrome`).
+`/api/health`, try `QUOTALENS_IMPERSONATE=safari` (default `chrome`).
 
 ## Security note
 
-The session cookie is equivalent to your claude.ai password. quotawatch stores
+The session cookie is equivalent to your claude.ai password. QuotaLens stores
 it only in the OS keychain (via `keyring`), never in a file, the database, or a
 log line, and redacts it from error output. The server binds loopback only.
-Treat `quotawatch probe` output as sensitive and redact it before sharing.
+Treat `quotalens probe` output as sensitive and redact it before sharing.
 
 ## Disclaimer
 

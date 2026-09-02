@@ -4,8 +4,8 @@ import time
 
 from fastapi.testclient import TestClient
 
-from quotawatch.api import create_app
-from quotawatch.parse import QuotaReading
+from quotalens.api import create_app
+from quotalens.parse import QuotaReading
 
 
 def _client(settings, store, secrets) -> TestClient:

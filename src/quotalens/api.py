@@ -12,12 +12,12 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
-from quotawatch import __version__
-from quotawatch.burn import burn_rate
-from quotawatch.config import Settings
-from quotawatch.poller import ClientFactory, Poller, spend_as_dict
-from quotawatch.secrets import Redactor, SecretStore, global_redactor
-from quotawatch.store import Store
+from quotalens import __version__
+from quotalens.burn import burn_rate
+from quotalens.config import Settings
+from quotalens.poller import ClientFactory, Poller, spend_as_dict
+from quotalens.secrets import Redactor, SecretStore, global_redactor
+from quotalens.store import Store
 
 log = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ def create_app(
             await poller.stop()
 
     app = FastAPI(
-        title="quotawatch",
+        title="QuotaLens",
         version=__version__,
         lifespan=lifespan,
         docs_url="/api/docs",
@@ -87,7 +87,7 @@ def create_app(
             "recent_events": events,
             "note": (
                 "Uses undocumented claude.ai endpoints; a parse_failed or shape_drift "
-                "event means the response shape changed. Run `quotawatch probe`."
+                "event means the response shape changed. Run `quotalens probe`."
             ),
         }
 

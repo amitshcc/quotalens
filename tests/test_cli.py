@@ -10,9 +10,9 @@ import time
 import pytest
 
 from conftest import COOKIE, USAGE_DOCUMENTED
-from quotawatch import cli
-from quotawatch.client import AuthError
-from quotawatch.secrets import MemorySecretStore
+from quotalens import cli
+from quotalens.client import AuthError
+from quotalens.secrets import MemorySecretStore
 
 SECRET = "sk-ant-sid01-SECRETSECRETSECRET-abc"
 
@@ -67,7 +67,7 @@ def test_probe_prints_warning_raw_and_parsed(monkeypatch, capsys) -> None:
 
 
 def test_probe_without_cookie_exits(capsys) -> None:
-    with pytest.raises(SystemExit, match="quotawatch auth"):
+    with pytest.raises(SystemExit, match="quotalens auth"):
         cli.main(["probe"], secrets=MemorySecretStore(None))
 
 
@@ -78,11 +78,11 @@ def test_serve_rejects_interval_below_floor(capsys) -> None:
 
 
 def test_settings_env_override(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("QUOTAWATCH_PORT", "9999")
-    monkeypatch.setenv("QUOTAWATCH_DB", str(tmp_path / "x.db"))
+    monkeypatch.setenv("QUOTALENS_PORT", "9999")
+    monkeypatch.setenv("QUOTALENS_DB", str(tmp_path / "x.db"))
     settings = cli.settings_from_env()
     assert settings.port == 9999 and settings.db_path == tmp_path / "x.db"
-    monkeypatch.setenv("QUOTAWATCH_INTERVAL", "abc")
+    monkeypatch.setenv("QUOTALENS_INTERVAL", "abc")
     with pytest.raises(cli.SettingsError):
         cli.settings_from_env()
 
@@ -133,7 +133,7 @@ def test_auth_force_stores_despite_failure(monkeypatch, capsys) -> None:
 
 
 def test_user_agent_flag_and_env(monkeypatch) -> None:
-    monkeypatch.setenv("QUOTAWATCH_USER_AGENT", "EnvUA/2")
+    monkeypatch.setenv("QUOTALENS_USER_AGENT", "EnvUA/2")
     assert cli.settings_from_env().user_agent == "EnvUA/2"
     captured = {}
 
