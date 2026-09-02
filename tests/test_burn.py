@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from quotawatch.burn import burn_rate, is_reset, split_at_resets
+from quotawatch.burn import burn_rate, is_reset, resets_at_changed, split_at_resets
 from quotawatch.store import QuotaRow
 
 T0 = 1_000_000
@@ -84,3 +84,22 @@ def test_empty_and_single_point() -> None:
 def test_too_short_span_rejected() -> None:
     rows = [QuotaRow(T0, "w", "w", 1, None), QuotaRow(T0 + 10, "w", "w", 2, None)]
     assert "span" in (burn_rate("w", rows, 900, T0 + 10).reason or "")
+
+
+def test_resets_at_microsecond_jitter_is_not_a_reset() -> None:
+    """Live claude.ai recomputes resets_at per call; only the fraction differs."""
+    a = "2026-09-02T12:40:00.421772+00:00"
+    b = "2026-09-02T12:40:00.656558+00:00"
+    assert not resets_at_changed(a, b)
+    assert not is_reset(row(0, 70.0, a), row(1, 71.0, b))
+    assert resets_at_changed(a, "2026-09-02T17:40:00.000001+00:00")
+    assert resets_at_changed("2026-09-02T12:40:00Z", "2026-09-02T12:41:30Z")
+    assert not resets_at_changed("garbage.123", "garbage.456")
+    assert resets_at_changed("garbage", "other")
+
+
+def test_jittered_series_still_yields_a_rate() -> None:
+    rows = [row(m, 70 + m, f"2026-09-02T12:40:00.{m:06d}+00:00") for m in range(0, 16)]
+    result = burn_rate("five_hour", rows, 15 * 60, T0 + 15 * 60)
+    assert result.rate_pct_per_hour == 60.0
+    assert result.points == 16
