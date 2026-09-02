@@ -16,6 +16,7 @@ from typing import Any
 
 from quotawatch.client import (
     AuthError,
+    BlockedError,
     ClaudeClient,
     ClientError,
     RateLimitedError,
@@ -72,7 +73,7 @@ class Schedule:
 class PollerStatus:
     """What ``/api/health`` reports. Every string here has passed the redactor."""
 
-    state: str = "starting"  # starting | ok | error | auth_expired | rate_limited | no_cookie
+    state: str = "starting"  # starting|ok|error|auth_expired|blocked|rate_limited|no_cookie
     last_attempt_ts: int | None = None
     last_success_ts: int | None = None
     last_error: str | None = None
@@ -126,7 +127,10 @@ class Poller:
 
     def _default_factory(self, cookie: str) -> ClaudeClient:
         return ClaudeClient(
-            cookie, base_url=self._settings.base_url, timeout_s=self._settings.http_timeout_s
+            cookie,
+            base_url=self._settings.base_url,
+            timeout_s=self._settings.http_timeout_s,
+            user_agent=self._settings.user_agent,
         )
 
     # -- lifecycle ------------------------------------------------------------
@@ -200,6 +204,9 @@ class Poller:
         except AuthError as exc:
             self._fail("auth_expired", "auth_expired", str(exc), now)
             return self.schedule.on_auth_error()
+        except BlockedError as exc:
+            self._fail("blocked", "blocked", str(exc), now)
+            return self.schedule.on_auth_error()  # will not clear itself; check gently
         except RateLimitedError as exc:
             self._fail("rate_limited", "rate_limited", str(exc), now)
             return self.schedule.on_rate_limited(exc.retry_after)

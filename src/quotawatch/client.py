@@ -14,12 +14,10 @@ from typing import Any
 
 import httpx
 
-from quotawatch.config import DEFAULT_BASE_URL, DEFAULT_HTTP_TIMEOUT_S
+from quotawatch.config import DEFAULT_BASE_URL, DEFAULT_HTTP_TIMEOUT_S, DEFAULT_USER_AGENT
 
-USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-)
+USER_AGENT = DEFAULT_USER_AGENT
+MAX_ERROR_DETAIL = 160
 
 _ORG_COOKIE_RE = re.compile(r"(?:^|;\s*)lastActiveOrg=([A-Za-z0-9\-]+)")
 _ORG_ID_RE = re.compile(r"^[A-Za-z0-9\-]{8,}$")
@@ -45,6 +43,10 @@ class RateLimitedError(ClientError):
         self.retry_after = retry_after
 
 
+class BlockedError(ClientError):
+    """Cloudflare answered instead of claude.ai: the client itself was rejected."""
+
+
 class UpstreamError(ClientError):
     """Any other non-2xx response, or a transport failure."""
 
@@ -63,7 +65,9 @@ def has_session_key(cookie: str) -> bool:
     return "sessionKey=" in cookie
 
 
-def build_headers(cookie: str, base_url: str = DEFAULT_BASE_URL) -> dict[str, str]:
+def build_headers(
+    cookie: str, base_url: str = DEFAULT_BASE_URL, user_agent: str = DEFAULT_USER_AGENT
+) -> dict[str, str]:
     """The header set the reference implementation (ClaudeUsageBar) sends."""
     return {
         "Cookie": cookie,
@@ -71,8 +75,40 @@ def build_headers(cookie: str, base_url: str = DEFAULT_BASE_URL) -> dict[str, st
         "Content-Type": "application/json",
         "Origin": base_url,
         "Referer": base_url + "/",
-        "User-Agent": USER_AGENT,
+        "User-Agent": user_agent,
     }
+
+
+def is_cloudflare_challenge(response: httpx.Response) -> bool:
+    if response.headers.get("cf-mitigated", "").lower() == "challenge":
+        return True
+    content_type = response.headers.get("content-type", "")
+    if response.status_code in (403, 503) and "text/html" in content_type:
+        head = response.text[:2000]
+        return "Just a moment" in head or "cf-chl" in head or "challenge-platform" in head
+    return False
+
+
+def _error_detail(response: httpx.Response) -> str:
+    """A short, value-free description of an error body: JSON error type/message only."""
+    try:
+        data = response.json()
+    except ValueError:
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    err = data.get("error")
+    parts: list[str] = []
+    if isinstance(err, dict):
+        for key in ("type", "message"):
+            if isinstance(err.get(key), str):
+                parts.append(err[key])
+    elif isinstance(err, str):
+        parts.append(err)
+    elif isinstance(data.get("message"), str):
+        parts.append(data["message"])
+    detail = "; ".join(parts).strip()
+    return f" ({detail[:MAX_ERROR_DETAIL]})" if detail else ""
 
 
 def _retry_after_seconds(response: httpx.Response) -> float | None:
@@ -94,6 +130,7 @@ class ClaudeClient:
         *,
         base_url: str = DEFAULT_BASE_URL,
         timeout_s: float = DEFAULT_HTTP_TIMEOUT_S,
+        user_agent: str = DEFAULT_USER_AGENT,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         cookie = cookie.strip()
@@ -104,7 +141,7 @@ class ClaudeClient:
         self._org_id: str | None = org_id_from_cookie(cookie)
         self._http = httpx.AsyncClient(
             base_url=self._base_url,
-            headers=build_headers(cookie, self._base_url),
+            headers=build_headers(cookie, self._base_url, user_agent),
             timeout=timeout_s,
             transport=transport,
             follow_redirects=False,
@@ -136,8 +173,19 @@ class ClaudeClient:
             raise UpstreamError(f"transport error calling {path}: {type(exc).__name__}") from exc
 
         status = response.status_code
+        if is_cloudflare_challenge(response):
+            raise BlockedError(
+                f"blocked by Cloudflare's bot challenge ({status}) on {path}; the request never "
+                "reached claude.ai. The cf_clearance cookie is bound to the browser's User-Agent: "
+                "set QUOTAWATCH_USER_AGENT to that browser's navigator.userAgent and re-copy the "
+                "cookie",
+                status,
+            )
         if status in (401, 403):
-            raise AuthError(f"claude.ai rejected the session cookie ({status}) on {path}", status)
+            detail = _error_detail(response)
+            raise AuthError(
+                f"claude.ai rejected the session cookie ({status}) on {path}{detail}", status
+            )
         if status == 429:
             raise RateLimitedError(f"rate limited (429) on {path}", _retry_after_seconds(response))
         if status in (301, 302, 303, 307, 308):
@@ -146,7 +194,7 @@ class ClaudeClient:
                 f"redirected ({status}) on {path}; the session is likely expired", status
             )
         if status >= 400:
-            raise UpstreamError(f"HTTP {status} on {path}", status)
+            raise UpstreamError(f"HTTP {status} on {path}{_error_detail(response)}", status)
         try:
             return response.json()
         except ValueError as exc:

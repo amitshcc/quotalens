@@ -108,7 +108,10 @@ def read_hidden_line(prompt: str, stream: IO[Any] | None = None) -> str:
 
 async def _verify(cookie: str, settings: Settings) -> tuple[object, object | None]:
     async with ClaudeClient(
-        cookie, base_url=settings.base_url, timeout_s=settings.http_timeout_s
+        cookie,
+        base_url=settings.base_url,
+        timeout_s=settings.http_timeout_s,
+        user_agent=settings.user_agent,
     ) as client:
         usage = await client.fetch_usage()
         try:
@@ -145,8 +148,11 @@ def cmd_auth(args: argparse.Namespace, settings: Settings, secrets: SecretStore)
         readings = parse_usage(usage)
     except ClientError as exc:
         print(f"verification failed: {global_redactor().redact(str(exc))}", file=sys.stderr)
-        print("Cookie NOT stored.", file=sys.stderr)
-        return 2
+        if not args.force:
+            print("Cookie NOT stored. Re-run with --force to store it anyway.", file=sys.stderr)
+            return 2
+        print("Storing anyway because --force was given.", file=sys.stderr)
+        readings = []
     except ParseError as exc:
         print(
             f"warning: authenticated, but the payload could not be parsed: {exc}", file=sys.stderr
@@ -229,9 +235,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=f"quotawatch {__version__}")
     parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
+    parser.add_argument(
+        "--user-agent",
+        help="User-Agent to send; must match the browser the cookie was copied from "
+        "(env: QUOTAWATCH_USER_AGENT)",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("auth", help="store the claude.ai session cookie in the OS keyring")
+    auth = sub.add_parser("auth", help="store the claude.ai session cookie in the OS keyring")
+    auth.add_argument(
+        "--force", action="store_true", help="store the cookie even if verification fails"
+    )
     sub.add_parser("probe", help="fetch once and print raw + parsed output")
     serve = sub.add_parser("serve", help="run the poller and the local API")
     serve.add_argument("--port", type=int, help="loopback port (default 8787)")
@@ -250,7 +264,7 @@ def main(argv: Sequence[str] | None = None, secrets: SecretStore | None = None) 
     args = parser.parse_args(argv)
     _setup_logging(args.verbose)
     try:
-        settings = settings_from_env()
+        settings = settings_from_env().with_overrides(user_agent=args.user_agent)
         if args.command == "serve":
             settings = validate(
                 settings.with_overrides(

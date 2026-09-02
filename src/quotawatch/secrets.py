@@ -18,6 +18,9 @@ KEYRING_SERVICE = "quotawatch"
 KEYRING_USERNAME = "claude.ai-session-cookie"
 
 REDACTED = "[REDACTED]"
+# Cookie pairs whose value is an identifier, not a credential; redacting them would
+# hide the org id from every error message and make endpoint drift undebuggable.
+NON_SECRET_COOKIE_NAMES = frozenset({"lastActiveOrg"})
 
 # Patterns that catch cookie material even when we do not know the exact value:
 # a sessionKey pair, a Cookie header, or an Anthropic session token prefix.
@@ -113,7 +116,9 @@ class Redactor:
             self._secrets.append(value)
         # Also redact each cookie pair's value individually, in case only part leaks.
         for pair in value.split(";"):
-            _, sep, pair_value = pair.strip().partition("=")
+            name, sep, pair_value = pair.strip().partition("=")
+            if name.strip() in NON_SECRET_COOKIE_NAMES:
+                continue
             if sep and len(pair_value) >= 8 and pair_value not in self._secrets:
                 self._secrets.append(pair_value)
 

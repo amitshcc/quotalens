@@ -21,6 +21,12 @@ MIN_POLL_INTERVAL_S = 30  # floor: below this we would be rate-limiting ourselve
 DEFAULT_BURN_LOOKBACK_MIN = 15
 DEFAULT_BASE_URL = "https://claude.ai"
 DEFAULT_HTTP_TIMEOUT_S = 20.0
+# Cloudflare binds the cf_clearance cookie to the browser's User-Agent, so users
+# whose cookie was copied from a different browser can override this.
+DEFAULT_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
 APP_NAME = "quotawatch"
 
 
@@ -44,6 +50,7 @@ class Settings:
     db_path: Path = default_data_dir() / "quotawatch.db"
     base_url: str = DEFAULT_BASE_URL
     http_timeout_s: float = DEFAULT_HTTP_TIMEOUT_S
+    user_agent: str = DEFAULT_USER_AGENT
     poll_enabled: bool = True
 
     def with_overrides(self, **kwargs: object) -> Settings:
@@ -74,6 +81,7 @@ def settings_from_env() -> Settings:
         burn_lookback_min=_env_int("LOOKBACK_MINUTES", DEFAULT_BURN_LOOKBACK_MIN),
         db_path=Path(db_raw).expanduser() if db_raw else default_data_dir() / "quotawatch.db",
         base_url=os.environ.get(ENV_PREFIX + "BASE_URL", DEFAULT_BASE_URL),
+        user_agent=os.environ.get(ENV_PREFIX + "USER_AGENT") or DEFAULT_USER_AGENT,
     )
     return validate(settings)
 

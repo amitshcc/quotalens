@@ -7,6 +7,7 @@ import pytest
 
 from conftest import COOKIE, COOKIE_NO_ORG, ORG, json_response, make_client, make_handler
 from quotawatch.client import (
+    ClaudeClient,
     RateLimitedError,
     ShapeError,
     UpstreamError,
@@ -118,3 +119,55 @@ def test_timeout_is_upstream_error() -> None:
 def test_empty_cookie_rejected() -> None:
     with pytest.raises(ValueError):
         make_client(lambda r: json_response(200, {}), cookie="   ")
+
+
+def test_cloudflare_challenge_is_blocked_error_not_auth() -> None:
+    from quotawatch.client import BlockedError
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403,
+            headers={"cf-mitigated": "challenge", "content-type": "text/html; charset=UTF-8"},
+            content=b"<html><title>Just a moment...</title></html>",
+        )
+
+    client = make_client(handler)
+    with pytest.raises(BlockedError, match="User-Agent"):
+        asyncio.run(client.fetch_usage())
+    asyncio.run(client.close())
+
+
+def test_cloudflare_html_without_header_is_still_blocked() -> None:
+    from quotawatch.client import BlockedError
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403, headers={"content-type": "text/html"}, content=b"<title>Just a moment...</title>"
+        )
+
+    client = make_client(handler)
+    with pytest.raises(BlockedError):
+        asyncio.run(client.fetch_usage())
+    asyncio.run(client.close())
+
+
+def test_json_error_detail_is_included_but_capped() -> None:
+    from quotawatch.client import AuthError
+
+    body = {"type": "error", "error": {"type": "permission_error", "message": "x" * 500}}
+    client = make_client(make_handler(usage=body, usage_status=403))
+    with pytest.raises(AuthError) as exc:
+        asyncio.run(client.fetch_usage())
+    assert "permission_error" in str(exc.value)
+    assert len(str(exc.value)) < 400
+    asyncio.run(client.close())
+
+
+def test_custom_user_agent_is_sent() -> None:
+    seen: list[httpx.Request] = []
+    client = ClaudeClient(
+        COOKIE, user_agent="TestUA/1.0", transport=httpx.MockTransport(make_handler(seen=seen))
+    )
+    asyncio.run(client.fetch_usage())
+    asyncio.run(client.close())
+    assert seen[0].headers["user-agent"] == "TestUA/1.0"
