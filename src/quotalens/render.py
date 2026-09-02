@@ -39,6 +39,8 @@ _CHIP = {
     "auth": ("auth", "i-auth"),
 }
 _VALUE_COLOUR = {"elevated": "var(--st-elevated)", "critical": "var(--st-critical)"}
+# Visible em dash, plus the hidden twin the link-lost stylesheet reveals.
+WITHHELD = '<span class="num">—</span><span class="dash">—</span>'
 DISCLAIMER = "Unofficial. Uses undocumented claude.ai endpoints. Observes only."
 
 
@@ -125,7 +127,7 @@ def _hero(dash: Dashboard) -> str:
     b = dash.burn
     cls = "readout off" if b.withheld else "readout"
     if b.withheld:
-        value = '<span class="dash">—</span>'
+        value = WITHHELD
     else:
         value = f'<span class="num">{e(b.rate_text)}</span><span class="dash">—</span>'
     trace = ""
@@ -163,7 +165,7 @@ def _meters(dash: Dashboard) -> str:
     if not dash.windows:
         body = (
             '<div class="meter"><div class="lbl">No windows yet</div>'
-            '<div class="v m"><span class="dash">—</span></div><div class="bar hatch"></div>'
+            f'<div class="v m">{WITHHELD}</div><div class="bar hatch"></div>'
             '<div class="foot m"><span>waiting for the first poll</span></div></div>'
         )
     else:
@@ -178,7 +180,7 @@ def _meter(w: WindowView) -> str:
     if w.withheld:
         return (
             f'<div class="meter is-stale" data-slot="{w.slot}"><div class="lbl">{label}</div>'
-            '<div class="v m"><span class="dash">—</span></div><div class="bar hatch"></div>'
+            f'<div class="v m">{WITHHELD}</div><div class="bar hatch"></div>'
             f'<div class="foot m"><span>{e(w.resets_text)}</span><span></span></div></div>'
         )
     colour = _VALUE_COLOUR.get(w.state)
@@ -262,8 +264,8 @@ def _side(dash: Dashboard) -> str:
     if dash.spend is not None:
         s = dash.spend
         if s.withheld:
-            figure = '<span class="dash">—</span>'
-            pct = '<span class="dash">—</span>'
+            figure = WITHHELD
+            pct = WITHHELD
             bar = '<div class="bar hatch"></div>'
         else:
             money = (

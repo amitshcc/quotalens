@@ -4,8 +4,9 @@ QuotaLens is a local, self-hosted monitor for Claude Pro/Max subscription usage.
 your quota over time and leads with the **burn rate** (percentage points per
 hour), so you can tell not just where you are but whether something is running.
 
-Status: **pre-alpha**. Milestones M0 and M1 (credential handling, poller,
-storage, read APIs) are in progress. No dashboard yet.
+Status: **pre-alpha**. Milestones M0 to M2 are done: credential handling, the
+poller, storage, read APIs, and the dashboard. Per-project attribution from
+local Claude Code logs (M3), alerts and export (M4) are next.
 
 ## Quick start
 
@@ -14,8 +15,26 @@ pipx install quotalens      # or: uv tool install quotalens
 quotalens auth              # paste your claude.ai session cookie once (stored in the OS keychain)
 quotalens probe             # one fetch, prints raw + parsed output for debugging
 quotalens serve             # binds 127.0.0.1:8787, polls every 60s
+open http://127.0.0.1:8787   # the dashboard
 curl 'http://127.0.0.1:8787/api/quota/current'
 ```
+
+## The dashboard
+
+The number it leads with is the burn rate in percentage points per hour over
+the 5-hour window. Below it: one meter per quota window with the API's own
+severity, a 24-hour chart of every window with resets drawn as gaps, and the
+extra-usage spend computed from minor units with the payload's exponent, never
+clamped at 100%.
+
+States are honest by construction. If the collector has not succeeded in three
+poll intervals, the cookie was rejected, or the response could not be parsed,
+every value is replaced by an em dash and the frame changes, so a stale page
+never looks like a healthy one showing low usage. If the browser loses the
+server, the same treatment applies from CSS alone.
+
+Renamed from `quotawatch`: on first start an existing database and keyring
+entry under the old name are moved across automatically.
 
 ## How it reaches claude.ai
 

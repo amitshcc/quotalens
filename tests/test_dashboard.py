@@ -208,7 +208,7 @@ def test_never_polled_renders_em_dash_not_zero(settings, store, secrets) -> None
     with TestClient(create_app(settings, store, secrets)) as tc:
         html = tc.get("/").text
     assert 'class="readout off"' in html
-    assert html.count(EM_DASH) >= 2
+    assert f'<span class="num">{EM_DASH}</span>' in html  # visible, not only the hidden twin
     assert "0.00" not in html
 
 
@@ -224,6 +224,7 @@ def test_stale_page_shows_em_dash_and_hatch_instead_of_numbers(settings, store, 
     assert html.count('class="meter is-stale"') == 3
     assert html.count('class="bar hatch"') >= 3
     assert '<span class="num">57</span>' not in html  # the last stored value must not show
+    assert html.count(f'<span class="num">{EM_DASH}</span>') >= 4  # readout + three meters
     assert "stopped ticking" in html
     assert 'class="readout off"' in html
 
