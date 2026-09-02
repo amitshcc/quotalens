@@ -148,7 +148,13 @@ class Poller:
 
     async def run(self) -> None:
         while not self._stop.is_set():
-            delay = await self.poll_once()
+            try:
+                delay = await self.poll_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # belt and braces: poll_once already catches everything
+                log.exception("poll loop error")
+                delay = self.schedule.on_failure()
             self.status.next_poll_ts = int(self._clock() + delay)
             with contextlib.suppress(asyncio.TimeoutError, TimeoutError):
                 await asyncio.wait_for(self._stop.wait(), timeout=delay)
@@ -177,28 +183,29 @@ class Poller:
         log.warning("poll failed (%s): %s", kind, safe)
 
     async def poll_once(self) -> float:
-        """Fetch, parse, store. Returns seconds until the next attempt."""
+        """Fetch, parse, store. Returns seconds until the next attempt. Never raises."""
         now = int(self._clock())
         self.status.last_attempt_ts = now
         try:
             client = await self._client_for_current_cookie()
+            if client is None:
+                self._fail(
+                    "no_cookie", "no_cookie", "no session cookie stored; run `quotawatch auth`", now
+                )
+                return self.schedule.on_auth_error()
+            return await self._collect(client, now)
         except SecretStoreError as exc:
             self._fail("error", "keyring_error", str(exc), now)
             return self.schedule.on_failure()
-        if client is None:
-            self._fail(
-                "no_cookie", "no_cookie", "no session cookie stored; run `quotawatch auth`", now
-            )
-            return self.schedule.on_auth_error()
-
-        try:
-            usage_raw = await client.fetch_usage()
         except AuthError as exc:
             self._fail("auth_expired", "auth_expired", str(exc), now)
             return self.schedule.on_auth_error()
         except RateLimitedError as exc:
             self._fail("rate_limited", "rate_limited", str(exc), now)
             return self.schedule.on_rate_limited(exc.retry_after)
+        except ParseError as exc:
+            self._fail("error", "parse_failed", str(exc), now)
+            return self.schedule.on_failure()
         except ClientError as exc:
             self._fail("error", "poll_error", str(exc), now)
             return self.schedule.on_failure()
@@ -206,13 +213,12 @@ class Poller:
             self._fail("error", "poll_error", f"unexpected {type(exc).__name__}: {exc}", now)
             return self.schedule.on_failure()
 
+    async def _collect(self, client: ClaudeClient, now: int) -> float:
+        """One successful-path poll; every error propagates to :meth:`poll_once`."""
+        usage_raw = await client.fetch_usage()
         self.status.org_resolved = client.org_id is not None
-        self._store.record_sample(now, "usage", usage_raw)
-        try:
-            readings = parse_usage(usage_raw)
-        except ParseError as exc:
-            self._fail("error", "parse_failed", str(exc), now)
-            return self.schedule.on_failure()
+        self._store.record_sample(now, "usage", usage_raw)  # keep raw even if parsing fails
+        readings = parse_usage(usage_raw)
         self._store.record_quota(now, readings)
         if any(r.window.startswith("unknown:") for r in readings):
             self._store.record_event(
@@ -245,6 +251,7 @@ class Poller:
             self.status.overage_available = False
             return
         self._store.record_sample(now, "overage", raw)
+        self._overage_failed_once = False  # a later failure is news again
         reading = parse_overage(raw)
         if reading is None:
             self.status.overage_available = False

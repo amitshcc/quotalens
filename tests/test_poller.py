@@ -159,3 +159,54 @@ def test_run_loop_polls_and_stops(settings, store, secrets) -> None:
     asyncio.run(run())
     assert poller.status.polls_ok == 1
     assert poller.status.next_poll_ts == 1_000_000 + 60
+
+
+def test_overage_401_is_auth_expired_and_loop_survives(settings, store, secrets) -> None:
+    """A 401 on the optional endpoint must not escape poll_once (it used to kill the task)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/overage_spend_limit"):
+            return json_response(401, {"error": "unauthorized"})
+        return make_handler()(request)
+
+    poller = _poller(settings, store, secrets, handler)
+    delay = asyncio.run(poller.poll_once())
+    assert delay == AUTH_RETRY_S
+    assert poller.status.state == "auth_expired"
+    assert store.counts()["quota"] == 4  # usage succeeded, so its readings are kept
+
+    async def run() -> None:
+        poller.start()
+        await asyncio.sleep(0.05)
+        assert not poller._task.done()
+        await poller.stop()
+
+    asyncio.run(run())
+
+
+def test_unexpected_store_error_does_not_kill_loop(settings, store, secrets, monkeypatch) -> None:
+    def boom(*args, **kwargs):
+        raise RuntimeError("disk on fire")
+
+    monkeypatch.setattr(store, "record_quota", boom)
+    poller = _poller(settings, store, secrets, make_handler())
+    assert asyncio.run(poller.poll_once()) == 60
+    assert poller.status.state == "error"
+    assert "disk on fire" in (poller.status.last_error or "")
+    assert [e.kind for e in store.recent_events()] == ["poll_error"]
+
+
+def test_overage_flapping_is_reported_each_time(settings, store, secrets) -> None:
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/overage_spend_limit"):
+            calls["n"] += 1
+            if calls["n"] in (1, 3):
+                return json_response(500, {"error": "flaky"})
+        return make_handler()(request)
+
+    poller = _poller(settings, store, secrets, handler)
+    for _ in range(3):
+        asyncio.run(poller.poll_once())
+    assert [e.kind for e in store.recent_events()] == ["overage_unavailable", "overage_unavailable"]
