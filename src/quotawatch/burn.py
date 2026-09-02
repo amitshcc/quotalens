@@ -6,22 +6,44 @@ the series into segments at every reset and only measure inside the newest one.
 
 A reset is detected between two consecutive samples when either:
 
-* ``resets_at`` changed (both values present), or
+* ``resets_at`` moved by more than :data:`RESET_TIME_TOLERANCE_S` (both values
+  present), or
 * the percentage fell by more than :data:`RESET_DROP_PCT` points.
 
-The second rule covers payloads where ``resets_at`` is absent or null.
+The second rule covers payloads where ``resets_at`` is absent or null. The
+tolerance exists because the live server recomputes ``resets_at`` on every call
+and the microseconds jitter (``12:40:00.421772`` then ``12:40:00.656558``).
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from quotawatch.store import QuotaRow
 
 RESET_DROP_PCT = 5.0
+RESET_TIME_TOLERANCE_S = 60.0  # resets_at jitter below this is noise, not a new window
 MIN_SPAN_S = 60  # two samples closer than this give a meaningless rate
+
+
+def _parse_iso(value: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def resets_at_changed(prev: str, cur: str) -> bool:
+    """True if two ``resets_at`` values denote different windows, ignoring jitter."""
+    if prev == cur:
+        return False
+    a, b = _parse_iso(prev), _parse_iso(cur)
+    if a is None or b is None or (a.tzinfo is None) != (b.tzinfo is None):
+        return prev.split(".")[0] != cur.split(".")[0]  # unparsable: drop fractional seconds
+    return abs((b - a).total_seconds()) > RESET_TIME_TOLERANCE_S
 
 
 @dataclass(frozen=True)
@@ -54,7 +76,7 @@ class BurnResult:
 
 def is_reset(prev: QuotaRow, cur: QuotaRow) -> bool:
     """True if a window boundary lies between ``prev`` and ``cur``."""
-    if prev.resets_at and cur.resets_at and prev.resets_at != cur.resets_at:
+    if prev.resets_at and cur.resets_at and resets_at_changed(prev.resets_at, cur.resets_at):
         return True
     return (prev.pct - cur.pct) > RESET_DROP_PCT
 
