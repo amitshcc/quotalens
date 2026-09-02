@@ -7,9 +7,11 @@ import asyncio
 import getpass
 import json
 import logging
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import IO, Any
 
 from quotawatch import __version__
 from quotawatch.client import ClaudeClient, ClientError, has_session_key
@@ -54,6 +56,56 @@ def _load_cookie(secrets: SecretStore) -> str:
     return cookie
 
 
+def read_hidden_line(prompt: str, stream: IO[Any] | None = None) -> str:
+    """Read one line without echo and without the terminal's line-length cap.
+
+    ``getpass`` reads in canonical mode, where macOS drops everything past 1024
+    bytes on a line, including the newline, so a pasted Cookie header hangs the
+    prompt. On a POSIX tty we switch to cbreak mode and read chunks ourselves.
+    Piped stdin (``pbpaste | quotawatch auth``) is read directly.
+    """
+    stream = stream or sys.stdin
+    if not stream.isatty():
+        return stream.readline().rstrip("\r\n")
+    if sys.platform.startswith("win"):
+        return getpass.getpass(prompt)
+
+    import termios
+    import tty
+
+    fd = stream.fileno()
+    saved = termios.tcgetattr(fd)
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    buf = bytearray()
+    try:
+        tty.setcbreak(fd)  # no echo, no line buffering; Ctrl-C still raises
+        while True:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            done = False
+            for byte in chunk:
+                if byte in (10, 13):  # \n or \r ends the line
+                    done = True
+                    break
+                if byte in (8, 127):  # backspace
+                    if buf:
+                        buf.pop()
+                    continue
+                if byte == 4:  # Ctrl-D
+                    done = True
+                    break
+                buf.append(byte)
+            if done:
+                break
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+    return buf.decode("utf-8", errors="replace")
+
+
 async def _verify(cookie: str, settings: Settings) -> tuple[object, object | None]:
     async with ClaudeClient(
         cookie, base_url=settings.base_url, timeout_s=settings.http_timeout_s
@@ -67,12 +119,14 @@ async def _verify(cookie: str, settings: Settings) -> tuple[object, object | Non
 
 
 def cmd_auth(args: argparse.Namespace, settings: Settings, secrets: SecretStore) -> int:
-    print(
-        "Paste your claude.ai session cookie (the full Cookie header value from a\n"
-        "request to claude.ai/settings/usage). Input is hidden and never echoed."
-    )
+    if sys.stdin.isatty():
+        print(
+            "Paste your claude.ai session cookie (the full Cookie header value from a\n"
+            "request to claude.ai/settings/usage), then press Enter. Input is hidden.\n"
+            "Tip: `pbpaste | quotawatch auth` (macOS) also works."
+        )
     try:
-        cookie = getpass.getpass("Cookie: ").strip()
+        cookie = read_hidden_line("Cookie: ").strip()
     except (EOFError, KeyboardInterrupt):
         print("\naborted", file=sys.stderr)
         return 1
