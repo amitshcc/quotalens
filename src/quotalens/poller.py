@@ -14,17 +14,17 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from quotawatch.client import (
+from quotalens.client import (
     AuthError,
     BlockedError,
     ClaudeClient,
     ClientError,
     RateLimitedError,
 )
-from quotawatch.config import Settings
-from quotawatch.parse import ParseError, SpendReading, UsageParse, parse_spend, parse_usage
-from quotawatch.secrets import Redactor, SecretStore, SecretStoreError
-from quotawatch.store import Store
+from quotalens.config import Settings
+from quotalens.parse import ParseError, SpendReading, UsageParse, parse_spend, parse_usage
+from quotalens.secrets import Redactor, SecretStore, SecretStoreError
+from quotalens.store import Store
 
 log = logging.getLogger(__name__)
 
@@ -169,7 +169,7 @@ class Poller:
 
     def start(self) -> None:
         self._stop.clear()
-        self._task = asyncio.create_task(self.run(), name="quotawatch-poller")
+        self._task = asyncio.create_task(self.run(), name="quotalens-poller")
 
     async def stop(self) -> None:
         self._stop.set()
@@ -226,7 +226,7 @@ class Poller:
             client = await self._client_for_current_cookie()
             if client is None:
                 self._fail(
-                    "no_cookie", "no_cookie", "no session cookie stored; run `quotawatch auth`", now
+                    "no_cookie", "no_cookie", "no session cookie stored; run `quotalens auth`", now
                 )
                 return self.schedule.on_auth_error()
             return await self._collect(client, now)
@@ -276,7 +276,7 @@ class Poller:
         if parsed.fallback_used:
             self._store.record_event(
                 "shape_drift",
-                "usage payload parsed via generic fallback; check `quotawatch probe`",
+                "usage payload parsed via generic fallback; check `quotalens probe`",
                 ts=now,
             )
         ignored = frozenset(b.key for b in parsed.ignored)

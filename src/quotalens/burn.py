@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from quotawatch.store import QuotaRow
+from quotalens.store import QuotaRow
 
 RESET_DROP_PCT = 5.0
 RESET_TIME_TOLERANCE_S = 60.0  # resets_at jitter below this is noise, not a new window

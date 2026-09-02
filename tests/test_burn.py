@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from quotawatch.burn import burn_rate, is_reset, resets_at_changed, split_at_resets
-from quotawatch.store import QuotaRow
+from quotalens.burn import burn_rate, is_reset, resets_at_changed, split_at_resets
+from quotalens.store import QuotaRow
 
 T0 = 1_000_000
 R1 = "2026-09-02T18:00:00+00:00"

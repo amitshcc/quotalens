@@ -12,7 +12,7 @@ from conftest import (
     make_client,
     make_handler,
 )
-from quotawatch.poller import (
+from quotalens.poller import (
     AUTH_RETRY_S,
     MAX_BACKOFF_S,
     RATE_LIMIT_MAX_S,
@@ -20,7 +20,7 @@ from quotawatch.poller import (
     Poller,
     Schedule,
 )
-from quotawatch.secrets import MemorySecretStore, Redactor
+from quotalens.secrets import MemorySecretStore, Redactor
 
 
 def test_schedule_backoff_doubles_and_caps() -> None:

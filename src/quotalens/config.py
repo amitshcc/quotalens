@@ -1,7 +1,7 @@
-"""Runtime settings. Environment variables (``QUOTAWATCH_*``) and CLI flags only.
+"""Runtime settings. Environment variables (``QUOTALENS_*``) and CLI flags only.
 
 There is deliberately no config file: the one secret this tool holds lives in the
-OS keyring (see :mod:`quotawatch.secrets`), and everything else is a handful of
+OS keyring (see :mod:`quotalens.secrets`), and everything else is a handful of
 numbers that fit on a command line.
 """
 
@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import os
 import sys
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-ENV_PREFIX = "QUOTAWATCH_"
+ENV_PREFIX = "QUOTALENS_"
 
 DEFAULT_HOST = "127.0.0.1"  # loopback only; no --host flag in this milestone
 DEFAULT_PORT = 8787
@@ -26,18 +26,22 @@ DEFAULT_HTTP_TIMEOUT_S = 20.0
 # curl_cffi impersonating a browser, which also supplies a matching User-Agent.
 DEFAULT_IMPERSONATE = "chrome"
 DEFAULT_USER_AGENT: str | None = None  # None: let the impersonated browser profile decide
-APP_NAME = "quotawatch"
+APP_NAME = "quotalens"
 
 
-def default_data_dir() -> Path:
+def default_data_dir(app_name: str = APP_NAME) -> Path:
     """Per-OS user data directory, without pulling in platformdirs."""
     if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / APP_NAME
+        return Path.home() / "Library" / "Application Support" / app_name
     if sys.platform.startswith("win"):
         base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
-        return Path(base) / APP_NAME if base else Path.home() / APP_NAME
+        return Path(base) / app_name if base else Path.home() / app_name
     xdg = os.environ.get("XDG_DATA_HOME")
-    return (Path(xdg) if xdg else Path.home() / ".local" / "share") / APP_NAME
+    return (Path(xdg) if xdg else Path.home() / ".local" / "share") / app_name
+
+
+def default_db_path() -> Path:
+    return default_data_dir() / f"{APP_NAME}.db"
 
 
 @dataclass(frozen=True)
@@ -46,7 +50,7 @@ class Settings:
     port: int = DEFAULT_PORT
     poll_interval_s: int = DEFAULT_POLL_INTERVAL_S
     burn_lookback_min: int = DEFAULT_BURN_LOOKBACK_MIN
-    db_path: Path = default_data_dir() / "quotawatch.db"
+    db_path: Path = field(default_factory=default_db_path)
     base_url: str = DEFAULT_BASE_URL
     http_timeout_s: float = DEFAULT_HTTP_TIMEOUT_S
     user_agent: str | None = DEFAULT_USER_AGENT
@@ -79,7 +83,7 @@ def settings_from_env() -> Settings:
         port=_env_int("PORT", DEFAULT_PORT),
         poll_interval_s=_env_int("INTERVAL", DEFAULT_POLL_INTERVAL_S),
         burn_lookback_min=_env_int("LOOKBACK_MINUTES", DEFAULT_BURN_LOOKBACK_MIN),
-        db_path=Path(db_raw).expanduser() if db_raw else default_data_dir() / "quotawatch.db",
+        db_path=Path(db_raw).expanduser() if db_raw else default_db_path(),
         base_url=os.environ.get(ENV_PREFIX + "BASE_URL", DEFAULT_BASE_URL),
         user_agent=os.environ.get(ENV_PREFIX + "USER_AGENT") or DEFAULT_USER_AGENT,
         impersonate=os.environ.get(ENV_PREFIX + "IMPERSONATE") or DEFAULT_IMPERSONATE,

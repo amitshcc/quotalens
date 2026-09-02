@@ -14,7 +14,7 @@ import re
 from collections.abc import Iterable
 from typing import Protocol
 
-KEYRING_SERVICE = "quotawatch"
+KEYRING_SERVICE = "quotalens"
 KEYRING_USERNAME = "claude.ai-session-cookie"
 
 REDACTED = "[REDACTED]"

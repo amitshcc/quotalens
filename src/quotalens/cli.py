@@ -1,4 +1,4 @@
-"""Command line: ``quotawatch auth | probe | serve``."""
+"""Command line: ``quotalens auth | probe | serve``."""
 
 from __future__ import annotations
 
@@ -14,17 +14,18 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import IO, Any
 
-from quotawatch import __version__
-from quotawatch.client import ClaudeClient, ClientError, has_session_key
-from quotawatch.config import (
+from quotalens import __version__
+from quotalens.client import ClaudeClient, ClientError, has_session_key
+from quotalens.config import (
     MIN_POLL_INTERVAL_S,
     Settings,
     SettingsError,
     settings_from_env,
     validate,
 )
-from quotawatch.parse import ParseError, parse_spend, parse_usage
-from quotawatch.secrets import (
+from quotalens.legacy import LEGACY_ENV_PREFIX, LEGACY_KEYRING_SERVICE, migrate_legacy
+from quotalens.parse import ParseError, parse_spend, parse_usage
+from quotalens.secrets import (
     KeyringSecretStore,
     SecretStore,
     SecretStoreError,
@@ -32,7 +33,7 @@ from quotawatch.secrets import (
     install_log_redaction,
 )
 
-log = logging.getLogger("quotawatch")
+log = logging.getLogger("quotalens")
 
 PROBE_WARNING = """\
 !! WARNING: the output below is your account's usage data. It never includes
@@ -60,7 +61,7 @@ def _setup_logging(verbose: bool) -> None:
 def _load_cookie(secrets: SecretStore) -> str:
     cookie = secrets.get_cookie()
     if not cookie:
-        raise SystemExit("no session cookie stored; run `quotawatch auth` first")
+        raise SystemExit("no session cookie stored; run `quotalens auth` first")
     global_redactor().add(cookie)
     return cookie
 
@@ -71,7 +72,7 @@ def read_hidden_line(prompt: str, stream: IO[Any] | None = None) -> str:
     ``getpass`` reads in canonical mode, where macOS drops everything past 1024
     bytes on a line, including the newline, so a pasted Cookie header hangs the
     prompt. On a POSIX tty we switch to cbreak mode and read chunks ourselves.
-    Piped stdin (``pbpaste | quotawatch auth``) is read directly.
+    Piped stdin (``pbpaste | quotalens auth``) is read directly.
     """
     stream = stream or sys.stdin
     if not stream.isatty():
@@ -136,7 +137,7 @@ def cmd_auth(args: argparse.Namespace, settings: Settings, secrets: SecretStore)
         print(
             "Paste your claude.ai session cookie (the full Cookie header value from a\n"
             "request to claude.ai/settings/usage), then press Enter. Input is hidden.\n"
-            "Tip: `pbpaste | quotawatch auth` (macOS) also works."
+            "Tip: `pbpaste | quotalens auth` (macOS) also works."
         )
     try:
         cookie = read_hidden_line("Cookie: ").strip()
@@ -222,20 +223,18 @@ def cmd_probe(args: argparse.Namespace, settings: Settings, secrets: SecretStore
 def cmd_serve(args: argparse.Namespace, settings: Settings, secrets: SecretStore) -> int:
     import uvicorn
 
-    from quotawatch.api import create_app
-    from quotawatch.store import Store
+    from quotalens.api import create_app
+    from quotalens.store import Store
 
     cookie = secrets.get_cookie()
     if cookie:
         global_redactor().add(cookie)
     else:
-        log.warning(
-            "no session cookie stored; the poller will idle until you run `quotawatch auth`"
-        )
+        log.warning("no session cookie stored; the poller will idle until you run `quotalens auth`")
     store = Store(settings.db_path)
     app = create_app(settings, store, secrets)
     log.info(
-        "quotawatch %s on http://%s:%d  db=%s  interval=%ds",
+        "QuotaLens %s on http://%s:%d  db=%s  interval=%ds",
         __version__,
         settings.host,
         settings.port,
@@ -251,14 +250,14 @@ def cmd_serve(args: argparse.Namespace, settings: Settings, secrets: SecretStore
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="quotawatch", description="Local monitor for Claude subscription quota."
+        prog="quotalens", description="QuotaLens: local monitor for Claude subscription quota."
     )
-    parser.add_argument("--version", action="version", version=f"quotawatch {__version__}")
+    parser.add_argument("--version", action="version", version=f"QuotaLens {__version__}")
     parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
     parser.add_argument(
         "--user-agent",
         help="override the User-Agent (default: the impersonated browser's; "
-        "env: QUOTAWATCH_USER_AGENT)",
+        "env: QUOTALENS_USER_AGENT)",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -299,7 +298,14 @@ def main(argv: Sequence[str] | None = None, secrets: SecretStore | None = None) 
             )
     except SettingsError as exc:
         parser.error(str(exc))
-    secrets = secrets or KeyringSecretStore()
+    stale_env = sorted(k for k in os.environ if k.startswith(LEGACY_ENV_PREFIX))
+    if stale_env:
+        log.warning("ignoring %s; the prefix is now QUOTALENS_", ", ".join(stale_env))
+    if secrets is None:
+        secrets = KeyringSecretStore()
+        migrate_legacy(
+            settings.db_path, secrets, KeyringSecretStore(service=LEGACY_KEYRING_SERVICE)
+        )
     handlers = {"auth": cmd_auth, "probe": cmd_probe, "serve": cmd_serve}
     try:
         return handlers[args.command](args, settings, secrets)

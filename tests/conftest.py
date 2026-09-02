@@ -11,10 +11,10 @@ from urllib.parse import urlparse
 
 import pytest
 
-from quotawatch.client import ClaudeClient, RawResponse, TransportError
-from quotawatch.config import Settings
-from quotawatch.secrets import MemorySecretStore, Redactor
-from quotawatch.store import Store
+from quotalens.client import ClaudeClient, RawResponse, TransportError
+from quotalens.config import Settings
+from quotalens.secrets import MemorySecretStore, Redactor
+from quotalens.store import Store
 
 COOKIE = "sessionKey=sk-ant-sid01-SECRETSECRETSECRET-abc; lastActiveOrg=org-1234-5678-abcd"
 COOKIE_NO_ORG = "sessionKey=sk-ant-sid01-SECRETSECRETSECRET-abc"

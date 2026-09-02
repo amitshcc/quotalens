@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from quotawatch.parse import QuotaReading, SpendReading
+from quotalens.parse import QuotaReading, SpendReading
 
 SCHEMA_VERSION = 2
 

@@ -8,8 +8,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from conftest import COOKIE, make_client, make_handler, raise_transport
-from quotawatch.api import create_app
-from quotawatch.secrets import (
+from quotalens.api import create_app
+from quotalens.secrets import (
     REDACTED,
     RedactingFilter,
     Redactor,
@@ -42,9 +42,9 @@ def test_short_values_are_not_added() -> None:
 def test_logging_filter_scrubs_message_args_and_exceptions(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    logger = logging.getLogger("quotawatch.test")
+    logger = logging.getLogger("quotalens.test")
     logger.addFilter(RedactingFilter(Redactor([COOKIE])))
-    with caplog.at_level(logging.DEBUG, logger="quotawatch.test"):
+    with caplog.at_level(logging.DEBUG, logger="quotalens.test"):
         logger.info("cookie is %s", COOKIE)
         logger.info(f"inline {COOKIE}")
         try:
@@ -60,9 +60,9 @@ def test_logging_filter_scrubs_message_args_and_exceptions(
 
 
 def test_logging_filter_keeps_numeric_args_formattable(caplog: pytest.LogCaptureFixture) -> None:
-    logger = logging.getLogger("quotawatch.numeric")
+    logger = logging.getLogger("quotalens.numeric")
     logger.addFilter(RedactingFilter(Redactor([COOKIE])))
-    with caplog.at_level(logging.INFO, logger="quotawatch.numeric"):
+    with caplog.at_level(logging.INFO, logger="quotalens.numeric"):
         logger.info("poll ok: %d readings in %.1fs for %s", 3, 0.25, COOKIE)
     assert "poll ok: 3 readings in 0.2s for [REDACTED]" in caplog.text
 
@@ -83,7 +83,7 @@ def test_install_log_redaction_covers_root(caplog: pytest.LogCaptureFixture) -> 
 def test_client_errors_never_carry_headers_or_cookie() -> None:
     import asyncio
 
-    from quotawatch.client import AuthError, ClientError, RateLimitedError
+    from quotalens.client import AuthError, ClientError, RateLimitedError
 
     async def run() -> list[str]:
         messages = []
@@ -124,7 +124,7 @@ def test_health_error_string_is_redacted(settings, store, secrets) -> None:
     """A poll failure whose message contains the cookie shows up scrubbed on /api/health."""
     import asyncio
 
-    from quotawatch.poller import Poller
+    from quotalens.poller import Poller
 
     def factory(cookie: str):
         return make_client(raise_transport(f"refused; Cookie: {cookie}"), cookie)

@@ -5,7 +5,7 @@ import copy
 import pytest
 
 from conftest import OVERAGE_DOCUMENTED, USAGE_DOCUMENTED, USAGE_LIVE_2026_09
-from quotawatch.parse import (
+from quotalens.parse import (
     ParseError,
     QuotaReading,
     format_money,
