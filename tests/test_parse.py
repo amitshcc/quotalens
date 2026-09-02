@@ -2,8 +2,14 @@ from __future__ import annotations
 
 import pytest
 
-from conftest import OVERAGE_DOCUMENTED, USAGE_DOCUMENTED
-from quotawatch.parse import ParseError, QuotaReading, parse_overage, parse_usage
+from conftest import OVERAGE_DOCUMENTED, USAGE_DOCUMENTED, USAGE_LIVE_2026_09
+from quotawatch.parse import (
+    ParseError,
+    QuotaReading,
+    parse_overage,
+    parse_spend_from_usage,
+    parse_usage,
+)
 
 
 def test_documented_shape_yields_all_windows_and_limits() -> None:
@@ -76,3 +82,30 @@ def test_overage_documented() -> None:
 @pytest.mark.parametrize("payload", [None, {}, {"used_credits": "12"}, {"used_credits": True}])
 def test_overage_missing_returns_none(payload: object) -> None:
     assert parse_overage(payload) is None
+
+
+def test_live_2026_09_shape() -> None:
+    readings = {r.window: r for r in parse_usage(USAGE_LIVE_2026_09)}
+    assert readings["five_hour"].pct == 71
+    assert readings["five_hour"].resets_at == "2026-09-02T12:40:00.421772+00:00"
+    assert readings["seven_day"].pct == 38
+    assert "extra_usage" not in readings  # spend utilization is not a quota window
+    assert "spend" not in readings
+    assert readings["limit:session"].label == "session"
+    assert readings["limit:weekly_all"].pct == 38
+    assert readings["limit:sonnet"] == QuotaReading(
+        "limit:sonnet", "Sonnet", 66.0, "2026-09-07T01:00:00.422121+00:00"
+    )
+    assert not any(w.startswith("unknown:") for w in readings)
+
+
+def test_spend_from_usage_payload() -> None:
+    reading = parse_spend_from_usage(USAGE_LIVE_2026_09)
+    assert reading is not None
+    assert (reading.spent_minor, reading.cap_minor, reading.currency) == (316, 200, "USD")
+
+
+def test_spend_from_extra_usage_only() -> None:
+    reading = parse_spend_from_usage({"extra_usage": {"used_credits": 5, "monthly_limit": 100}})
+    assert reading is not None and (reading.spent_minor, reading.cap_minor) == (5, 100)
+    assert parse_spend_from_usage({"five_hour": {"utilization": 1}}) is None

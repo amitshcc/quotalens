@@ -43,6 +43,9 @@ class ParseError(ValueError):
     """The payload had no recognizable quota data. Message names keys only, never values."""
 
 
+# Top-level objects that carry a ``utilization`` but are not quota windows.
+NOT_A_WINDOW = frozenset({"extra_usage", "spend"})
+
 _WINDOW_LABELS = {
     "five_hour": "5-hour",
     "seven_day": "7-day",
@@ -87,6 +90,7 @@ def _pct_of(obj: dict[str, Any]) -> float | None:
 
 
 def _limit_name(entry: dict[str, Any], index: int) -> str:
+    """Model display name when scoped, else the entry's kind/group (session, weekly_all)."""
     scope = entry.get("scope")
     if isinstance(scope, dict):
         model = scope.get("model")
@@ -97,7 +101,7 @@ def _limit_name(entry: dict[str, Any], index: int) -> str:
         for key in ("display_name", "name", "type"):
             if isinstance(scope.get(key), str) and scope[key]:
                 return scope[key]
-    for key in ("display_name", "name", "id"):
+    for key in ("display_name", "name", "kind", "group", "id"):
         if isinstance(entry.get(key), str) and entry[key]:
             return entry[key]
     return f"limit {index}"
@@ -106,7 +110,7 @@ def _limit_name(entry: dict[str, Any], index: int) -> str:
 def _parse_documented(payload: dict[str, Any]) -> list[QuotaReading]:
     readings: list[QuotaReading] = []
     for key, value in payload.items():
-        if key == "limits" or not isinstance(value, dict):
+        if key == "limits" or key in NOT_A_WINDOW or not isinstance(value, dict):
             continue
         pct = _pct_of(value)
         if pct is None:
@@ -167,6 +171,39 @@ def _dedupe(readings: list[QuotaReading]) -> list[QuotaReading]:
             suffix += 1
         seen[window] = QuotaReading(window, reading.label, reading.pct, reading.resets_at)
     return list(seen.values())
+
+
+def parse_spend_from_usage(payload: Any) -> OverageReading | None:
+    """Overage figures embedded in the ``/usage`` payload (``spend`` / ``extra_usage``).
+
+    Used as a fallback when ``/overage_spend_limit`` is unavailable. Amounts are in
+    minor units (cents) as ``amount_minor``; ``exponent`` is ignored on purpose since
+    the store is defined in minor units.
+    """
+    if not isinstance(payload, dict):
+        return None
+    spend = payload.get("spend")
+    if isinstance(spend, dict):
+        used = spend.get("used")
+        limit = spend.get("limit")
+        if isinstance(used, dict) and _as_pct(used.get("amount_minor")) is not None:
+            cap = limit.get("amount_minor") if isinstance(limit, dict) else None
+            currency = used.get("currency")
+            return OverageReading(
+                spent_minor=round(used["amount_minor"]),
+                cap_minor=round(cap) if _as_pct(cap) is not None else 0,
+                currency=currency if isinstance(currency, str) and currency else "USD",
+            )
+    extra = payload.get("extra_usage")
+    if isinstance(extra, dict) and _as_pct(extra.get("used_credits")) is not None:
+        cap = extra.get("monthly_limit")
+        currency = extra.get("currency")
+        return OverageReading(
+            spent_minor=round(extra["used_credits"]),
+            cap_minor=round(cap) if _as_pct(cap) is not None else 0,
+            currency=currency if isinstance(currency, str) and currency else "USD",
+        )
+    return None
 
 
 def parse_overage(payload: Any) -> OverageReading | None:

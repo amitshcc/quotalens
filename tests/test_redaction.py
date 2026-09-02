@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import logging
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from conftest import COOKIE, make_client, make_handler
+from conftest import COOKIE, make_client, make_handler, raise_transport
 from quotawatch.api import create_app
 from quotawatch.secrets import (
     REDACTED,
@@ -128,10 +127,7 @@ def test_health_error_string_is_redacted(settings, store, secrets) -> None:
     from quotawatch.poller import Poller
 
     def factory(cookie: str):
-        def handler(request: httpx.Request) -> httpx.Response:
-            raise httpx.ConnectError(f"refused; Cookie: {cookie}")
-
-        return make_client(handler, cookie)
+        return make_client(raise_transport(f"refused; Cookie: {cookie}"), cookie)
 
     redactor = Redactor()
     poller = Poller(settings, store, secrets, redactor, client_factory=factory)

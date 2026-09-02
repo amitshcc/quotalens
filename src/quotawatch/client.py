@@ -4,23 +4,95 @@ These endpoints are undocumented and may change. The client's job is to fetch
 raw JSON and translate HTTP failures into a small set of typed errors; parsing
 lives in :mod:`quotawatch.parse` so drift is handled in one place.
 
+claude.ai is behind Cloudflare bot protection that fingerprints the TLS
+handshake. A plain Python client gets a challenge page even with a valid
+cookie, so the default transport is ``curl_cffi`` impersonating a browser.
+The transport is an interface so tests never touch the network.
+
 No error raised from here ever carries request headers or the cookie.
 """
 
 from __future__ import annotations
 
+import json
 import re
-from typing import Any
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from typing import Any, Protocol
 
-import httpx
+from quotawatch.config import (
+    DEFAULT_BASE_URL,
+    DEFAULT_HTTP_TIMEOUT_S,
+    DEFAULT_IMPERSONATE,
+    DEFAULT_USER_AGENT,
+)
 
-from quotawatch.config import DEFAULT_BASE_URL, DEFAULT_HTTP_TIMEOUT_S, DEFAULT_USER_AGENT
-
-USER_AGENT = DEFAULT_USER_AGENT
 MAX_ERROR_DETAIL = 160
+CURL_TIMEOUT_CODE = 28  # CURLE_OPERATION_TIMEDOUT
 
 _ORG_COOKIE_RE = re.compile(r"(?:^|;\s*)lastActiveOrg=([A-Za-z0-9\-]+)")
 _ORG_ID_RE = re.compile(r"^[A-Za-z0-9\-]{8,}$")
+
+
+# -- transport ------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RawResponse:
+    """The little we need from an HTTP response. Header names are lower-case."""
+
+    status: int
+    headers: Mapping[str, str] = field(default_factory=dict)
+    text: str = ""
+
+    def header(self, name: str) -> str | None:
+        return self.headers.get(name.lower())
+
+    def json(self) -> Any:
+        return json.loads(self.text)
+
+
+class TransportError(Exception):
+    """Connection-level failure. The message is a type name, never request data."""
+
+    def __init__(self, message: str, *, timed_out: bool = False) -> None:
+        super().__init__(message)
+        self.timed_out = timed_out
+
+
+class Transport(Protocol):
+    async def get(self, url: str, headers: Mapping[str, str], timeout_s: float) -> RawResponse: ...
+
+    async def close(self) -> None: ...
+
+
+class CurlTransport:
+    """``curl_cffi`` session with browser impersonation; redirects are not followed."""
+
+    def __init__(self, impersonate: str = DEFAULT_IMPERSONATE) -> None:
+        from curl_cffi.requests import AsyncSession  # imported lazily: tests never need it
+
+        self._session = AsyncSession(impersonate=impersonate)
+
+    async def get(self, url: str, headers: Mapping[str, str], timeout_s: float) -> RawResponse:
+        try:
+            response = await self._session.get(
+                url, headers=dict(headers), timeout=timeout_s, allow_redirects=False
+            )
+        except Exception as exc:
+            # curl_cffi messages can include the URL but never headers; keep only the type.
+            timed_out = type(exc).__name__ == "Timeout" or getattr(exc, "code", None) == (
+                CURL_TIMEOUT_CODE
+            )
+            raise TransportError(type(exc).__name__, timed_out=timed_out) from exc
+        headers_out = {str(k).lower(): str(v) for k, v in response.headers.items()}
+        return RawResponse(response.status_code, headers_out, response.text)
+
+    async def close(self) -> None:
+        await self._session.close()
+
+
+# -- errors ---------------------------------------------------------------------
 
 
 class ClientError(RuntimeError):
@@ -35,6 +107,10 @@ class AuthError(ClientError):
     """401/403: the cookie is missing, expired, or rejected."""
 
 
+class BlockedError(ClientError):
+    """Cloudflare answered instead of claude.ai: the client itself was rejected."""
+
+
 class RateLimitedError(ClientError):
     """429: back off hard. ``retry_after`` is seconds if the server said."""
 
@@ -43,16 +119,15 @@ class RateLimitedError(ClientError):
         self.retry_after = retry_after
 
 
-class BlockedError(ClientError):
-    """Cloudflare answered instead of claude.ai: the client itself was rejected."""
-
-
 class UpstreamError(ClientError):
     """Any other non-2xx response, or a transport failure."""
 
 
 class ShapeError(ClientError):
     """A response was 2xx but did not contain what we needed (endpoint drift)."""
+
+
+# -- helpers --------------------------------------------------------------------
 
 
 def org_id_from_cookie(cookie: str) -> str | None:
@@ -66,30 +141,46 @@ def has_session_key(cookie: str) -> bool:
 
 
 def build_headers(
-    cookie: str, base_url: str = DEFAULT_BASE_URL, user_agent: str = DEFAULT_USER_AGENT
+    cookie: str, base_url: str = DEFAULT_BASE_URL, user_agent: str | None = DEFAULT_USER_AGENT
 ) -> dict[str, str]:
-    """The header set the reference implementation (ClaudeUsageBar) sends."""
-    return {
+    """The header set the reference implementation (ClaudeUsageBar) sends.
+
+    The User-Agent is left to the impersonated browser profile unless overridden,
+    so it always matches the TLS fingerprint being presented.
+    """
+    headers = {
         "Cookie": cookie,
         "Accept": "*/*",
         "Content-Type": "application/json",
         "Origin": base_url,
         "Referer": base_url + "/",
-        "User-Agent": user_agent,
     }
+    if user_agent:
+        headers["User-Agent"] = user_agent
+    return headers
 
 
-def is_cloudflare_challenge(response: httpx.Response) -> bool:
-    if response.headers.get("cf-mitigated", "").lower() == "challenge":
+def is_cloudflare_challenge(response: RawResponse) -> bool:
+    if (response.header("cf-mitigated") or "").lower() == "challenge":
         return True
-    content_type = response.headers.get("content-type", "")
-    if response.status_code in (403, 503) and "text/html" in content_type:
+    content_type = response.header("content-type") or ""
+    if response.status in (403, 503) and "text/html" in content_type:
         head = response.text[:2000]
         return "Just a moment" in head or "cf-chl" in head or "challenge-platform" in head
     return False
 
 
-def _error_detail(response: httpx.Response) -> str:
+def _retry_after_seconds(response: RawResponse) -> float | None:
+    raw = response.header("retry-after")
+    if raw is None:
+        return None
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return None  # HTTP-date form; not worth parsing, caller uses its default
+
+
+def _error_detail(response: RawResponse) -> str:
     """A short, value-free description of an error body: JSON error type/message only."""
     try:
         data = response.json()
@@ -111,14 +202,7 @@ def _error_detail(response: httpx.Response) -> str:
     return f" ({detail[:MAX_ERROR_DETAIL]})" if detail else ""
 
 
-def _retry_after_seconds(response: httpx.Response) -> float | None:
-    raw = response.headers.get("Retry-After")
-    if raw is None:
-        return None
-    try:
-        return max(0.0, float(raw))
-    except ValueError:
-        return None  # HTTP-date form; not worth parsing, caller uses its default
+# -- client ---------------------------------------------------------------------
 
 
 class ClaudeClient:
@@ -130,22 +214,19 @@ class ClaudeClient:
         *,
         base_url: str = DEFAULT_BASE_URL,
         timeout_s: float = DEFAULT_HTTP_TIMEOUT_S,
-        user_agent: str = DEFAULT_USER_AGENT,
-        transport: httpx.AsyncBaseTransport | None = None,
+        user_agent: str | None = DEFAULT_USER_AGENT,
+        impersonate: str = DEFAULT_IMPERSONATE,
+        transport: Transport | None = None,
     ) -> None:
         cookie = cookie.strip()
         if not cookie:
             raise ValueError("cookie is empty")
         self._cookie = cookie
         self._base_url = base_url.rstrip("/")
+        self._timeout_s = timeout_s
+        self._headers = build_headers(cookie, self._base_url, user_agent)
         self._org_id: str | None = org_id_from_cookie(cookie)
-        self._http = httpx.AsyncClient(
-            base_url=self._base_url,
-            headers=build_headers(cookie, self._base_url, user_agent),
-            timeout=timeout_s,
-            transport=transport,
-            follow_redirects=False,
-        )
+        self._transport: Transport = transport or CurlTransport(impersonate)
 
     @property
     def org_id(self) -> str | None:
@@ -155,7 +236,7 @@ class ClaudeClient:
         return self._cookie == cookie.strip()
 
     async def close(self) -> None:
-        await self._http.aclose()
+        await self._transport.close()
 
     async def __aenter__(self) -> ClaudeClient:
         return self
@@ -165,20 +246,20 @@ class ClaudeClient:
 
     async def _get_json(self, path: str) -> Any:
         try:
-            response = await self._http.get(path)
-        except httpx.TimeoutException as exc:
-            raise UpstreamError(f"timeout calling {path}") from exc
-        except httpx.HTTPError as exc:
-            # str(exc) on transport errors never includes headers, but keep it terse anyway.
-            raise UpstreamError(f"transport error calling {path}: {type(exc).__name__}") from exc
+            response = await self._transport.get(
+                self._base_url + path, self._headers, self._timeout_s
+            )
+        except TransportError as exc:
+            if exc.timed_out:
+                raise UpstreamError(f"timeout calling {path}") from exc
+            raise UpstreamError(f"transport error calling {path}: {exc}") from exc
 
-        status = response.status_code
+        status = response.status
         if is_cloudflare_challenge(response):
             raise BlockedError(
                 f"blocked by Cloudflare's bot challenge ({status}) on {path}; the request never "
-                "reached claude.ai. The cf_clearance cookie is bound to the browser's User-Agent: "
-                "set QUOTAWATCH_USER_AGENT to that browser's navigator.userAgent and re-copy the "
-                "cookie",
+                "reached claude.ai. Try QUOTAWATCH_IMPERSONATE=safari or chrome, and if it "
+                "persists open an issue with `quotawatch probe` output",
                 status,
             )
         if status in (401, 403):
