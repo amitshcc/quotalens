@@ -19,6 +19,7 @@ DEFAULT_PORT = 8787
 DEFAULT_POLL_INTERVAL_S = 60
 MIN_POLL_INTERVAL_S = 30  # floor: below this we would be rate-limiting ourselves
 DEFAULT_BURN_LOOKBACK_MIN = 15
+DEFAULT_BURN_ALERT_PTS_PER_HOUR = 20.0  # elevated when the 5-hour window burns faster
 DEFAULT_BASE_URL = "https://claude.ai"
 DEFAULT_HTTP_TIMEOUT_S = 20.0
 # claude.ai sits behind Cloudflare bot protection that fingerprints the TLS
@@ -50,6 +51,7 @@ class Settings:
     port: int = DEFAULT_PORT
     poll_interval_s: int = DEFAULT_POLL_INTERVAL_S
     burn_lookback_min: int = DEFAULT_BURN_LOOKBACK_MIN
+    burn_alert_pts_per_hour: float = DEFAULT_BURN_ALERT_PTS_PER_HOUR
     db_path: Path = field(default_factory=default_db_path)
     base_url: str = DEFAULT_BASE_URL
     http_timeout_s: float = DEFAULT_HTTP_TIMEOUT_S
@@ -76,6 +78,16 @@ def _env_int(name: str, default: int) -> int:
         raise SettingsError(f"{ENV_PREFIX}{name} must be an integer, got {raw!r}") from exc
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(ENV_PREFIX + name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise SettingsError(f"{ENV_PREFIX}{name} must be a number, got {raw!r}") from exc
+
+
 def settings_from_env() -> Settings:
     """Build settings from the environment, falling back to the defaults above."""
     db_raw = os.environ.get(ENV_PREFIX + "DB")
@@ -83,6 +95,7 @@ def settings_from_env() -> Settings:
         port=_env_int("PORT", DEFAULT_PORT),
         poll_interval_s=_env_int("INTERVAL", DEFAULT_POLL_INTERVAL_S),
         burn_lookback_min=_env_int("LOOKBACK_MINUTES", DEFAULT_BURN_LOOKBACK_MIN),
+        burn_alert_pts_per_hour=_env_float("BURN_ALERT", DEFAULT_BURN_ALERT_PTS_PER_HOUR),
         db_path=Path(db_raw).expanduser() if db_raw else default_db_path(),
         base_url=os.environ.get(ENV_PREFIX + "BASE_URL", DEFAULT_BASE_URL),
         user_agent=os.environ.get(ENV_PREFIX + "USER_AGENT") or DEFAULT_USER_AGENT,
@@ -102,4 +115,6 @@ def validate(settings: Settings) -> Settings:
         raise SettingsError(f"port must be 1-65535, got {settings.port}")
     if settings.burn_lookback_min < 1:
         raise SettingsError("burn lookback must be at least 1 minute")
+    if settings.burn_alert_pts_per_hour <= 0:
+        raise SettingsError("burn alert threshold must be positive")
     return settings

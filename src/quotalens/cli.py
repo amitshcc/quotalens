@@ -278,6 +278,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     serve.add_argument("--db", type=Path, help="SQLite file path")
     serve.add_argument("--lookback", type=int, help="default burn-rate lookback in minutes")
+    serve.add_argument(
+        "--burn-alert", type=float, help="burn rate (pts/hr) at which the 5-hour window is elevated"
+    )
     return parser
 
 
@@ -294,6 +297,7 @@ def main(argv: Sequence[str] | None = None, secrets: SecretStore | None = None) 
                     poll_interval_s=args.interval,
                     db_path=args.db,
                     burn_lookback_min=args.lookback,
+                    burn_alert_pts_per_hour=args.burn_alert,
                 )
             )
     except SettingsError as exc:
