@@ -59,13 +59,11 @@ def test_poll_once_success_writes_quota_sample_overage(settings, store, secrets)
     assert poller.status.state == "ok"
     assert poller.status.last_success_ts == 1_000_000
     assert poller.status.overage_available is True
-    assert store.counts() == {"quota": 4, "sample": 2, "overage": 1, "event": 0}
-    assert {r.window for r in store.latest_quota()} == {
-        "five_hour",
-        "seven_day",
-        "seven_day_sonnet",
-        "limit:opus",
-    }
+    assert store.counts() == {"quota": 3, "sample": 2, "overage": 1, "event": 1}
+    assert {r.window for r in store.latest_quota()} == {"five_hour", "seven_day", "limit:opus"}
+    assert [e.kind for e in store.recent_events()] == ["unrecognised_block"]
+    assert poller.status.ignored_blocks == [{"key": "seven_day_sonnet", "reason": "no resets_at"}]
+    assert poller.status.spend is not None and poller.status.spend.source == "overage_endpoint"
 
 
 def test_poll_401_marks_auth_expired_and_backs_off_gently(settings, store, secrets) -> None:
@@ -129,7 +127,8 @@ def test_overage_failure_does_not_fail_poll(settings, store, secrets) -> None:
     asyncio.run(poller.poll_once())
     assert poller.status.state == "ok"
     assert poller.status.overage_available is False
-    assert [e.kind for e in store.recent_events()] == ["overage_unavailable"]  # only once
+    kinds = [e.kind for e in store.recent_events()]
+    assert kinds.count("overage_unavailable") == 1  # only once
 
 
 def test_no_cookie_idles(settings, store) -> None:
@@ -180,7 +179,7 @@ def test_overage_401_is_auth_expired_and_loop_survives(settings, store, secrets)
     delay = asyncio.run(poller.poll_once())
     assert delay == AUTH_RETRY_S
     assert poller.status.state == "auth_expired"
-    assert store.counts()["quota"] == 4  # usage succeeded, so its readings are kept
+    assert store.counts()["quota"] == 3  # usage succeeded, so its readings are kept
 
     async def run() -> None:
         poller.start()
@@ -216,7 +215,8 @@ def test_overage_flapping_is_reported_each_time(settings, store, secrets) -> Non
     poller = _poller(settings, store, secrets, handler)
     for _ in range(3):
         asyncio.run(poller.poll_once())
-    assert [e.kind for e in store.recent_events()] == ["overage_unavailable", "overage_unavailable"]
+    kinds = [e.kind for e in store.recent_events()]
+    assert kinds.count("overage_unavailable") == 2
 
 
 def test_cloudflare_block_is_reported_as_blocked(settings, store, secrets) -> None:
@@ -237,19 +237,26 @@ def test_live_shape_stores_windows_and_spend_fallback(settings, store, secrets) 
     asyncio.run(poller.poll_once())
     assert poller.status.state == "ok"
     windows = {r.window: r.pct for r in store.latest_quota()}
-    assert windows == {
-        "five_hour": 71,
-        "seven_day": 38,
-        "nimbus_quill": 0,
-        "limit:session": 71,
-        "limit:weekly_all": 38,
-        "limit:sonnet": 66,
-    }
+    assert windows == {"five_hour": 71, "seven_day": 38, "limit:sonnet": 66}
     assert store.latest_overage() == {
         "ts": 1_000_000,
         "spent_minor": 316,
         "cap_minor": 200,
         "currency": "USD",
+        "exponent": 2,
     }
     assert poller.status.overage_available is True
-    assert [e.kind for e in store.recent_events()] == ["overage_unavailable"]
+    assert poller.status.spend is not None and poller.status.spend.used_text == "$3.16"
+    assert poller.status.ignored_blocks == [{"key": "nimbus_quill", "reason": "no resets_at"}]
+    assert sorted(e.kind for e in store.recent_events()) == [
+        "overage_unavailable",
+        "unrecognised_block",
+    ]
+
+
+def test_unrecognised_block_event_fires_once_per_change(settings, store, secrets) -> None:
+    poller = _poller(settings, store, secrets, make_handler(usage=USAGE_LIVE_2026_09))
+    asyncio.run(poller.poll_once())
+    asyncio.run(poller.poll_once())
+    kinds = [e.kind for e in store.recent_events()]
+    assert kinds.count("unrecognised_block") == 1

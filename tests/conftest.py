@@ -53,6 +53,8 @@ USAGE_LIVE_2026_09: dict[str, Any] = {
     "extra_usage": {
         "credits_ever_enabled": True,
         "currency": "USD",
+        "decimal_places": 2,
+        "disabled_reason": "org_level_disabled_until",
         "is_enabled": False,
         "monthly_limit": 200,
         "spend_limit_reached": True,
