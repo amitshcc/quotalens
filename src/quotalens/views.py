@@ -38,6 +38,7 @@ class ViewOptions:
     lookback_key: str | None = None  # None: the server default
     refresh_key: str | None = None  # None: the server default
     sort_key: str | None = None  # session history: None (recent) or "consumed"
+    history_all: bool = False  # show every session window instead of the first page
 
     def lookback_s(self, default_s: int) -> int:
         return LOOKBACKS.get(self.lookback_key or "", default_s)
@@ -66,6 +67,8 @@ class ViewOptions:
             params["refresh"] = opts.refresh_key
         if opts.sort_key:
             params["sort"] = opts.sort_key
+        if opts.history_all:
+            params["history"] = "all"
         return urlencode(params)
 
     def href(self, **overrides: object) -> str:
@@ -99,6 +102,7 @@ def parse_view(params: Mapping[str, str], now: int) -> ViewOptions:
         lookback_key=lookback if lookback in LOOKBACKS else None,
         refresh_key=refresh if refresh in REFRESH else None,
         sort_key=sort if sort in SORTS else None,
+        history_all=params.get("history") == "all",
     )
 
 

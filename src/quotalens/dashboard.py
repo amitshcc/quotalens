@@ -230,6 +230,9 @@ class HistoryView:
     headers: list[str]  # weekly-limit column labels
     sort: str  # recent | consumed
     sort_links: dict[str, str]
+    total: int = 0  # windows on record
+    show_all_href: str = ""  # non-empty when more rows exist than are shown
+    show_less_href: str = ""  # non-empty when every row is shown and there is a first page
 
 
 @dataclass
@@ -357,14 +360,19 @@ def build_dashboard(
     _mark_sessions(chart, sessions_all, rng, now)
     _mark_runway(chart, burn.runway, session, rng, now, withheld)
     sort = view.sort_key or "recent"
-    history = _history_view(
-        [window_from_row(r) for r in store.sessions(limit=HISTORY_ROWS, order=sort)],
-        labels,
-        slots,
-        view,
-        settings.poll_interval_s,
-        now,
+    listed = (
+        [w for w in sorted(sessions_all, key=lambda w: (-w.peak_pct, -w.started_at))]
+        if (sort == "consumed")
+        else sessions_all
     )
+    page = listed if view.history_all else listed[:HISTORY_ROWS]
+    history = _history_view(page, labels, slots, view, settings.poll_interval_s, now)
+    history.total = len(sessions_all)
+    if len(sessions_all) > HISTORY_ROWS:
+        if view.history_all:
+            history.show_less_href = view.href(history_all=False)
+        else:
+            history.show_all_href = view.href(history_all=True)
     spend = _spend_view(status.spend, withheld, now)
 
     magnitude = worst([w.state for w in windows] + ([spend.state] if spend else []))
