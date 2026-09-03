@@ -60,6 +60,16 @@ click a series' end label to hide it, pick the burn-rate lookback, set
 auto-refresh, and force a poll (one per 10 seconds). All of it works with
 JavaScript disabled as plain links and forms.
 
+Below the chart, the history table lists your 5-hour session windows, derived
+from the API's own `resets_at` values: when it jumps forward a new session
+started, and its start is that value minus five hours. Each row shows the peak
+utilisation reached in the window, the closing value, how far each weekly limit
+moved during it, and how many samples it rests on. Sort by consumption to find
+the expensive session, click it, and the chart shows exactly that window. On the
+chart, session starts are vertical rules and spans with no session running are
+shaded flat, which is a different mark from the hatched spans where the
+collector was not running.
+
 Renamed from `quotawatch`: on first start an existing database and keyring
 entry under the old name are moved across automatically.
 
