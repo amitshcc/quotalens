@@ -280,3 +280,32 @@ def test_cold_database_with_a_session_still_says_collecting(settings, store, sec
     figure = '<span class="num">78</span><span class="dash">—</span><span class="u">% left</span>'
     assert figure in html
     assert "78% left, resets in" in body["burn"]["why"]
+
+
+def test_a_gap_that_began_before_the_range_is_still_a_gap(settings, store, secrets) -> None:
+    """A range that was two thirds uncollected must never read as collected and flat."""
+    from quotalens.dashboard import find_gaps
+
+    now = int(time.time())
+    # nothing between six hours ago and one hour ago, then a dense hour
+    store.record_quota(now - 6 * 3600, [QuotaReading("five_hour", "5-hour", 1, iso(now + 3600))])
+    for i in range(60):
+        ts = now - 3600 + i * 60
+        store.record_quota(ts, [QuotaReading("five_hour", "5-hour", 10 + i / 6, iso(now + 3600))])
+    app = create_app(settings, store, secrets)
+    app.state.qw.poller.status.state = "ok"
+    app.state.qw.poller.status.last_success_ts = now
+    with TestClient(app) as tc:
+        six = tc.get("/api/dashboard?range=6h").json()
+        one = tc.get("/api/dashboard?range=1h").json()
+        html = tc.get("/?range=6h").text
+    assert 295 <= six["gap_minutes"] <= 302  # five of the six hours were not collected
+    assert one["gap_minutes"] == 0  # the dense hour really was collected
+    assert 'fill="url(#gap)"' in html and "min in range" in html
+
+    # the unit underneath, including the shapes the range boundary creates
+    assert find_gaps([500], 0, 1000, 100) == [(0, 500), (500, 1000)][1:]  # no prior: no left gap
+    assert find_gaps([500], 0, 1000, 100, prior_ts=-50) == [(0, 500), (500, 1000)]
+    assert find_gaps([], 0, 1000, 100, prior_ts=-50) == [(0, 1000)]  # nothing at all in range
+    assert find_gaps([], 0, 1000, 100) == []  # and nothing before it either: not our gap
+    assert find_gaps([100, 200], 0, 250, 100, prior_ts=50) == []  # dense enough throughout
