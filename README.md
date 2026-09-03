@@ -120,13 +120,33 @@ it only in the OS keychain (via `keyring`), never in a file, the database, or a
 log line, and redacts it from error output. The server binds loopback only.
 Treat `quotalens probe` output as sensitive and redact it before sharing.
 
-## Disclaimer
+## The Terms, stated plainly
 
-Unofficial. Uses undocumented claude.ai endpoints that may change without
-notice. Not affiliated with or endorsed by Anthropic. It only observes usage;
-it cannot raise or bypass a limit. For a macOS menu bar view of the same data,
-see [ClaudeUsageBar](https://github.com/Artzainnn/ClaudeUsageBar), which this
-project complements rather than replaces.
+Anthropic's [Consumer Terms](https://www.anthropic.com/legal/consumer-terms),
+section 3 ("Use of our Services"), prohibit:
+
+> 7. Except when you are accessing our Services via an Anthropic API Key or
+>    where we otherwise explicitly permit it, to access the Services through
+>    automated or non-human means, whether through a bot, script, or otherwise.
+
+**QuotaLens is automated access, and a subscription session cookie is not an API
+Key.** There is no carve-out in the Terms for reading your own usage. I looked.
+
+Two facts that bear on the risk, neither of which changes the clause:
+
+- I know of no case of Anthropic acting against a read-only usage monitor. The
+  one confirmed enforcement in this space was against third-party harnesses that
+  *spent* subscription quota by running completions, and those were reinstated
+  in May 2026 with metered credits.
+- QuotaLens never sends a prompt and never spends a token. It reads two
+  endpoints your own browser reads, at most once a minute.
+
+You are the one accepting that risk, not me. Decide with the clause in front of
+you.
+
+Unofficial, and not affiliated with or endorsed by Anthropic. It uses
+undocumented endpoints that may change without notice, and it only observes: it
+cannot raise, extend or bypass a limit.
 
 ## License
 
