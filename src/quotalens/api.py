@@ -35,7 +35,7 @@ from quotalens.metrics import CONTENT_TYPE as METRICS_CONTENT_TYPE
 from quotalens.metrics import collect as collect_metrics
 from quotalens.metrics import render as render_metrics
 from quotalens.poller import ClientFactory, Poller, spend_as_dict
-from quotalens.render import render_app, render_page
+from quotalens.render import favicon_svg, render_app, render_page
 from quotalens.secrets import Redactor, SecretStore, global_redactor
 from quotalens.sessions import rebuild as rebuild_sessions
 from quotalens.state import collector_state
@@ -167,7 +167,19 @@ def create_app(
 
     @app.get("/favicon.svg", include_in_schema=False)
     def favicon() -> Response:
-        return Response(_static_bytes("favicon.svg"), media_type="image/svg+xml")
+        """The mark, live: the session window readable from a background tab.
+
+        Built from the whole dashboard rather than from a cheaper query, so the tab
+        strip and the 5-hour meter cannot drift apart. `no-store` because a cached
+        favicon is a favicon that stops being a reading.
+        """
+        dash = _dashboard(parse_view({}, int(time.time())))
+        body = (
+            _static_bytes("favicon.svg").decode()
+            if dash.last_success_ts is None  # never polled: the brand, not a guess
+            else favicon_svg(dash)
+        )
+        return Response(body, media_type="image/svg+xml", headers={"Cache-Control": "no-store"})
 
     @app.get("/metrics", include_in_schema=False)
     def metrics() -> Response:
