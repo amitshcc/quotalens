@@ -26,6 +26,7 @@ from quotalens.config import (
     settings_from_env,
     validate,
 )
+from quotalens.export import RAW_WARNING
 from quotalens.parse import ParseError, parse_spend, parse_usage
 from quotalens.secrets import (
     KeyringSecretStore,
@@ -37,11 +38,10 @@ from quotalens.secrets import (
 
 log = logging.getLogger("quotalens")
 
-PROBE_WARNING = """\
-!! WARNING: the output below is your account's usage data. It never includes
-!! your cookie, and UUID-shaped values are masked unless --no-redact is given.
-!! Still read it over before pasting it into an issue.
-"""
+PROBE_WARNING = (
+    "!! WARNING: the output below is your account's usage data. UUID-shaped values\n"
+    "!! are masked unless --no-redact is given. " + RAW_WARNING + "\n"
+)
 
 _UUID_RE = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
