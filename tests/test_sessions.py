@@ -140,6 +140,10 @@ def test_interleaved_expiries_merge_into_one_window_each() -> None:
     windows = derive_sessions({"five_hour": rows}, now=T0 + 3600)
     assert len({w.started_at for w in windows}) == len(windows) == 2
     assert sorted(w.samples for w in windows) == [20, 20]
+    # a stray group that appeared later but stopped sampling earlier is not the current window
+    rows.append(QuotaRow(T0 + 30 * 60, "five_hour", "5-hour", 40, iso(e1)))
+    windows = derive_sessions({"five_hour": rows}, now=T0 + 3600)
+    assert [w.is_current for w in sorted(windows, key=lambda w: w.ends_at)] == [False, True]
 
 
 def test_backfill_is_idempotent_and_survives_reopen(tmp_path) -> None:
