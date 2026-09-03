@@ -297,3 +297,80 @@ def test_a_failing_post_poll_check_never_costs_a_reading(settings, store, secret
     kinds = [e.kind for e in store.recent_events(limit=10)]
     assert "post_poll_failed" in kinds
     assert store.quota_series(0, window="five_hour")[-1].ts == now  # the reading survived
+
+
+def test_a_restart_does_not_re_fire_a_standing_alert(settings, store, secrets) -> None:
+    """The detector is in memory; without restoring its edge every restart pages you."""
+    now = int(time.time())
+    reset = _climbing(store, now, per_minute=1.0)
+    handler = _continuing(reset, 19.0)
+
+    def poller_for() -> Poller:
+        return Poller(
+            settings,
+            store,
+            secrets,
+            Redactor(),
+            client_factory=lambda c: make_client(handler, c),
+            clock=lambda: float(now),
+        )
+
+    asyncio.run(poller_for().poll_once())
+    assert len(store.recent_events(limit=50, kind=ALERT_KIND)) == 1
+    for _ in range(3):  # three restarts, the rate never leaving the threshold
+        asyncio.run(poller_for().poll_once())
+    assert len(store.recent_events(limit=50, kind=ALERT_KIND)) == 1
+
+    # and once it clears, a restart is free to fire again on the next crossing
+    store.record_event(CLEARED_KIND, "fell back", ts=now + 1)
+    asyncio.run(poller_for().poll_once())
+    assert len(store.recent_events(limit=50, kind=ALERT_KIND)) == 2
+
+
+def test_standing_reads_the_edge_from_recorded_events() -> None:
+    from quotalens.alerts import standing
+
+    assert standing(None, None) is False
+    assert standing(None, 100) is False
+    assert standing(100, None) is True
+    assert standing(100, 90) is True  # cleared before the crossing: still standing
+    assert standing(100, 110) is False
+    assert standing(100, 100) is False  # same second: treat it as cleared
+
+
+def test_no_alert_on_less_evidence_than_the_dashboard_will_show(settings, store, secrets) -> None:
+    """A webhook must never carry a number the hero refuses to display."""
+    now = int(time.time())
+    reset = iso(now + 3 * 3600)
+    for i in range(3):  # two minutes of samples, climbing hard
+        store.record_quota(
+            now - (2 - i) * 60, [QuotaReading("five_hour", "5-hour", 10 + i * 3, reset)]
+        )
+    poller = Poller(
+        settings,
+        store,
+        secrets,
+        Redactor(),
+        client_factory=lambda c: make_client(_continuing(reset, 16.0), c),
+        clock=lambda: float(now),
+    )
+    asyncio.run(poller.poll_once())
+    assert store.recent_events(limit=50, kind=ALERT_KIND) == []  # 180 pts/hr, but on 2 minutes
+    assert poller.status.burn_rate is None  # and the status agrees with the screen
+
+    # once there is five minutes of it, the alert fires
+    for i in range(3, 8):
+        store.record_quota(
+            now - (2 - i) * 60, [QuotaReading("five_hour", "5-hour", 10 + i * 3, reset)]
+        )
+    later = now + 5 * 60
+    poller2 = Poller(
+        settings,
+        store,
+        secrets,
+        Redactor(),
+        client_factory=lambda c: make_client(_continuing(reset, 34.0), c),
+        clock=lambda: float(later),
+    )
+    asyncio.run(poller2.poll_once())
+    assert len(store.recent_events(limit=50, kind=ALERT_KIND)) == 1
