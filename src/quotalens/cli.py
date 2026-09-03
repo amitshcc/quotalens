@@ -337,6 +337,13 @@ def cmd_start(args: argparse.Namespace, settings: Settings, secrets: SecretStore
     print(f"dashboard: http://{settings.host}:{port}/")
     print(f"pid file:  {result.pidfile}")
     print(f"log:       {result.log}")
+    if not result.ready:
+        # Alive but silent. Not a failure yet, and not something to claim as success.
+        print(
+            f"note: it has not logged anything after {service.START_TIMEOUT_S:.0f}s. "
+            "It is still running; check `quotalens logs -f`.",
+            file=sys.stderr,
+        )
     return 0
 
 

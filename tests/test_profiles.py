@@ -72,8 +72,8 @@ def test_each_profile_owns_its_pid_log_and_runtime_files(tmp_path) -> None:
 def test_stopping_one_profile_leaves_the_other_running(tmp_path) -> None:
     from test_service import sleeper
 
-    default = service.start(tmp_path, spawner=sleeper, grace_s=0.1)
-    work = service.start(tmp_path, spawner=sleeper, grace_s=0.1, profile="work")
+    default = service.start(tmp_path, spawner=sleeper, timeout_s=0.1)
+    work = service.start(tmp_path, spawner=sleeper, timeout_s=0.1, profile="work")
     try:
         assert default.pid != work.pid
         assert service.pid_path(tmp_path).exists() and service.pid_path(tmp_path, "work").exists()
@@ -95,7 +95,7 @@ def test_the_child_process_inherits_the_profile(tmp_path) -> None:
         seen.append(list(cmd))
         return sleeper(cmd, logfile)
 
-    service.start(tmp_path, ["--interval", "30"], spawner=spy, grace_s=0.1, profile="work")
+    service.start(tmp_path, ["--interval", "30"], spawner=spy, timeout_s=0.1, profile="work")
     try:
         cmd = seen[0]
         assert "--profile" in cmd and cmd[cmd.index("--profile") + 1] == "work"
