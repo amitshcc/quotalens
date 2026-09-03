@@ -1,12 +1,19 @@
 # QuotaLens
 
-QuotaLens is a local, self-hosted monitor for Claude Pro/Max subscription usage. It records
-your quota over time and leads with the **burn rate** (percentage points per
-hour), so you can tell not just where you are but whether something is running.
+Claude tells you what is consuming your quota right now, and then forgets.
+QuotaLens remembers.
 
-Status: **pre-alpha**. Milestones M0 to M2 are done: credential handling, the
-poller, storage, read APIs, and the dashboard. Per-project attribution from
-local Claude Code logs (M3), alerts and export (M4) are next.
+It is a local, self-hosted monitor for Claude Pro and Max subscription usage. It
+polls your account every minute, keeps the series in a SQLite file you own, and
+leads with the question you open it to ask: **will this session window run out
+before it resets, and when.** When something surprises you, the record is still
+there — which five-hour session, how steep the climb, the minute it started.
+
+macOS and Linux; **Windows untested** (it should work, and there is no CI
+evidence yet — see [Platforms](#platforms)). Binds loopback, keeps your cookie
+in the OS keychain, phones nothing home. MIT.
+
+Status: **v0.1.0, pre-release.**
 
 ## Quick start
 
@@ -21,6 +28,21 @@ quotalens logs -f
 quotalens stop
 curl 'http://127.0.0.1:8787/api/quota/current'
 ```
+
+Then, as you need them:
+
+```sh
+curl 'http://127.0.0.1:8787/metrics'                       # Prometheus, hand rolled
+curl 'http://127.0.0.1:8787/api/export.csv?table=quota'    # or export.json
+curl 'http://127.0.0.1:8787/api/events'                    # threshold crossings, anomalies
+quotalens prune --dry-run                                  # what retention would remove
+```
+
+Set `QUOTALENS_WEBHOOK_URL` to get one POST when the burn rate crosses
+`QUOTALENS_BURN_ALERT` points per hour (default 20), and one when it falls back.
+The body carries the rate, the threshold, the headroom and the reset time, and
+no account identifier of any kind. It feeds ntfy, Discord, Slack, Pushover or
+Home Assistant.
 
 ## Two accounts
 
@@ -131,6 +153,39 @@ The session cookie is equivalent to your claude.ai password. QuotaLens stores
 it only in the OS keychain (via `keyring`), never in a file, the database, or a
 log line, and redacts it from error output. The server binds loopback only.
 Treat `quotalens probe` output as sensitive and redact it before sharing.
+
+## What this doesn't do
+
+Each of these is a decision, and in most cases something else already does it
+better. Pointing at the better tool is a feature.
+
+- **Per-project attribution.** Use [ccusage](https://github.com/ccusage/ccusage)
+  for per-project token counts, and `/usage` inside Claude Code for attribution
+  to skills, subagents, plugins, MCP servers and scheduled tasks. Quota is
+  pooled across claude.ai, Claude Code and Claude Desktop, so local logs can
+  only ever show correlation with a number they cannot see.
+- **Desktop notifications.** Use
+  [ClaudeUsageBar](https://github.com/Artzainnn/ClaudeUsageBar) on macOS. A
+  desktop notification is three OS code paths and it is dead under a systemd
+  user unit with no session bus, which is how this is meant to run. The webhook
+  is one code path that works everywhere.
+- **Anything but loopback.** There is no `--host`. The dashboard is account data
+  with no authentication. If you want it elsewhere, put it behind a proxy you
+  already trust; if enough people ask, the answer will be a token, not a flag.
+- **A container image.** `pipx` or `uvx` only, for now. Docker needs a
+  credential path that is not the OS keychain, which forks the security story,
+  and that deserves its own decision rather than a Dockerfile.
+- **Reading Claude Code's OAuth credentials.** The pasted cookie stays the only
+  auth path in this release.
+- **Any provider but Claude**, API-key cost tracking, a menu bar app, a proxy,
+  or a hosted service.
+
+## Platforms
+
+macOS and Linux are what this has actually run on. Windows is expected to work —
+paths, the pid file and the service commands are written for it — but until the
+CI matrix has been green on a Windows runner, treat it as untested rather than
+supported. `service install` is macOS and Linux only in any case.
 
 ## The Terms, stated plainly
 
