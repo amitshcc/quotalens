@@ -243,3 +243,22 @@ def test_actions_records_commands() -> None:
     actions = Actions()
     actions.run(run, ["echo", "hi"])
     assert actions.commands == ["echo hi"] and calls == [["echo", "hi"]]
+
+
+def test_serve_command_puts_data_dir_before_the_subcommand(tmp_path) -> None:
+    cmd = service.serve_command("/py", ["--port", "8790"], data_dir=tmp_path)
+    assert cmd == ["/py", "-m", "quotalens", "--data-dir", str(tmp_path), "serve", "--port", "8790"]
+
+
+def test_start_child_receives_data_dir(tmp_path) -> None:
+    seen: list[list[str]] = []
+
+    def spy(cmd, logfile):
+        seen.append(list(cmd))
+        return sleeper(cmd, logfile)
+
+    start(tmp_path, spawner=spy, grace_s=0.1)
+    try:
+        assert seen[0][3:5] == ["--data-dir", str(tmp_path)]
+    finally:
+        stop(tmp_path, timeout_s=5)
