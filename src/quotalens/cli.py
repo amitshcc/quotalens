@@ -263,8 +263,17 @@ def _local_stamp(ts: int) -> str:
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(ts))
 
 
-def _session_rows(store: Any) -> list[dict[str, Any]]:
-    return sorted(store.sessions(limit=1000, order="recent"), key=lambda w: w["started_at"])
+SESSION_LIST_LIMIT = 5000  # about three years of five-hour windows
+
+
+def _session_rows(store: Any) -> tuple[list[dict[str, Any]], bool]:
+    """Every window `forget` can act on, oldest first, and whether that is all of them.
+
+    A silent truncation here would be worse than a slow listing: an id that never
+    appears cannot be passed back, and `forget` would call a real window unknown.
+    """
+    rows = store.sessions(limit=SESSION_LIST_LIMIT, order="recent")
+    return sorted(rows, key=lambda w: w["started_at"]), len(rows) < SESSION_LIST_LIMIT
 
 
 BARELY_OBSERVED_RATIO = 0.05  # 15 minutes of a five-hour window
@@ -304,8 +313,14 @@ def cmd_forget(args: argparse.Namespace, settings: Settings, secrets: SecretStor
 
     store = Store(settings.db_path)
     try:
-        rows = _session_rows(store)
+        rows, complete = _session_rows(store)
         print(f"{settings.db_path}")
+        if not complete:
+            print(
+                f"only the newest {SESSION_LIST_LIMIT} windows are listed; older ones "
+                "cannot be named here",
+                file=sys.stderr,
+            )
         if not args.session:
             print(f"{len(rows)} session windows. Pass one or more ids to remove them:")
             for line in _forget_listing(rows):
