@@ -106,3 +106,5 @@ inference from source: write down what was on screen or in the DOM.
       health and session (the port comes from the flag default, not the pid file).
 - 2026-09-03: hero figure said 79.5% left while the verdict sentence said 80%
       (the same number rounded twice, differently).
+- 2026-09-03: the critical headroom figure rendered inside a chip box because a
+      state modifier shared the chip class name `crit`.

@@ -171,7 +171,7 @@ def test_projection_turns_critical_when_exhausted_before_reset(settings, store, 
     assert body["burn"]["why"].startswith("Exhausted at ")
     assert 'class="proj" stroke="var(--st-critical)"' in html
     assert 'class="ax cross"' in html and "exhausted " in html
-    assert 'class="readout crit"' in html  # the lit headroom turns critical
+    assert 'class="readout is-crit"' in html  # the lit headroom turns critical
 
 
 # -- Prompt 6, Job B ----------------------------------------------------------------

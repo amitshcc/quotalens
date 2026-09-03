@@ -142,7 +142,7 @@ def _hero(dash: Dashboard) -> str:
     b = dash.burn
     r = b.runway
     withheld = b.withheld
-    cls = "readout off" if withheld else ("readout crit" if b.critical else "readout")
+    cls = "readout off" if withheld else ("readout is-crit" if b.critical else "readout")
     value = (
         WITHHELD
         if withheld
