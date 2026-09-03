@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import io
 import os
-import pty
 import sys
 import threading
 import time
@@ -94,6 +93,8 @@ def test_read_hidden_line_from_pipe() -> None:
 @pytest.mark.skipif(sys.platform.startswith("win"), reason="pty is POSIX only")
 def test_read_hidden_line_survives_paste_longer_than_tty_line_limit(capsys) -> None:
     """A real Cookie header exceeds the 1024-byte canonical line cap on macOS."""
+    import pty  # imported here: on Windows it fails at import time, before skipif can run
+
     long_cookie = "sessionKey=sk-ant-" + "x" * 3000 + "; lastActiveOrg=abc"
     master, slave = pty.openpty()
     stream = os.fdopen(slave, "r", closefd=True)

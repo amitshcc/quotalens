@@ -4,9 +4,9 @@
 * ``start`` detaches a ``quotalens serve`` child; ``stop`` sends SIGTERM and
   escalates after a timeout; ``status`` reads ``/api/health`` and exits
   non-zero when not running or when the collector has stalled.
-* ``service install`` writes a LaunchAgent (macOS) or a systemd user unit
-  (Linux). Windows has no user-level service manager we can install into; the
-  command says so and points at the README.
+* ``service install`` registers the collector to start at login: a LaunchAgent
+  on macOS, a systemd user unit on Linux, a Task Scheduler logon task on
+  Windows. ``service uninstall`` undoes exactly what it did.
 """
 
 from __future__ import annotations
@@ -39,16 +39,12 @@ RUNTIME_FILE = f"{APP_NAME}.runtime.json"  # port and interval of the instance i
 LOG_MAX_BYTES = 2 * 1024 * 1024
 LOG_BACKUPS = 3
 STOP_TIMEOUT_S = 10.0
-WINDOWS_GUIDANCE = (
-    "Windows has no user-level service manager this command can install into. Run "
-    "`quotalens start` at logon instead: create a Task Scheduler task with the "
-    "trigger 'At log on' and the action `quotalens start`, or put a shortcut to it "
-    "in shell:startup. start/stop/status/logs work the same way on Windows."
-)
 START_TIMEOUT_S = 10.0  # how long `start` waits for the child to announce itself
 START_POLL_S = 0.05
 LAUNCHD_LABEL = "com.quotalens.agent"
 SYSTEMD_UNIT = "quotalens.service"
+WINDOWS_TASK = "QuotaLens"
+TASK_FILE = f"{APP_NAME}.task.xml"  # the registered definition, kept so uninstall can undo it
 
 Runner = Callable[[Sequence[str]], tuple[int, str]]
 Spawner = Callable[[Sequence[str], Path], int]
@@ -71,6 +67,11 @@ def log_path(data_dir: Path | None = None, profile: str = "") -> Path:
 
 def runtime_path(data_dir: Path | None = None, profile: str = "") -> Path:
     return (data_dir or default_data_dir()) / f"{APP_NAME}{profile_suffix(profile)}.runtime.json"
+
+
+def task_path(data_dir: Path | None = None) -> Path:
+    """Where the Windows task definition is kept, so uninstall can remove what it wrote."""
+    return (data_dir or default_data_dir()) / TASK_FILE
 
 
 def write_runtime(data_dir: Path, port: int, interval_s: int, profile: str = "") -> None:
@@ -108,11 +109,23 @@ def pid_alive(pid: int) -> bool:
     if sys.platform.startswith("win"):  # os.kill(pid, 0) would terminate it on Windows
         import ctypes
 
-        handle = ctypes.windll.kernel32.OpenProcess(0x100000, False, pid)  # SYNCHRONIZE
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        # Handles are pointer-sized; the default int return type truncates them on 64-bit.
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.OpenProcess.argtypes = (ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32)
+        kernel32.WaitForSingleObject.restype = ctypes.c_uint32
+        kernel32.WaitForSingleObject.argtypes = (ctypes.c_void_p, ctypes.c_uint32)
+        kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+        handle = kernel32.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
         if not handle:
             return False
-        ctypes.windll.kernel32.CloseHandle(handle)
-        return True
+        try:
+            # A process that has exited still opens while anyone holds a handle to
+            # it, so "the pid opens" is not "the pid runs". The object is signalled
+            # on exit, and WAIT_OBJECT_0 (0) means exactly that.
+            return kernel32.WaitForSingleObject(handle, 0) != 0
+        finally:
+            kernel32.CloseHandle(handle)
     try:  # a child that exited but was not reaped is a zombie, and kill(pid, 0) still succeeds
         reaped, _ = os.waitpid(pid, os.WNOHANG)
         if reaped == pid:
@@ -503,6 +516,81 @@ def systemd_unit(cmd: Sequence[str], workdir: Path) -> str:
     )
 
 
+def _win_quote(arg: str) -> str:
+    """Windows argument quoting for the single <Arguments> string."""
+    return f'"{arg}"' if (" " in arg or "\t" in arg) else arg
+
+
+def windows_user() -> str:
+    """The account the logon trigger fires for. Domain-qualified when we know the domain."""
+    user = os.environ.get("USERNAME", "")
+    domain = os.environ.get("USERDOMAIN", "")
+    return f"{domain}\\{user}" if domain and user else user
+
+
+def windows_task_xml(cmd: Sequence[str], workdir: Path, user: str) -> str:
+    """A Task Scheduler definition that starts the collector at logon.
+
+    Registered with ``schtasks /Create /XML`` rather than ``/TR``, because ``/TR``
+    takes one command string capped at 261 characters and our data-dir and
+    log-file paths blow through that on a normal Windows account.
+
+    Element order inside <Settings> is not free: the schema is a sequence, and
+    Task Scheduler rejects the document if it is reordered. This is the order the
+    scheduler itself exports.
+    """
+    program, *rest = cmd
+    arguments = " ".join(_win_quote(a) for a in rest)
+    return (
+        '<?xml version="1.0" encoding="UTF-16"?>\n'
+        '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">\n'
+        "  <RegistrationInfo>\n"
+        "    <Description>QuotaLens local Claude usage monitor</Description>\n"
+        "  </RegistrationInfo>\n"
+        "  <Triggers>\n"
+        f"    <LogonTrigger>\n      <Enabled>true</Enabled>\n"
+        f"      <UserId>{xml_escape(user)}</UserId>\n    </LogonTrigger>\n"
+        "  </Triggers>\n"
+        "  <Principals>\n"
+        '    <Principal id="Author">\n'
+        f"      <UserId>{xml_escape(user)}</UserId>\n"
+        "      <LogonType>InteractiveToken</LogonType>\n"
+        "      <RunLevel>LeastPrivilege</RunLevel>\n"
+        "    </Principal>\n"
+        "  </Principals>\n"
+        "  <Settings>\n"
+        "    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>\n"
+        # A laptop on battery is exactly when someone watches their quota.
+        "    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\n"
+        "    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\n"
+        "    <AllowHardTerminate>true</AllowHardTerminate>\n"
+        "    <StartWhenAvailable>true</StartWhenAvailable>\n"
+        "    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>\n"
+        "    <IdleSettings>\n"
+        "      <StopOnIdleEnd>false</StopOnIdleEnd>\n"
+        "      <RestartOnIdle>false</RestartOnIdle>\n"
+        "    </IdleSettings>\n"
+        "    <AllowStartOnDemand>true</AllowStartOnDemand>\n"
+        "    <Enabled>true</Enabled>\n"
+        "    <Hidden>false</Hidden>\n"
+        "    <RunOnlyIfIdle>false</RunOnlyIfIdle>\n"
+        "    <WakeToRun>false</WakeToRun>\n"
+        # PT0S is no limit. The default is 72 hours, which would stop the
+        # collector three days into the history it exists to keep.
+        "    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>\n"
+        "    <Priority>7</Priority>\n"
+        "  </Settings>\n"
+        '  <Actions Context="Author">\n'
+        "    <Exec>\n"
+        f"      <Command>{xml_escape(program)}</Command>\n"
+        f"      <Arguments>{xml_escape(arguments)}</Arguments>\n"
+        f"      <WorkingDirectory>{xml_escape(str(workdir))}</WorkingDirectory>\n"
+        "    </Exec>\n"
+        "  </Actions>\n"
+        "</Task>\n"
+    )
+
+
 def _sh_quote(arg: str) -> str:
     return (
         arg
@@ -526,8 +614,14 @@ def install_service(
 ) -> Actions:
     actions = Actions()
     logfile = log_path(data_dir, profile)
+    # --data-dir is explicit even when it is the default: the unit outlives the
+    # shell that created it, and without it the service would collect into
+    # whatever default_data_dir() resolves to for whoever the agent runs as.
     cmd = serve_command(
-        python, ["--interval", str(interval), "--log-file", str(logfile)], profile=profile
+        python,
+        ["--interval", str(interval), "--log-file", str(logfile)],
+        data_dir=data_dir,
+        profile=profile,
     )
     data_dir.mkdir(parents=True, exist_ok=True)
     if platform == "darwin":
@@ -562,7 +656,27 @@ def install_service(
             f"it collecting after logout or a reboot, run: loginctl enable-linger {user}"
         )
     elif platform.startswith("win"):
-        raise ServiceError(WINDOWS_GUIDANCE)
+        xml_file = task_path(data_dir)
+        # UTF-16: schtasks rejects a UTF-8 definition as "incorrectly formatted".
+        xml_file.write_text(windows_task_xml(cmd, data_dir, windows_user()), encoding="utf-16")
+        actions.written.append(xml_file)
+        rc, out = actions.run(
+            runner, ["schtasks", "/Create", "/TN", WINDOWS_TASK, "/XML", str(xml_file), "/F"]
+        )
+        if rc != 0:
+            raise ServiceError(f"schtasks could not register the task ({rc}): {out}")
+        rc, out = actions.run(runner, ["schtasks", "/Run", "/TN", WINDOWS_TASK])
+        if rc != 0:
+            # Registered but not started. It will start at the next logon regardless.
+            actions.notes.append(
+                f"The task is registered but would not start now ({out.strip()}). "
+                "It will start at your next logon, or run `quotalens start` meanwhile."
+            )
+        actions.notes.append(
+            "The task starts at logon, not at boot, and only for this account. It reads the "
+            "cookie from Windows Credential Manager as you; if it cannot, `quotalens status` "
+            "will say so. Undo with `quotalens service uninstall`."
+        )
     else:
         raise ServiceError(f"no service manager support for platform {platform!r}")
     return actions
@@ -584,7 +698,13 @@ def uninstall_service(platform: str, home: Path, data_dir: Path, runner: Runner 
             actions.removed.append(unit)
         actions.run(runner, ["systemctl", "--user", "daemon-reload"])
     elif platform.startswith("win"):
-        raise ServiceError(WINDOWS_GUIDANCE)
+        # Both are ignored if they fail: uninstall has to be safe to run twice.
+        actions.run(runner, ["schtasks", "/End", "/TN", WINDOWS_TASK])
+        actions.run(runner, ["schtasks", "/Delete", "/TN", WINDOWS_TASK, "/F"])
+        xml_file = task_path(data_dir)
+        if xml_file.exists():
+            xml_file.unlink()
+            actions.removed.append(xml_file)
     else:
         raise ServiceError(f"no service manager support for platform {platform!r}")
     return actions
@@ -596,7 +716,7 @@ def service_installed(platform: str, home: Path, data_dir: Path) -> Path | None:
     elif platform.startswith("linux"):
         p = home / ".config" / "systemd" / "user" / SYSTEMD_UNIT
     elif platform.startswith("win"):
-        return None
+        p = task_path(data_dir)
     else:
         return None
     return p if p.exists() else None
@@ -615,4 +735,11 @@ def service_status(platform: str, home: Path, data_dir: Path, runner: Runner = _
     elif platform.startswith("linux"):
         rc, out = runner(["systemctl", "--user", "is-active", SYSTEMD_UNIT])
         lines.append(f"systemd: {out or ('active' if rc == 0 else 'inactive')}")
+    elif platform.startswith("win"):
+        rc, out = runner(["schtasks", "/Query", "/TN", WINDOWS_TASK])
+        lines.append(
+            f"task scheduler: registered as {WINDOWS_TASK}"
+            if rc == 0
+            else "task scheduler: not registered (run `quotalens service install`)"
+        )
     return lines

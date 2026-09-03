@@ -486,8 +486,15 @@ def build_parser() -> argparse.ArgumentParser:
     logs = sub.add_parser("logs", help="show the log")
     logs.add_argument("-f", "--follow", action="store_true")
     logs.add_argument("-n", "--lines", type=int, default=50)
-    svc = sub.add_parser("service", help="install as a login service")
-    svc.add_argument("action", choices=["install", "uninstall", "status"])
+    svc = sub.add_parser(
+        "service",
+        help="start automatically at login (LaunchAgent, systemd user unit, or scheduled task)",
+    )
+    svc.add_argument(
+        "action",
+        choices=["install", "uninstall", "status"],
+        help="install: start at every login from now on. uninstall: undo it. status: is it set up?",
+    )
     svc.add_argument("--interval", type=int, help="poll interval for the installed service")
     return parser
 
