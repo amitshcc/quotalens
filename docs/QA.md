@@ -82,9 +82,11 @@ inference from source: write down what was on screen or in the DOM.
 - [ ] Collection gap: hatched span, counted as "Not collected".
 - [ ] No session active: flat `--grid` span labelled "no session", counted as
       "No session". Must not look like the gap.
-- [ ] Future region (auto range): blank, no horizontal gridlines (the hourly
-      `--grid` separators of the window do continue), a "now" marker, the
-      projection line. Must not look like either of the above.
+- [ ] Future region (auto range): no trace and no hatching, but the horizontal
+      rules and the hourly `--grid` separators both continue to the right edge of
+      the plot, plus a "now" marker and the projection line. Must not look like
+      either of the above. (Until 4 Sep 2026 the rules stopped at "now"; the chart
+      read as cropped in a region the pointer still reads values out of.)
 
 ## Data shapes
 
