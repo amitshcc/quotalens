@@ -10,7 +10,7 @@ import json
 import sqlite3
 import threading
 import time
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -485,6 +485,11 @@ class Store:
                 self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             finally:
                 self._conn.isolation_level = ""
+
+    def query(self, sql: str, params: Sequence[Any] = ()) -> list[sqlite3.Row]:
+        """One read, lock held only for its duration. Used by the paged exporter."""
+        with self._tx() as cur:
+            return cur.execute(sql, tuple(params)).fetchall()
 
     def counts(self) -> dict[str, int]:
         with self._tx() as cur:

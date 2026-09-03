@@ -11,12 +11,26 @@ from importlib import resources
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
 
 from quotalens import __version__
 from quotalens.burn import burn_rate
 from quotalens.config import Settings
 from quotalens.dashboard import as_json, build_dashboard, display_label
+from quotalens.export import (
+    RAW_WARNING,
+    ExportError,
+    csv_stream,
+    filename,
+    json_stream,
+    resolve,
+)
 from quotalens.poller import ClientFactory, Poller, spend_as_dict
 from quotalens.render import render_app, render_page
 from quotalens.secrets import Redactor, SecretStore, global_redactor
@@ -151,6 +165,39 @@ def create_app(
     @app.get("/favicon.svg", include_in_schema=False)
     def favicon() -> Response:
         return Response(_static_bytes("favicon.svg"), media_type="image/svg+xml")
+
+    @app.get("/api/export.csv", include_in_schema=True)
+    def export_csv(
+        table: str = Query("quota", max_length=32),
+        hours: float | None = Query(None, gt=0, le=MAX_SERIES_HOURS),
+        raw: int = Query(0, ge=0, le=1),
+    ) -> StreamingResponse:
+        """Derived rows by default; raw claude.ai responses only with raw=1."""
+        return _export(table, hours, raw, "csv")
+
+    @app.get("/api/export.json", include_in_schema=True)
+    def export_json(
+        table: str = Query("quota", max_length=32),
+        hours: float | None = Query(None, gt=0, le=MAX_SERIES_HOURS),
+        raw: int = Query(0, ge=0, le=1),
+    ) -> StreamingResponse:
+        return _export(table, hours, raw, "json")
+
+    def _export(table: str, hours: float | None, raw: int, fmt: str) -> StreamingResponse:
+        try:
+            spec = resolve(table, raw_allowed=bool(raw))
+        except ExportError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        since = int(time.time() - hours * 3600) if hours else None
+        stream = csv_stream if fmt == "csv" else json_stream
+        media = "text/csv; charset=utf-8" if fmt == "csv" else "application/json"
+        name = filename(spec, fmt, settings.profile)
+        headers = {"Content-Disposition": f'attachment; filename="{name}"'}
+        if spec.raw:
+            headers["X-QuotaLens-Warning"] = RAW_WARNING
+        return StreamingResponse(
+            stream(state.store, spec, since), media_type=media, headers=headers
+        )
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
