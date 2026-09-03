@@ -12,7 +12,6 @@ from quotalens.dashboard import (
     SessionRowView,
     WindowView,
     clock,
-    fmt_pct,
 )
 from quotalens.runway import fmt_span
 from quotalens.views import AUTO, RANGE_KEYS
@@ -141,76 +140,36 @@ def _health_strip(dash: Dashboard) -> str:
 
 def _hero(dash: Dashboard) -> str:
     b = dash.burn
-    cls = "readout off" if b.withheld else "readout"
+    r = b.runway
+    withheld = b.withheld
+    cls = "readout off" if withheld else ("readout crit" if b.critical else "readout")
     value = (
         WITHHELD
-        if b.withheld
-        else (f'<span class="num">{e(b.rate_text)}</span><span class="dash">—</span>')
+        if withheld
+        else (f'<span class="num">{e(b.headroom_text)}</span><span class="dash">—</span>')
     )
-    trace = ""
-    if b.trace:
-        alert = (
-            f'<line x1="0" y1="{b.alert_y:.1f}" x2="1272" y2="{b.alert_y:.1f}" class="gz" '
-            'stroke-dasharray="2 3"/>'
-            if b.alert_y is not None
-            else ""
-        )
-        ticks = "".join(
-            f'<text x="{x:.0f}" y="106" class="ax" text-anchor="{_anchor(x)}">{e(t)}</text>'
-            for x, t in b.trace_ticks
-        )
-        trace = (
-            '<svg class="htrace" viewBox="0 0 1272 108" preserveAspectRatio="none" role="img" '
-            f'aria-label="Burn rate, last five hours">{alert}'
-            f'<path d="{b.trace}" class="trace" stroke="var(--s1)" '
-            f'stroke-width="var(--trace-hero)"/>{ticks}</svg>'
-        )
-    verdict = f"<b>{e(b.why)}</b>" if not b.withheld else e(b.why)
-    detail = f'<br><span class="far">{e(b.detail)}</span>' if b.detail else ""
-    return (
-        '<section class="screen hero" aria-labelledby="br"><h2 class="lbl" id="br">Burn rate'
-        + (" " + chip("elevated", "elevated") if b.elevated else "")
-        + '</h2><div class="hrow">'
-        f'<div class="{cls}">{value}<span class="u">{e(b.unit)}</span></div>'
-        + _runway_stats(dash)
-        + f'<p class="why">{verdict}{detail}</p></div>'
-        + _hour_strip(dash)
-        + f"{trace}</section>"
-    )
-
-
-def _runway_stats(dash: Dashboard) -> str:
-    r = dash.burn.runway
-    withheld = dash.burn.withheld and dash.epistemic.kind != "ok"
-    if r is None or withheld:
-        return (
-            '<dl class="runway m"><div><dt>resets in</dt><dd>' + WITHHELD + "</dd></div>"
-            "<div><dt>headroom</dt><dd>" + WITHHELD + "</dd></div>"
-            "<div><dt>sustainable</dt><dd>" + WITHHELD + "</dd></div></dl>"
-        )
-    if r.reset_ts and r.remaining_s > 0:
+    if withheld or r is None:
+        resets = f'<span class="v m">{WITHHELD}</span>'
+    elif r.reset_ts and r.remaining_s > 0:
         resets = (
-            f'<span class="num" id="reset-in" data-reset="{r.reset_ts}">'
-            f"{e(fmt_span(r.remaining_s))}</span>"
+            f'<span class="v m"><span class="num" id="reset-in" data-reset="{r.reset_ts}">'
+            f"{e(fmt_span(r.remaining_s))}</span></span>"
         )
     else:
-        resets = '<span class="num">no window</span>'
-    headroom = (
-        f'<span class="num">{fmt_pct(r.headroom_pct)}</span><span class="u">%</span>'
-        if r.headroom_pct is not None
-        else WITHHELD
-    )
-    sustain = (
-        f'<span class="num">{r.sustainable:.1f}</span><span class="u">pts/hr</span>'
-        if r.sustainable is not None
-        else WITHHELD
-    )
-    crit = ' class="crit-v"' if r.critical else ""
+        resets = '<span class="v m"><span class="num">no window</span></span>'
+    verdict = e(b.why) if withheld else f"<b>{e(b.why)}</b>"
+    detail = f'<br><span class="far">{e(b.detail)}</span>' if b.detail else ""
+    state_chip = ""
+    if not withheld and b.critical:
+        state_chip = " " + chip("critical", "critical")
+    elif b.elevated:
+        state_chip = " " + chip("elevated", "elevated")
     return (
-        '<dl class="runway m">'
-        f"<div><dt>resets in</dt><dd>{resets}</dd></div>"
-        f"<div><dt>headroom</dt><dd{crit}>{headroom}</dd></div>"
-        f"<div><dt>sustainable</dt><dd>{sustain}</dd></div></dl>"
+        '<section class="screen hero" aria-labelledby="br">'
+        f'<h2 class="lbl" id="br">Session{state_chip}</h2><div class="hrow">'
+        f'<div class="{cls}">{value}<span class="u">% left</span></div>'
+        f'<div class="resets"><span class="lbl">resets in</span>{resets}</div>'
+        f'<p class="why">{verdict}{detail}</p></div>' + _hour_strip(dash) + "</section>"
     )
 
 
@@ -245,10 +204,6 @@ def _hour_strip(dash: Dashboard) -> str:
         + "".join(cells)
         + "</div>"
     )
-
-
-def _anchor(x: float) -> str:
-    return "start" if x < 10 else ("end" if x > 1262 else "middle")
 
 
 def _meters(dash: Dashboard) -> str:

@@ -3,7 +3,7 @@
 The direction is **Bench**: the page is a piece of test equipment. Chrome is the
 matte housing; anything that plots data is an inset display. That distinction —
 not a card with a shadow — is what creates hierarchy here. There is exactly one
-lit element on screen, the burn rate, and everything else is disciplined and
+lit element on screen, the session window, and everything else is disciplined and
 quiet.
 
 Files: `tokens.css` is the contract. `preview.html` is the system applied to a
@@ -14,13 +14,14 @@ real dashboard and is the reference for spacing, density and state treatment.
 
 ## 1. The one rule
 
-**Amber means rate, and nothing else.**
+**Amber means the session window, and nothing else.**
 
 Chrome may never use amber. Not for a hover, not for a border, not for a link.
-The burn-rate readout is amber; the 5-hour series is amber because it is the
-window the burn rate is computed over; the elevated state is amber because it
-means "look at the rate." Those three uses agree with each other. A fourth use
-would break all of them.
+The headroom readout is amber because it is what is left of the session window;
+the `--s1` trace is amber because it is that window plotted over time; the
+elevated state is amber because it means "the session window is being consumed
+fast." Those three uses agree with each other. A fourth use would break all of
+them.
 
 Everything else in the chrome is achromatic. If a chrome element seems to need
 colour, it is either data (use a series colour) or a state (use a state
@@ -30,7 +31,7 @@ treatment). It is never a brand accent.
 
 | Tier | What it is | Treatment |
 |---|---|---|
-| **Lit** | The burn rate. One per screen. | `--lit`, `--fs-readout`, mono, tabular |
+| **Lit** | The session headroom. One per screen. | `--lit`, `--fs-readout`, mono, tabular |
 | **Legible** | The data: traces, current values, table figures | `--txt`, chroma only from the series palette |
 | **Quiet** | Everything else: labels, axes, rules, nav, units, timestamps | `--txt-dim` / `--txt-far`, never chroma |
 
@@ -77,7 +78,7 @@ behind the data.
 
 Amber (`#F2B33D` dark, `#8A5B00` light) is the sodium-lamp colour of a bench
 readout. It is not near `#D97757`: more yellow, more saturated, and used as the
-one lit element rather than as a brand wash.
+one lit element, the session window, rather than as a brand wash.
 
 ### Series
 
@@ -86,15 +87,15 @@ survive dichromacy.
 
 | Slot | Meaning | Dark | Light | Dash | Weight |
 |---|---|---|---|---|---|
-| `--s1` | 5-hour window / burn rate | `#F2B33D` | `#A66A00` | solid | `--trace-hero` |
+| `--s1` | session window | `#F2B33D` | `#A66A00` | solid | `--trace-hero` |
 | `--s2` | 7-day window | `#7FCDEF` | `#0E6E9C` | solid | `--trace` |
 | `--s3` | 7-day Sonnet | `#4FC08A` | `#00704E` | `7 3` | `--trace` |
 | `--s4` | per-model limit | `#6E9BE8` | `#2A4FA0` | `2 3` | `--trace` |
 | `--s5` | per-model limit | `#DE79AC` | `#A32C6A` | `10 3 2 3` | `--trace` |
 | `--s6` | per-project / other | `#B9A0E8` | `#5F42A8` | `4 4` | `--trace-dim` |
 
-Slot 1 is always the 5-hour window, so the amber in the chart is the same amber
-as the readout and means the same thing. Assign the rest in order; do not pick
+Slot 1 is always the session window, so the amber in the chart is the same amber
+as the headroom readout and means the same thing. Assign the rest in order; do not pick
 by taste.
 
 **Colour is never the only channel.** Every series carries three: hue, a dash
@@ -171,8 +172,8 @@ not use it for prose, headings, or small labels as decoration.
 
 | Token | px | Use |
 |---|---|---|
-| `--fs-readout` | 48–68 fluid | the burn rate, once |
-| `--fs-metric` | 28 | window percentages |
+| `--fs-readout` | 48–68 fluid | the session headroom, once |
+| `--fs-metric` | 28 | window percentages, the reset countdown |
 | `--fs-sub` | 18 | unit next to the readout, state reference values |
 | `--fs-lg` | 15 | product name |
 | `--fs-md` | 13 | body, table cells |

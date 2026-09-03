@@ -397,8 +397,11 @@ def test_burn_rate_withheld_under_five_minutes(settings, store) -> None:
     now = int(time.time())
     _seed(store, now, minutes=4, base=10)
     dash = build_dashboard(settings, store, _status(state="ok", last_success_ts=now), now, 20.0)
-    assert dash.burn.withheld and dash.burn.rate_text == EM_DASH
+    assert (
+        not dash.burn.withheld and dash.burn.rate_text == EM_DASH
+    )  # headroom shows, rate does not
     assert dash.burn.why.startswith("Collecting: 3m of samples")
+    assert dash.burn.headroom_text == "87"
     _seed(store, now, minutes=7, base=10)
     dash = build_dashboard(settings, store, _status(state="ok", last_success_ts=now), now, 20.0)
     assert not dash.burn.withheld
