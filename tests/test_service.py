@@ -277,5 +277,17 @@ def test_status_uses_the_recorded_port_when_none_is_given(tmp_path) -> None:
     assert service.read_runtime(tmp_path) == {"pid": os.getpid(), "port": 8790, "interval_s": 30}
     service.clear_runtime(tmp_path)
     assert service.read_runtime(tmp_path) is None
-    status(tmp_path, None, fetch=fetch)
-    assert seen[-1].startswith("http://127.0.0.1:8787/")  # nothing recorded: the default
+    assert status(tmp_path, None, fetch=fetch).exit_code == 1  # nothing recorded, no pid
+    assert len(seen) == 1  # and no port was probed
+
+
+def test_status_without_pid_or_runtime_is_not_running_and_never_probes_a_port(tmp_path) -> None:
+    seen: list[str] = []
+
+    def fetch(url: str):
+        seen.append(url)
+        return {}
+
+    report = status(tmp_path, None, fetch=fetch)
+    assert report.exit_code == 1 and report.lines[0] == "not running"
+    assert seen == []

@@ -307,7 +307,12 @@ class Poller:
         self._note_diagnostics(parsed, now)
 
         await self._poll_overage(client, now, usage_raw)
-        rebuild_sessions(self._store, now)
+        try:
+            rebuild_sessions(self._store, now)
+        except Exception as exc:  # the readings are stored; the history table is derived
+            detail = self._redactor.redact(f"{type(exc).__name__}: {exc}")
+            self._store.record_event("session_rebuild_failed", detail, ts=now)
+            log.warning("session rebuild failed: %s", self._redactor.redact(str(exc)))
 
         self.status.state = "ok"
         self.status.last_success_ts = now

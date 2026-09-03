@@ -404,7 +404,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--db", type=Path, help="SQLite file path")
     serve.add_argument("--lookback", type=int, help="default burn-rate lookback in minutes")
     serve.add_argument(
-        "--burn-alert", type=float, help="burn rate (pts/hr) at which the 5-hour window is elevated"
+        "--burn-alert", type=float, help="burn rate (pts/hr) at which the session is elevated"
     )
     serve.add_argument("--log-file", type=Path, help="also log to this file, rotated by size")
 
@@ -430,11 +430,15 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None, secrets: SecretStore | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    scratch_dir = args.data_dir is not None
     if args.data_dir is None:
         args.data_dir = default_data_dir()
     _setup_logging(args.verbose, getattr(args, "log_file", None))
     try:
         settings = settings_from_env().with_overrides(user_agent=args.user_agent)
+        if scratch_dir and not os.environ.get("QUOTALENS_DB") and not getattr(args, "db", None):
+            # A scratch data directory must never write to the real database by default.
+            settings = settings.with_overrides(db_path=args.data_dir / "quotalens.db")
         if args.command == "serve":
             settings = validate(
                 settings.with_overrides(

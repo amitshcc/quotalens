@@ -153,7 +153,7 @@ def _hero(dash: Dashboard) -> str:
     elif r.reset_ts and r.remaining_s > 0:
         resets = (
             f'<span class="v m"><span class="num" id="reset-in" data-reset="{r.reset_ts}">'
-            f"{e(fmt_span(r.remaining_s))}</span></span>"
+            f'{e(fmt_span(r.remaining_s))}</span><span class="dash">—</span></span>'
         )
     else:
         resets = '<span class="v m"><span class="num">no window</span></span>'

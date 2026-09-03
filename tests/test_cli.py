@@ -198,3 +198,19 @@ def test_restart_keeps_the_recorded_port_and_interval(monkeypatch, tmp_path) -> 
     rc = cli.main(["--data-dir", str(tmp_path), "restart"], secrets=MemorySecretStore(COOKIE))
     assert rc == 0
     assert seen["args"] == ["--interval", "30", "--port", "8790"]
+
+
+def test_scratch_data_dir_implies_a_scratch_database(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("QUOTALENS_DB", raising=False)
+    seen = {}
+
+    def fake_serve(args, settings, secrets):
+        seen["db"] = settings.db_path
+        return 0
+
+    monkeypatch.setattr(cli, "cmd_serve", fake_serve)
+    cli.main(["--data-dir", str(tmp_path), "serve"], secrets=MemorySecretStore(COOKIE))
+    assert seen["db"] == tmp_path / "quotalens.db"
+    argv = ["--data-dir", str(tmp_path), "serve", "--db", str(tmp_path / "x.db")]
+    cli.main(argv, secrets=MemorySecretStore(COOKIE))
+    assert seen["db"] == tmp_path / "x.db"

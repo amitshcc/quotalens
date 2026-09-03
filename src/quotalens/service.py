@@ -295,6 +295,8 @@ def status(
     pid = running_pid(pidfile)
     runtime = read_runtime(data_dir) or {}
     if port is None:
+        if pid is None and not runtime:
+            return StatusReport(1, ["not running", f"pid file: {pidfile} (absent)"])
         port = int(runtime.get("port") or DEFAULT_PORT)
     base = f"http://127.0.0.1:{port}"
     try:

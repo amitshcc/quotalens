@@ -843,7 +843,7 @@ def _history_view(
     for w in windows:
         end = min(w.ends_at, now)
         elapsed = max(1, end - w.started_at)
-        coverage = coverage_pct(w.samples, elapsed, interval_s)
+        coverage = coverage_pct(w.covered_s, elapsed)
         note = ""
         if abs(w.peak_pct - w.final_pct) > PEAK_FINAL_NOTE_PTS:
             note = f"Peak {fmt_pct(w.peak_pct)}%, closed at {fmt_pct(w.final_pct)}%"

@@ -212,7 +212,7 @@ def test_partial_badge_only_when_coverage_is_poor(settings, store, secrets) -> N
         row = QuotaReading("five_hour", "5-hour", i / 6, iso(e1))
         store.record_quota(e1 - SESSION_LENGTH_S + i * 60, [row])
     e2 = now - 30 * 60
-    for i in range(0, 300, 21):  # under a third observed
+    for i in range(0, 90):  # only the first ninety minutes observed
         row = QuotaReading("five_hour", "5-hour", i / 6, iso(e2))
         store.record_quota(e2 - SESSION_LENGTH_S + i * 60, [row])
     rebuild(store, now)

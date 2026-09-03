@@ -36,7 +36,9 @@
     var el = document.getElementById("polled");
     if (el && Number(el.dataset.ts)) {
       var age = Math.round(Date.now() / 1000 - Number(el.dataset.ts));
-      el.textContent = age < 120 ? "polled " + age + "s ago" : (el.dataset.fallback || el.textContent);
+      if (age < 120) el.textContent = "polled " + age + "s ago";
+      else if (age < 3600) el.textContent = "polled " + Math.floor(age / 60) + "m ago";
+      else el.textContent = el.dataset.fallback || el.textContent;
     }
     var reset = document.getElementById("reset-in");
     if (reset && Number(reset.dataset.reset)) {

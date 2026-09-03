@@ -90,10 +90,10 @@ def compute_runway(
     headroom = None if pct is None else max(0.0, 100.0 - pct)
     if pct is None:
         return Runway(
-            reset_ts, remaining, None, None, rate, None, None, None, "No 5-hour readings yet.", ""
+            reset_ts, remaining, None, None, rate, None, None, None, "No session readings yet.", ""
         )
     if reset_ts is None or remaining <= 0:
-        verdict = "No session running. The next message starts a fresh 5-hour window."
+        verdict = "No session running. The next message starts a fresh session window."
         return Runway(reset_ts, 0, pct, headroom, rate, None, None, None, verdict, "")
     exhaust_ts, finish = project(pct, rate, now, reset_ts)
     sustain = sustainable_rate(headroom, remaining)
