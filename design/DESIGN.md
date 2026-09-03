@@ -88,8 +88,8 @@ survive dichromacy.
 | Slot | Meaning | Dark | Light | Dash | Weight |
 |---|---|---|---|---|---|
 | `--s1` | session window | `#F2B33D` | `#A66A00` | solid | `--trace-hero` |
-| `--s2` | 7-day window | `#7FCDEF` | `#0E6E9C` | solid | `--trace` |
-| `--s3` | 7-day Sonnet | `#4FC08A` | `#00704E` | `7 3` | `--trace` |
+| `--s2` | weekly window, all models | `#7FCDEF` | `#0E6E9C` | solid | `--trace` |
+| `--s3` | weekly window, per model | `#4FC08A` | `#00704E` | `7 3` | `--trace` |
 | `--s4` | per-model limit | `#6E9BE8` | `#2A4FA0` | `2 3` | `--trace` |
 | `--s5` | per-model limit | `#DE79AC` | `#A32C6A` | `10 3 2 3` | `--trace` |
 | `--s6` | per-project / other | `#B9A0E8` | `#5F42A8` | `4 4` | `--trace-dim` |
