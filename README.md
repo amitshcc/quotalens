@@ -60,11 +60,23 @@ click a series' end label to hide it, pick the burn-rate lookback, set
 auto-refresh, and force a poll (one per 10 seconds). All of it works with
 JavaScript disabled as plain links and forms.
 
+The top of the page answers the one question the dashboard exists for: will
+the 5-hour window run out before it resets? Beside the burn rate sit a ticking
+countdown to the reset, the headroom left, and the sustainable rate, the points
+per hour you could burn from now to the reset without exhausting it. The
+verdict sentence changes with the situation: "Exhausted at 21:04, 2h 09m before
+reset", "At this rate you finish with 37% unused", or "Flat for 4m. 37% left,
+resets in 2h 14m". Once five complete windows exist it adds how the projected
+finish compares with your median window. Five bars beneath show the points
+consumed in each hour of the window. The chart's default range is the current
+window from start to reset, with now inside it, hourly separators, and a dashed
+projection at the current rate that turns critical where it crosses 100%.
+
 Below the chart, the history table lists your 5-hour session windows, derived
 from the API's own `resets_at` values: when it jumps forward a new session
 started, and its start is that value minus five hours. Each row shows the peak
-utilisation reached in the window, the closing value, how far each weekly limit
-moved during it, and how many samples it rests on. Sort by consumption to find
+utilisation reached in the window, how far each weekly limit moved during it,
+a sparkline of its shape, and how much of it was observed. Sort by consumption to find
 the expensive session, click it, and the chart shows exactly that window. On the
 chart, session starts are vertical rules and spans with no session running are
 shaded flat, which is a different mark from the hatched spans where the
