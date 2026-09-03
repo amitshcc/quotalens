@@ -167,7 +167,7 @@ footer{margin-top:var(--sp-5);padding-top:var(--sp-3);border-top:var(--hair) sol
   font-size:var(--fs-xs);color:var(--txt-far);display:flex;gap:var(--sp-4);flex-wrap:wrap}
 
 /* the browser cannot reach the server: withhold every value, in CSS, with no script logic */
-[data-link=lost] .num,[data-link=lost] .v .u,[data-link=lost] .readout .u{display:none}
+[data-link=lost] .num,[data-link=lost] .v .u{display:none}
 [data-link=lost] .dash,[data-link=lost] #link{display:inline-flex}
 [data-link=lost] .readout{color:var(--txt-far)}
 [data-link=lost] .meter .v{color:var(--txt-far)!important}
