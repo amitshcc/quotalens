@@ -440,6 +440,9 @@ class Store:
         what lets the table be bounded without losing the endpoint-drift record.
         """
         keep_last = max(0, keep_last)
+        # Fold the write-ahead log in first, or "before" includes megabytes of WAL
+        # this very session wrote (a migration, say) and the report reads as a lie.
+        self.checkpoint()
         before = self.db_size_bytes()
         with self._tx() as cur:
             signatures = cur.execute(
@@ -460,7 +463,9 @@ class Store:
                     "(SELECT MIN(rowid) FROM sample GROUP BY source, COALESCE(keysig, ''))",
                     (keep_last,),
                 )
-            kept = cur.execute("SELECT COUNT(*) FROM sample").fetchone()[0]
+            remaining = cur.execute("SELECT COUNT(*) FROM sample").fetchone()[0]
+        # On a dry run nothing was deleted, so say what *would* be left, not what is.
+        kept = remaining - doomed if dry_run else remaining
         if not dry_run and doomed:
             self.vacuum()
         return PruneResult(
@@ -471,6 +476,15 @@ class Store:
             bytes_before=before,
             bytes_after=self.db_size_bytes(),
         )
+
+    def checkpoint(self) -> None:
+        """Fold the write-ahead log back into the database file."""
+        with self._lock:
+            self._conn.isolation_level = None
+            try:
+                self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            finally:
+                self._conn.isolation_level = ""
 
     def vacuum(self) -> None:
         """Reclaim the freed pages, then fold the WAL back into the file.

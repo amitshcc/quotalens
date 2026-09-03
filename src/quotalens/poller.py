@@ -14,8 +14,17 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from quotalens.alerts import ThresholdDetector, describe, payload, post_webhook
+from quotalens.alerts import (
+    ALERT_KIND,
+    CLEARED_KIND,
+    ThresholdDetector,
+    describe,
+    payload,
+    post_webhook,
+    standing,
+)
 from quotalens.burn import burn_rate as compute_burn_rate
+from quotalens.burn import min_trusted_span
 from quotalens.client import (
     AuthError,
     BlockedError,
@@ -144,6 +153,16 @@ def spend_as_dict(spend: SpendReading | None) -> dict[str, Any] | None:
     }
 
 
+def _alert_was_standing(store: Store) -> bool:
+    """Restore the detector's edge across a restart from what is already recorded."""
+    try:
+        alerts = store.recent_events(limit=1, kind=ALERT_KIND)
+        cleared = store.recent_events(limit=1, kind=CLEARED_KIND)
+    except Exception:  # a store that cannot answer must not stop the poller starting
+        return False
+    return standing(alerts[0].ts if alerts else None, cleared[0].ts if cleared else None)
+
+
 class Poller:
     def __init__(
         self,
@@ -166,7 +185,9 @@ class Poller:
         self._overage_fetched = False
         self._last_ignored: frozenset[str] = frozenset()
         self._last_prune_ts: float | None = None
-        self._detector = ThresholdDetector(settings.burn_alert_pts_per_hour)
+        self._detector = ThresholdDetector(
+            settings.burn_alert_pts_per_hour, firing=_alert_was_standing(store)
+        )
         self._last_session: tuple[str | None, float | None] = (None, None)
         self._webhooks: set[asyncio.Task[bool]] = set()
         self.schedule = Schedule(interval_s=float(settings.poll_interval_s))
@@ -364,7 +385,11 @@ class Poller:
         """One event per crossing, not one per poll while over the line."""
         lookback_s = self._settings.burn_lookback_min * 60
         rows = self._store.quota_series(now - lookback_s * 4, window=RATE_WINDOW)
-        rate = compute_burn_rate(RATE_WINDOW, rows, lookback_s, now).rate_pct_per_hour
+        result = compute_burn_rate(RATE_WINDOW, rows, lookback_s, now)
+        # the same evidence floor the dashboard uses: never page someone with a
+        # number the product would refuse to show them
+        trusted = result.span_s >= min_trusted_span(lookback_s)
+        rate = result.rate_pct_per_hour if trusted else None
         self.status.burn_rate = rate
         kind = self._detector.update(rate)
         if kind is None or rate is None:

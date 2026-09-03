@@ -30,6 +30,17 @@ HYSTERESIS = 0.9  # fall back below 90% of the threshold before clearing
 WEBHOOK_TIMEOUT_S = 5.0
 
 
+def standing(latest_alert_ts: int | None, latest_cleared_ts: int | None) -> bool:
+    """Is an alert still standing, judged from what was recorded before we started?
+
+    The detector is in memory, so without this a restart re-crosses a threshold it
+    never left and POSTs the webhook again.
+    """
+    if latest_alert_ts is None:
+        return False
+    return latest_cleared_ts is None or latest_cleared_ts < latest_alert_ts
+
+
 @dataclass
 class ThresholdDetector:
     """Edge detection for one threshold. Pure, so the transitions are testable."""

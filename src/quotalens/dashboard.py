@@ -14,8 +14,8 @@ from datetime import datetime
 from itertools import pairwise
 from typing import Any
 
-from quotalens.alerts import ALERT_KIND, CLEARED_KIND
-from quotalens.burn import BurnResult, burn_rate, split_at_resets
+from quotalens.alerts import ALERT_KIND, CLEARED_KIND, standing
+from quotalens.burn import BurnResult, burn_rate, min_trusted_span, split_at_resets
 from quotalens.config import Settings
 from quotalens.parse import SpendReading, humanize
 from quotalens.poller import PollerStatus
@@ -55,7 +55,6 @@ CHART_L, CHART_R, CHART_T, CHART_B = 44, 122, 14, 20
 HERO_W, HERO_H = 1272, 108
 LABEL_GAP = 13.0
 MAX_POINTS_PER_SERIES = 600  # longer ranges are bucketed, keeping the last sample per bucket
-DISPLAY_MIN_BURN_SPAN_S = 300  # a rate over less than this is noise at 68px
 FORCE_NOTE_TTL_S = 15
 HISTORY_ROWS = 20
 SPARK_POINTS = 40
@@ -359,7 +358,7 @@ def build_dashboard(
         rate_burn
         and rate_burn.rate_pct_per_hour is not None
         and rate_burn.rate_pct_per_hour >= burn_alert
-        and rate_burn.span_s >= min_burn_span(lookback_s)
+        and rate_burn.span_s >= min_trusted_span(lookback_s)
     )
 
     windows = [
@@ -488,10 +487,8 @@ def build_dashboard(
 def _alert_standing(store: Store) -> bool:
     """True when the most recent threshold event was a crossing, not a clearing."""
     latest = store.recent_events(limit=1, kind=ALERT_KIND)
-    if not latest:
-        return False
     cleared = store.recent_events(limit=1, kind=CLEARED_KIND)
-    return not cleared or cleared[0].ts < latest[0].ts
+    return standing(latest[0].ts if latest else None, cleared[0].ts if cleared else None)
 
 
 def _transient_notes(status: PollerStatus, now: int) -> list[str]:
@@ -594,7 +591,7 @@ def _burn_view(
         return BurnView("—", "pts/hr", why, True, False)
     if burn is None or current is None:
         return BurnView("—", "pts/hr", "No session readings yet.", True, False)
-    need_s = min_burn_span(lookback_s)
+    need_s = min_trusted_span(lookback_s)
     rate = burn.rate_pct_per_hour
     displayable = rate is not None and burn.span_s >= need_s
     reset_dt = parse_iso(current.resets_at)
@@ -628,11 +625,6 @@ def _burn_view(
         headroom,
         runway.critical,
     )
-
-
-def min_burn_span(lookback_s: int) -> int:
-    """5 minutes, or 80% of a shorter lookback: at 60s polling a 5m lookback spans 4m."""
-    return int(min(DISPLAY_MIN_BURN_SPAN_S, lookback_s * 0.8))
 
 
 def find_gaps(

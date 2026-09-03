@@ -32,6 +32,8 @@ def test_prune_keeps_the_newest_and_the_first_of_every_shape(tmp_path) -> None:
     dry = store.prune_samples(keep_last=10, dry_run=True)
     assert dry.deleted == 0 and store.counts()["sample"] == 60  # nothing removed
     assert dry.candidates == 48  # but it says what it would have removed
+    assert dry.kept == 12  # and what would be left, not what is there now
+    assert dry.candidates + dry.kept == 60
     assert dry.signatures == 3  # two usage shapes and one overage shape
 
     result = store.prune_samples(keep_last=10)
@@ -42,6 +44,21 @@ def test_prune_keeps_the_newest_and_the_first_of_every_shape(tmp_path) -> None:
     assert kept[0] == (1, "cinder_cove,five_hour")  # the novel shape survives forever
     assert kept[1][0] == 2  # and the first sample of the ordinary shape
     assert [ts for ts, _ in kept[2:]] == list(range(51, 61))
+    store.close()
+
+
+def test_a_dry_run_reports_the_same_size_the_real_run_starts_from(tmp_path) -> None:
+    """The write-ahead log made a dry run report roughly double, and no change."""
+    store = Store(tmp_path / "wal.db")
+    payload = {"five_hour": {"utilization": 1}, "blob": "x" * 3000}
+    for ts in range(1500):
+        store.record_sample(ts, "usage", payload)
+    dry = store.prune_samples(keep_last=100, dry_run=True)
+    real = store.prune_samples(keep_last=100)
+    assert dry.bytes_before == real.bytes_before  # the same starting point
+    assert dry.bytes_after == dry.bytes_before  # a dry run changes nothing
+    assert real.bytes_after is not None and real.bytes_after < real.bytes_before / 2
+    assert dry.candidates == real.deleted and dry.kept == real.kept
     store.close()
 
 
