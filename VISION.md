@@ -1,28 +1,43 @@
-# quotawatch — vision
-
-*(Working name. Rename freely; `claude-quota`, `usagelens` and `burnrate` were
-the other candidates.)*
+# QuotaLens — vision
 
 ## The problem
 
 Claude Pro and Max subscribers get a level, not a rate. Settings → Usage shows
-you a percentage. It does not show you how fast that percentage is moving, what
-moved it, or that anything moved it while you were asleep.
+you a percentage. It does not show you how fast that percentage is moving, and
+when you close the tab it does not remember that it moved.
 
-That gap has a specific failure mode. A scheduled task or a background agent
-session runs on Anthropic's infrastructure, not on your machine, so nothing
-appears in `ps` or in your task manager. It consumes quota silently. You find
-out at 100%, hours after the fact, with no record of when the climb started or
-which project caused it. If extra usage billing is enabled, you find out on
-your card.
+Claude Code's `/usage` goes further than that, and further than this project
+once planned to. On Pro and Max it attributes recent usage to skills, subagents,
+plugins and individual MCP servers, flags behaviours like cache misses, and
+lists the heaviest scheduled tasks with how often each fired and what it cost.
+That is better attribution than reading local transcript logs could ever give,
+and it needs no cookie. It also, in Anthropic's own words, covers the last 24
+hours or 7 days, is "computed from local session history on this machine", so
+usage from other devices or claude.ai is not included, and it is gone when you
+close the terminal.
 
-Existing tools each solve one half. Menu bar apps (ClaudeUsageBar, Usagebar,
-Usage4Claude) poll the account endpoint and show the current percentage — no
-history, and macOS only. `ccusage` reads Claude Code's local transcript logs and
-attributes tokens to projects — but knows nothing about your subscription quota,
-and nothing about usage from the web app, Cowork, or scheduled tasks.
+So the gap is not attribution. It is memory, and the shape of the climb:
 
-Nobody joins the two.
+> **Claude tells you what is consuming your quota right now, on this machine,
+> and then forgets. QuotaLens remembers.**
+
+That matters because of a specific failure mode. A scheduled task or a
+background agent session runs on Anthropic's infrastructure, not on your
+machine, so nothing appears in `ps` or in your task manager. It consumes quota
+silently. You find out at 100%, hours after the fact, and by then there is
+nothing left to look at: no record of when the climb started, how steep it was,
+or which five-hour session it happened in. If extra usage billing is enabled,
+you find out on your card.
+
+The other tools each hold one half and let go of it. Menu bar apps
+(ClaudeUsageBar, Usagebar, Usage4Claude) poll the account endpoint and show the
+current percentage — no history, and macOS only. `ccusage` reads Claude Code's
+local transcript logs and attributes tokens to projects — but knows nothing
+about your subscription quota, and nothing about usage from the web app, Cowork
+or scheduled tasks, because quota is pooled across all of them and local logs
+are not.
+
+Nobody keeps the series.
 
 ## What this is
 
@@ -57,9 +72,10 @@ keychain, never in a config file committed by accident, never in a log line.
 **Cross-platform.** macOS, Linux, and Windows, plus a container image. This is
 the clearest gap in the existing tools and the cheapest one to fill.
 
-**History is the product.** Anyone can render a percentage. The value is in the
-time series: burn rate, the shape of the climb, and being able to look back at
-last Tuesday and see the exact minute it started.
+**History is the product.** Anyone can render a percentage, and Claude Code can
+attribute today's. The value here is the time series: burn rate, the shape of
+the climb, whether this five-hour window will run out before it resets, and
+being able to look back at last Tuesday and see the exact minute it started.
 
 **Your data leaves easily.** CSV and JSON export, plus a Prometheus `/metrics`
 endpoint so it drops into an existing Grafana stack without a plugin.
