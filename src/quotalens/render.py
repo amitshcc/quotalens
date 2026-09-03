@@ -130,12 +130,13 @@ def _main(dash: Dashboard) -> str:
 
 
 def _health_strip(dash: Dashboard) -> str:
-    if not dash.health_message and not dash.notes:
+    if not dash.health_message:
         return ""
     kind = dash.epistemic.kind if dash.epistemic.kind != "ok" else "note"
-    parts = [f"<p>{e(dash.health_message)}</p>"] if dash.health_message else []
-    parts += [f'<p class="far">{e(note)}</p>' for note in dash.notes]
-    return f'<section class="hstrip {kind}" aria-live="polite">{"".join(parts)}</section>'
+    return (
+        f'<section class="hstrip {kind}" aria-live="polite">'
+        f"<p>{e(dash.health_message)}</p></section>"
+    )
 
 
 def _hero(dash: Dashboard) -> str:
@@ -345,7 +346,11 @@ def _toolbar(dash: Dashboard) -> str:
         f'data-cooldown="{dash.cooldown_s}">'
         '<svg class="ic" aria-hidden="true"><use href="#i-rate"/></svg>'
         '<span id="poll-label">poll now</span></button></form>'
-        "</nav>"
+        + "".join(
+            f'<span class="lbl" id="poll-note" aria-live="polite">{e(note)}</span>'
+            for note in dash.notes[:1]
+        )
+        + "</nav>"
     )
 
 
@@ -476,10 +481,22 @@ def _history(dash: Dashboard) -> str:
     else:
         body = "".join(_history_row(r) for r in h.rows)
     caption = " by consumption" if not recent_on else ", most recent first"
+    foot = ""
+    if h.show_all_href:
+        foot = (
+            f'<tfoot><tr><td colspan="{3 + weekly}"><a href="{e(h.show_all_href)}" class="sess">'
+            f"show all {h.total} windows</a></td></tr></tfoot>"
+        )
+    elif h.show_less_href:
+        foot = (
+            f'<tfoot><tr><td colspan="{3 + weekly}"><a href="{e(h.show_less_href)}" class="sess">'
+            "show the first 20</a></td></tr></tfoot>"
+        )
     return (
         '<section class="screen history"><table>'
         f"<caption>History — 5-hour session windows{caption}</caption>"
-        f"<thead><tr>{head1}</tr><tr>{head2}</tr></thead><tbody>{body}</tbody></table></section>"
+        f"<thead><tr>{head1}</tr><tr>{head2}</tr></thead><tbody>{body}</tbody>{foot}"
+        "</table></section>"
     )
 
 

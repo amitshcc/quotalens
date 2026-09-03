@@ -286,6 +286,11 @@ def status(
     if poller.get("last_error"):
         lines.append(f"last error: {poller['last_error']}")
     try:
+        dash = fetch(f"{base}/api/dashboard")
+        lines.extend(_session_lines(dash, now))
+    except (urllib.error.URLError, OSError, ValueError, KeyError):
+        lines.append("session: unavailable")
+    try:
         current = fetch(f"{base}/api/quota/current")
         for reading in current.get("readings", []):
             lines.append(f"  {reading['label']:<14} {reading['pct']:6.1f}%")
@@ -299,6 +304,22 @@ def status(
         "blocked",
     }
     return StatusReport(2 if stalled else 0, lines)
+
+
+def _session_lines(dash: dict[str, Any], now: float) -> list[str]:
+    runway = dash.get("runway") or {}
+    current = next((s for s in dash.get("sessions", []) if s.get("is_current")), None)
+    if not current or not runway.get("reset_ts"):
+        return ["session: none running"]
+    start = time.strftime("%H:%M", time.localtime(current["started_at"]))
+    end = time.strftime("%H:%M", time.localtime(current["ends_at"]))
+    remaining = max(0, int(runway["reset_ts"] - now))
+    headroom = runway.get("headroom_pct")
+    head = f", {headroom:.0f}% headroom" if headroom is not None else ""
+    return [
+        f"session: {start}-{end}, resets in {_fmt_duration(remaining)}{head}",
+        f"verdict: {runway.get('verdict', '')}",
+    ]
 
 
 def _fmt_ts(ts: Any) -> str:
