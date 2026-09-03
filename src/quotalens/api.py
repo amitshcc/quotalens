@@ -20,6 +20,7 @@ from quotalens.dashboard import as_json, build_dashboard
 from quotalens.poller import ClientFactory, Poller, spend_as_dict
 from quotalens.render import render_app, render_page
 from quotalens.secrets import Redactor, SecretStore, global_redactor
+from quotalens.state import collector_state
 from quotalens.store import Store
 
 log = logging.getLogger(__name__)
@@ -125,10 +126,19 @@ def create_app(
         events = [e.as_dict() for e in state.store.recent_events(limit=10)]
         never_polled = poller_status.state == "starting" and not counts["quota"]
         overall = "never_polled" if never_polled else poller_status.state
+        now = int(time.time())
+        collector = collector_state(poller_status, settings.poll_interval_s, now)
         return {
             "status": overall,
             "version": __version__,
-            "now_ts": int(time.time()),
+            "now_ts": now,
+            "started_ts": poller_status.started_ts,
+            "uptime_s": now - poller_status.started_ts,
+            "collector": {
+                "kind": collector.kind,
+                "title": collector.title,
+                "message": collector.message,
+            },
             "poller": poller_status.as_dict(),
             "poll_interval_s": settings.poll_interval_s,
             "store": {"db_path": str(state.store.path), "rows": counts},
