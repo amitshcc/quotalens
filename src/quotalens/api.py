@@ -31,6 +31,9 @@ from quotalens.export import (
     json_stream,
     resolve,
 )
+from quotalens.metrics import CONTENT_TYPE as METRICS_CONTENT_TYPE
+from quotalens.metrics import collect as collect_metrics
+from quotalens.metrics import render as render_metrics
 from quotalens.poller import ClientFactory, Poller, spend_as_dict
 from quotalens.render import render_app, render_page
 from quotalens.secrets import Redactor, SecretStore, global_redactor
@@ -165,6 +168,12 @@ def create_app(
     @app.get("/favicon.svg", include_in_schema=False)
     def favicon() -> Response:
         return Response(_static_bytes("favicon.svg"), media_type="image/svg+xml")
+
+    @app.get("/metrics", include_in_schema=False)
+    def metrics() -> Response:
+        """Prometheus text exposition. Loopback only, like everything else here."""
+        families = collect_metrics(settings, state.store, state.poller.status, int(time.time()))
+        return Response(render_metrics(families), media_type=METRICS_CONTENT_TYPE)
 
     @app.get("/api/events")
     def events(
