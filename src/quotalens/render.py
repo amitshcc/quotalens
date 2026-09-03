@@ -220,7 +220,7 @@ def _meters(dash: Dashboard) -> str:
 
 
 def _meter(w: WindowView) -> str:
-    label = e(w.label) + " window" if w.slot in (1, 2) else e(w.label)
+    label = e(w.label)
     active = ' <span class="far">active</span>' if w.is_active and not w.withheld else ""
     if w.withheld:
         return (
@@ -415,25 +415,18 @@ def _history(dash: Dashboard) -> str:
     recent_on = h.sort == "recent"
     sort_recent = ' aria-sort="descending"' if recent_on else ""
     sort_consumed = ' aria-sort="descending"' if not recent_on else ""
-    weekly = len(h.headers)
-    group = (
-        f'<th class="n grp" colspan="{weekly}" scope="colgroup">weekly limits</th>'
-        if weekly
-        else ""
+    heads = (
+        f'<th><a href="{e(h.sort_links["recent"])}" data-sort="recent"{sort_recent}>Window</a></th>'
+        f'<th class="n"><a href="{e(h.sort_links["consumed"])}" data-sort="consumed"'
+        f"{sort_consumed}>Session</a></th>"
+        + "".join(f'<th class="n">{e(x)}</th>' for x in h.headers)
+        + '<th class="sc"></th>'
     )
-    head1 = (
-        f'<th rowspan="2"><a href="{e(h.sort_links["recent"])}" data-sort="recent"'
-        f"{sort_recent}>Window</a></th>"
-        f'<th class="n" rowspan="2"><a href="{e(h.sort_links["consumed"])}" data-sort="consumed"'
-        f"{sort_consumed}>Consumed</a></th>"
-        + group
-        + '<th class="n" rowspan="2">Coverage</th><th rowspan="2" class="sc"></th>'
-    )
-    head2 = "".join(f'<th class="n">{e(x)}</th>' for x in h.headers)
+    cols = 3 + len(h.headers)
     if not h.rows:
         body = (
-            f'<tr><td colspan="{4 + weekly}" class="empty">'
-            "No 5-hour windows yet. They appear once the first session has samples.</td></tr>"
+            f'<tr><td colspan="{cols}" class="empty">'
+            "No session windows yet. They appear once the first session has samples.</td></tr>"
         )
     else:
         body = "".join(_history_row(r) for r in h.rows)
@@ -441,33 +434,46 @@ def _history(dash: Dashboard) -> str:
     foot = ""
     if h.show_all_href:
         foot = (
-            f'<tfoot><tr><td colspan="{4 + weekly}"><a href="{e(h.show_all_href)}" class="sess">'
+            f'<tfoot><tr><td colspan="{cols}"><a href="{e(h.show_all_href)}" class="sess">'
             f"show all {h.total} windows</a></td></tr></tfoot>"
         )
     elif h.show_less_href:
         foot = (
-            f'<tfoot><tr><td colspan="{4 + weekly}"><a href="{e(h.show_less_href)}" class="sess">'
+            f'<tfoot><tr><td colspan="{cols}"><a href="{e(h.show_less_href)}" class="sess">'
             "show the first 20</a></td></tr></tfoot>"
         )
     return (
         '<section class="screen history"><table>'
-        f"<caption>History — 5-hour session windows{caption}</caption>"
-        f"<thead><tr>{head1}</tr><tr>{head2}</tr></thead><tbody>{body}</tbody>{foot}"
-        "</table></section>"
+        f"<caption>History — session windows{caption}. Weekly columns: change in the window, "
+        "then the level it reached</caption>"
+        f"<thead><tr>{heads}</tr></thead><tbody>{body}</tbody>{foot}</table></section>"
     )
 
 
 def _history_row(r: SessionRowView) -> str:
     cls = " ".join(c for c in ("r-thin" if r.thin else "", "r-on" if r.selected else "") if c)
     title = f' title="{e(r.note)}"' if r.note else ""
-    current = ' <span class="far">current</span>' if r.is_current else ""
-    cells = "".join(f'<td class="m n">{e(c)}</td>' for c in r.columns)
+    marks = ""
+    if r.is_current:
+        marks += ' <span class="far">current</span>'
+    if r.badge:
+        marks += f' <span class="chip stale">{e(r.badge)}</span>'
+    cells = "".join(_delta_td(d, end, reset) for d, end, reset in r.columns)
     return (
         f'<tr class="{cls}"{title}><th scope="row"><a href="{e(r.href)}" class="sess" '
-        f'data-session="{r.started_at}">{e(r.window_text)}</a>{current}</th>'
+        f'data-session="{r.started_at}">{e(r.window_text)}</a>{marks}</th>'
         f'<td class="m n rt">{e(r.peak_text)}</td>{cells}'
-        f'<td class="m n">{e(r.coverage_text)}</td><td class="sc">{_spark(r)}</td></tr>'
+        f'<td class="sc">{_spark(r)}</td></tr>'
     )
+
+
+def _delta_td(delta: str, end: str, reset: bool) -> str:
+    if not end:
+        return '<td class="m n dim">—</td>'
+    tail = f' <span class="dim">→ {e(end)}</span>'
+    if reset:
+        tail += ' <span class="far">(reset)</span>'
+    return f'<td class="m n"><span class="rt">{e(delta)}</span>{tail}</td>'
 
 
 def _spark(r: SessionRowView) -> str:

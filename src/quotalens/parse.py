@@ -97,11 +97,11 @@ class ParseError(ValueError):
 
 
 _WINDOW_LABELS = {
-    "five_hour": "5-hour",
-    "seven_day": "7-day",
-    "seven_day_sonnet": "7-day Sonnet",
-    "seven_day_opus": "7-day Opus",
-    "seven_day_oauth_apps": "7-day OAuth apps",
+    "five_hour": "Session",
+    "seven_day": "Weekly — all models",
+    "seven_day_sonnet": "Weekly — Sonnet",
+    "seven_day_opus": "Weekly — Opus",
+    "seven_day_oauth_apps": "Weekly — OAuth apps",
 }
 
 

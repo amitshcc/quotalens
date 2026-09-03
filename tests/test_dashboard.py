@@ -113,9 +113,15 @@ def test_slots_and_labels() -> None:
         "limit:opus": 4,
         "unknown:x": 6,
     }
-    assert display_label("limit:fable", "Fable") == "Fable"
-    assert display_label("limit:fable", None) == "Fable"
-    assert display_label("five_hour", "whatever") == "5-hour"
+    assert display_label("limit:fable", "Fable") == "Weekly — Fable"
+    assert display_label("limit:fable", None) == "Weekly — Fable"
+    assert display_label("five_hour", "5-hour") == "Session"  # old stored labels still map
+    assert display_label("seven_day", "7-day") == "Weekly — all models"
+    from quotalens.dashboard import short_label
+
+    assert short_label("five_hour", None) == "Session"
+    assert short_label("seven_day", None) == "Weekly all"
+    assert short_label("limit:fable", "Fable") == "Weekly Fable"
     assert display_label("unknown:data_session", None) == "Unlabelled data session"
 
 
@@ -130,14 +136,14 @@ def test_healthy_model_shows_values_and_burn(settings, store) -> None:
     )
     dash = build_dashboard(settings, store, status, now, burn_alert=20.0)
     assert dash.epistemic.kind == "ok"
-    assert [w.label for w in dash.windows] == ["5-hour", "7-day", "Fable"]
+    assert [w.label for w in dash.windows] == ["Session", "Weekly — all models", "Weekly — Fable"]
     assert [w.slot for w in dash.windows] == [1, 2, 3]
     assert dash.windows[0].pct_text == "35" and not dash.windows[0].withheld
     assert dash.burn.rate_text == "60.00" and dash.burn.elevated  # 1 pt/min beats 20 pts/hr
     assert dash.windows[0].state == "elevated"
     assert dash.chip == "elevated"
     assert dash.chart.has_data
-    assert {s.label for s in dash.chart.series} == {"5-hour", "7-day", "Fable"}
+    assert {s.label for s in dash.chart.series} == {"Session", "Weekly all", "Weekly Fable"}
 
 
 def test_stale_model_withholds_every_value(settings, store) -> None:
@@ -246,7 +252,7 @@ def test_healthy_page_shows_three_windows_and_values(settings, store, secrets) -
     with TestClient(app) as tc:
         html = tc.get("/").text
     assert html.count('class="meter"') == 3
-    assert ">limit:fable<" not in html and ">Fable<" in html  # raw keys never as visible text
+    assert ">limit:fable<" not in html and ">Weekly — Fable<" in html  # never a raw key
     assert '<span class="num">35</span>' in html
     assert "$3.16 / $2.00" in html and '<span class="num">158</span>' in html
     assert 'style="width:100.0%;background:var(--hair-firm)"' in html  # neutral: off
@@ -296,7 +302,7 @@ def test_live_payload_end_to_end_renders_three_windows(settings, store, secrets)
     )
     asyncio.run(poller.poll_once())
     dash = build_dashboard(settings, store, poller.status, now, 20.0)
-    assert [w.label for w in dash.windows] == ["5-hour", "7-day", "Sonnet"]
+    assert [w.label for w in dash.windows] == ["Session", "Weekly — all models", "Weekly — Sonnet"]
     assert dash.spend is not None and dash.spend.pct_text == "158"
     assert dash.diagnostics == ["Payload blocks without a reset time, not charted: nimbus_quill."]
 

@@ -93,7 +93,7 @@ def test_page_reflects_query_without_javascript(settings, store, secrets) -> Non
     assert 'data-refresh="off" aria-current="true"' in html
     assert "lookback 1h" in html  # the hero sentence states the lookback
     # the hidden series keeps its label (struck through) but draws no path
-    assert 'class="el off">7-day</text>' in html
+    assert 'class="el off">Weekly all</text>' in html
     assert html.count('stroke="var(--s2)"') == 1  # only the brand mark
     # links carry the other state along; toggling seven_day back removes the hide param
     link = re.search(r'<a href="([^"]+)" class="el-link" data-series="seven_day"', html).group(1)

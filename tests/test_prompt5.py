@@ -172,3 +172,92 @@ def test_projection_turns_critical_when_exhausted_before_reset(settings, store, 
     assert 'class="proj" stroke="var(--st-critical)"' in html
     assert 'class="ax cross"' in html and "exhausted " in html
     assert 'class="readout crit"' in html  # the lit headroom turns critical
+
+
+# -- Prompt 6, Job B ----------------------------------------------------------------
+
+
+def test_renamed_labels_keep_stored_rows_and_bookmarks_working(settings, store, secrets) -> None:
+    """Keys never change: a row stored under the old label and a bookmark with hide= still work."""
+    now = int(time.time())
+    for i in range(16):
+        store.record_quota(
+            now - (15 - i) * 60,
+            [
+                QuotaReading("five_hour", "5-hour", 20 + i, iso(now + 3600)),
+                QuotaReading("seven_day", "7-day", 38, "wk"),
+                QuotaReading("limit:fable", "Fable", 69, "wf"),
+            ],
+        )
+    app = create_app(settings, store, secrets)
+    app.state.qw.poller.status.state = "ok"
+    app.state.qw.poller.status.last_success_ts = now
+    with TestClient(app) as tc:
+        html = tc.get("/?hide=seven_day&range=1h").text
+        current = tc.get("/api/quota/current").json()
+    assert ">Session<" in html and ">Weekly — all models<" in html and ">Weekly — Fable<" in html
+    assert "5-hour" not in html.split('id="chart-data"')[0] and "7-day window" not in html
+    assert 'class="el off">Weekly all</text>' in html  # the old key in the bookmark still hides it
+    assert [r["display"] for r in current["readings"]] == [
+        "Session",
+        "Weekly — Fable",
+        "Weekly — all models",
+    ]
+
+
+def test_partial_badge_only_when_coverage_is_poor(settings, store, secrets) -> None:
+    now = int(time.time())
+    e1 = now - 6 * 3600
+    for i in range(0, 300):  # a fully observed window, one sample per poll interval
+        row = QuotaReading("five_hour", "5-hour", i / 6, iso(e1))
+        store.record_quota(e1 - SESSION_LENGTH_S + i * 60, [row])
+    e2 = now - 30 * 60
+    for i in range(0, 300, 21):  # under a third observed
+        row = QuotaReading("five_hour", "5-hour", i / 6, iso(e2))
+        store.record_quota(e2 - SESSION_LENGTH_S + i * 60, [row])
+    rebuild(store, now)
+    app = create_app(settings, store, secrets)
+    app.state.qw.poller.status.state = "ok"
+    app.state.qw.poller.status.last_success_ts = now
+    with TestClient(app) as tc:
+        body = tc.get("/api/dashboard").json()
+        html = tc.get("/").text
+    badges = {s["started_at"]: s["badge"] for s in body["sessions"]}
+    assert badges[e1 - SESSION_LENGTH_S] == ""
+    assert badges[e2 - SESSION_LENGTH_S].startswith("partial, ")
+    assert badges[e2 - SESSION_LENGTH_S].endswith("% observed")
+    assert html.count("partial, ") == 1
+
+
+def test_delta_cells_with_zero_delta_and_mid_window_reset() -> None:
+    from quotalens.dashboard import delta_cell
+    from quotalens.render import _delta_td
+    from quotalens.sessions import Delta, SessionWindow
+
+    deltas = {"seven_day": Delta(51.0, 51.0, False), "limit:fable": Delta(90.0, 4.0, True)}
+    w = SessionWindow(0, 1, False, 50, 50, 10, 0, 1, deltas)
+    assert delta_cell(w, "seven_day") == ("+0", "51%", False)
+    assert delta_cell(w, "limit:fable") == ("-86", "4%", True)
+    assert delta_cell(w, "limit:opus") == ("—", "", False)
+    assert _delta_td("+8", "60%", False) == (
+        '<td class="m n"><span class="rt">+8</span> <span class="dim">→ 60%</span></td>'
+    )
+    assert "(reset)" in _delta_td("-86", "4%", True)
+    assert _delta_td("—", "", False) == '<td class="m n dim">—</td>'
+
+
+def test_hero_at_the_moment_of_reset_says_no_window(settings, store, secrets) -> None:
+    now = int(time.time())
+    for i in range(16):  # the window's expiry is exactly now
+        row = QuotaReading("five_hour", "5-hour", 20 + i, iso(now))
+        store.record_quota(now - (15 - i) * 60, [row])
+    app = create_app(settings, store, secrets)
+    app.state.qw.poller.status.state = "ok"
+    app.state.qw.poller.status.last_success_ts = now
+    with TestClient(app) as tc:
+        html = tc.get("/").text
+        body = tc.get("/api/dashboard").json()
+    assert body["runway"]["remaining_s"] == 0
+    assert '<span class="num">no window</span>' in html
+    assert body["burn"]["why"].startswith("No session running")
+    assert 'id="reset-in"' not in html  # nothing to count down
