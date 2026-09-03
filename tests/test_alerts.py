@@ -273,3 +273,27 @@ def test_the_reset_model_watchdog_fires_through_the_poller(settings, store, secr
         view = tc.get("/api/dashboard").json()
     assert "does not hold here" in html  # said plainly on the page
     assert any("moved forward" in d for d in view["diagnostics"])
+
+
+def test_a_failing_post_poll_check_never_costs_a_reading(settings, store, secrets) -> None:
+    """The reading is stored before any of the derived checks run."""
+    now = int(time.time())
+    reset = _climbing(store, now, per_minute=1.0)
+    poller = Poller(
+        settings,
+        store,
+        secrets,
+        Redactor(),
+        client_factory=lambda c: make_client(_continuing(reset, 19.0), c),
+        clock=lambda: float(now),
+    )
+
+    def boom(now_ts, parsed):
+        raise RuntimeError("database is locked")
+
+    poller._check_threshold = boom  # type: ignore[method-assign]
+    assert asyncio.run(poller.poll_once()) == settings.poll_interval_s
+    assert poller.status.state == "ok" and poller.status.polls_ok == 1
+    kinds = [e.kind for e in store.recent_events(limit=10)]
+    assert "post_poll_failed" in kinds
+    assert store.quota_series(0, window="five_hour")[-1].ts == now  # the reading survived

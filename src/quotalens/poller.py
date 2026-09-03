@@ -325,8 +325,18 @@ class Poller:
             self._store.record_event("session_rebuild_failed", detail, ts=now)
             log.warning("session rebuild failed: %s", self._redactor.redact(str(exc)))
 
-        self._check_reset_model(now, parsed)
-        self._check_threshold(now, parsed)
+        # The reading is already stored. Everything below is derived from it, so a
+        # failure here is worth an event but must never turn a good poll into a bad one.
+        for name, check in (
+            ("reset_model", self._check_reset_model),
+            ("threshold", self._check_threshold),
+        ):
+            try:
+                check(now, parsed)
+            except Exception as exc:
+                detail = self._redactor.redact(f"{name}: {type(exc).__name__}: {exc}")
+                self._store.record_event("post_poll_failed", detail, ts=now)
+                log.warning("post-poll check failed: %s", detail)
         self._maybe_prune(now)
 
         self.status.state = "ok"
