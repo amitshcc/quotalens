@@ -51,6 +51,32 @@ class SecretStoreError(RuntimeError):
     """The OS keyring is unavailable or refused the operation."""
 
 
+NO_BACKEND = (
+    "this system has no usable keyring, so the session cookie cannot be stored or read. "
+    "On a Linux server that normally means there is no D-Bus session and no keyring "
+    "daemon; QuotaLens has no file-based credential store, so a headless Linux box is "
+    "not supported yet. On a desktop, install and unlock gnome-keyring or kwallet and "
+    "try again. See the README section on Linux servers."
+)
+
+
+def _keyring_error(exc: Exception, verb: str) -> SecretStoreError:
+    """Turn a backend exception into something the reader can act on.
+
+    "NoKeyringError" tells a user nothing. The two cases that matter are a system
+    with no backend at all, which is a support boundary, and a backend that refused,
+    which is usually a locked keychain or an unattended service.
+    """
+    if type(exc).__name__ == "NoKeyringError":
+        return SecretStoreError(NO_BACKEND)
+    return SecretStoreError(
+        f"the OS keyring refused to {verb} the session cookie ({type(exc).__name__}). "
+        "If QuotaLens is running as a background service the keychain may be locked or "
+        "may have refused an unattended process; run `quotalens auth` from a terminal "
+        "and grant access."
+    )
+
+
 class KeyringSecretStore:
     """Cookie storage backed by the OS keychain via ``keyring``."""
 
@@ -72,7 +98,7 @@ class KeyringSecretStore:
         try:
             value = self._backend().get_password(self._service, self._username)
         except Exception as exc:  # keyring raises backend-specific errors
-            raise SecretStoreError(f"could not read the keyring: {type(exc).__name__}") from exc
+            raise _keyring_error(exc, "read") from exc
         return value or None
 
     def set_cookie(self, value: str) -> None:
@@ -81,7 +107,7 @@ class KeyringSecretStore:
         try:
             self._backend().set_password(self._service, self._username, value.strip())
         except Exception as exc:
-            raise SecretStoreError(f"could not write the keyring: {type(exc).__name__}") from exc
+            raise _keyring_error(exc, "store") from exc
 
     def delete_cookie(self) -> None:
         keyring = self._backend()
@@ -90,7 +116,7 @@ class KeyringSecretStore:
         except keyring.errors.PasswordDeleteError:
             return
         except Exception as exc:
-            raise SecretStoreError(f"could not update the keyring: {type(exc).__name__}") from exc
+            raise _keyring_error(exc, "update") from exc
 
 
 class MemorySecretStore:

@@ -40,9 +40,25 @@ quotalens prune --dry-run                                  # what retention woul
 
 Set `QUOTALENS_WEBHOOK_URL` to get one POST when the burn rate crosses
 `QUOTALENS_BURN_ALERT` points per hour (default 20), and one when it falls back.
-The body carries the rate, the threshold, the headroom and the reset time, and
-no account identifier of any kind. It feeds ntfy, Discord, Slack, Pushover or
-Home Assistant.
+It feeds ntfy, Discord, Slack, Pushover or Home Assistant. The body:
+
+```json
+{
+  "event": "burn_alert",
+  "profile": "default",
+  "ts": 1788456405,
+  "rate_pts_per_hour": 42.5,
+  "threshold_pts_per_hour": 20.0,
+  "headroom_pct": 37.0,
+  "session_resets_at": "2026-09-03T18:00:00+00:00",
+  "text": "Burn rate 42.5 pts/hr crossed the 20 pts/hr threshold, 37% of the session left.",
+  "url": "http://127.0.0.1:8787/"
+}
+```
+
+`profile` is the local label you chose, so a receiver watching two of them can
+tell them apart. There is no organisation id, no account identifier and no
+cookie in it, by design.
 
 ## Two accounts
 
@@ -58,9 +74,11 @@ quotalens --profile work stop         # leaves the personal one running
 ```
 
 Two accounts is two processes and two bookmarks, not an account picker inside
-one process. The port is derived from the name and is the same on every run;
-pass `--port` if two names happen to collide. `QUOTALENS_PROFILE` works too, for
-a service unit.
+one process. The port is derived from the name and is the same on every run, so
+`start`, `serve` and `status` all print the URL they landed on — you should
+never have to work out which port a profile got. If something else already holds
+it, the error names the port, the profile and the `--port` flag that settles it.
+`QUOTALENS_PROFILE` works too, for a service unit.
 
 ## Running it as a service
 
@@ -208,6 +226,29 @@ better. Pointing at the better tool is a feature.
   auth path in this release.
 - **Any provider but Claude**, API-key cost tracking, a menu bar app, a proxy,
   or a hosted service.
+
+## Linux servers: not yet
+
+QuotaLens keeps your cookie in the OS keyring and has no file-based credential
+store. On a Linux box with no desktop session there is usually no D-Bus session
+and no keyring daemon, and then `python-keyring` has no backend at all:
+
+```
+$ quotalens auth
+cannot use the keyring: this system has no usable keyring, so the session
+cookie cannot be stored or read. On a Linux server that normally means there is
+no D-Bus session and no keyring daemon; QuotaLens has no file-based credential
+store, so a headless Linux box is not supported yet...
+```
+
+That check runs **before** you are asked for a cookie, so you find out in a
+second rather than after pasting one and waiting for a network round trip. A
+desktop Linux session with `gnome-keyring` or `kwallet` unlocked works normally,
+and so does the systemd **user** unit under that session.
+
+Supporting a real server means a credential path that is not the OS keyring, and
+that forks the security story, so it is a deliberate post-1.0 decision rather
+than something to bolt on. It is the first issue on the list.
 
 ## Platforms
 

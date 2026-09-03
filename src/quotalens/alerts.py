@@ -77,15 +77,18 @@ def payload(
     headroom_pct: float | None,
     resets_at: str | None,
     dashboard_url: str,
+    profile: str = "",
 ) -> dict[str, Any]:
     """The webhook body.
 
-    Deliberately carries no organisation id, no profile name, no cookie and no
-    account identifier of any kind: it leaves the machine, and the receiver only
-    needs to know that a threshold moved and where to look.
+    Carries no organisation id, no cookie and no account identifier: it leaves the
+    machine, and the receiver only needs to know that a threshold moved and where to
+    look. The profile name is a local label the user chose, not an account identifier,
+    and without it a receiver watching two profiles can only tell them apart by port.
     """
     return {
         "event": kind,
+        "profile": profile or "default",
         "ts": ts,
         "rate_pts_per_hour": round(rate, 2),
         "threshold_pts_per_hour": threshold,

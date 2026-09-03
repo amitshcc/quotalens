@@ -22,6 +22,7 @@ from quotalens.config import (
     SettingsError,
     default_data_dir,
     default_db_path,
+    default_port,
     settings_from_env,
     validate,
 )
@@ -131,6 +132,13 @@ async def _verify(cookie: str, settings: Settings) -> tuple[object, object | Non
 
 
 def cmd_auth(args: argparse.Namespace, settings: Settings, secrets: SecretStore) -> int:
+    # Ask the keyring first. Otherwise a headless box makes the user paste a cookie
+    # and wait for a network round trip before telling them it cannot store one.
+    try:
+        secrets.get_cookie()
+    except SecretStoreError as exc:
+        print(f"cannot use the keyring: {exc}", file=sys.stderr)
+        return 3
     if sys.stdin.isatty():
         print(
             "Paste your claude.ai session cookie (the full Cookie header value from a\n"
@@ -218,6 +226,11 @@ def cmd_probe(args: argparse.Namespace, settings: Settings, secrets: SecretStore
     return 0
 
 
+def _profile_note(settings: Settings) -> str:
+    """A named profile is invisible otherwise, and its port is derived, not chosen."""
+    return f' (profile "{settings.profile}")' if settings.profile else ""
+
+
 def cmd_prune(args: argparse.Namespace, settings: Settings, secrets: SecretStore) -> int:
     from quotalens.store import Store
 
@@ -252,6 +265,18 @@ def cmd_serve(args: argparse.Namespace, settings: Settings, secrets: SecretStore
     except service.ServiceError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+    if service.port_in_use(settings.host, settings.port):
+        print(
+            service.port_conflict_message(
+                settings.host,
+                settings.port,
+                settings.profile,
+                derived=settings.port == default_port(settings.profile),
+            ),
+            file=sys.stderr,
+        )
+        service.release_pid_file(pidfile)
+        return 1
     service.write_runtime(args.data_dir, settings.port, settings.poll_interval_s, settings.profile)
     try:
         cookie = secrets.get_cookie()
@@ -269,6 +294,9 @@ def cmd_serve(args: argparse.Namespace, settings: Settings, secrets: SecretStore
         log.warning("no session cookie stored; the poller will idle until you run `quotalens auth`")
     store = Store(settings.db_path)
     app = create_app(settings, store, secrets)
+    print(f"QuotaLens {__version__}{_profile_note(settings)}")
+    print(f"dashboard: http://{settings.host}:{settings.port}/")
+    print(f"database:  {settings.db_path}")
     log.info(
         "QuotaLens %s on http://%s:%d  db=%s  interval=%ds",
         __version__,
@@ -304,11 +332,11 @@ def cmd_start(args: argparse.Namespace, settings: Settings, secrets: SecretStore
     except service.ServiceError as exc:
         print(f"not started: {exc}", file=sys.stderr)
         return 1
-    print(f"started pid {result.pid}")
-    print(f"pid file: {result.pidfile}")
-    print(f"log:      {result.log}")
     port = args.port or settings.port
+    print(f"started pid {result.pid}{_profile_note(settings)}")
     print(f"dashboard: http://{settings.host}:{port}/")
+    print(f"pid file:  {result.pidfile}")
+    print(f"log:       {result.log}")
     return 0
 
 
@@ -340,6 +368,8 @@ def cmd_status(args: argparse.Namespace, settings: Settings, secrets: SecretStor
         args.data_dir, args.port, profile=settings.profile
     )  # None: the instance's recorded port
     print("\n".join(report.lines))
+    if report.port:
+        print(f"dashboard: http://{settings.host}:{report.port}/{_profile_note(settings)}")
     for line in service.service_status(sys.platform, Path.home(), args.data_dir):
         print(line)
     return report.exit_code

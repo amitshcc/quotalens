@@ -117,3 +117,49 @@ def test_the_installed_service_unit_carries_the_profile(tmp_path) -> None:
     unit = (home / ".config" / "systemd" / "user" / "quotalens.service").read_text()
     assert "--profile work" in unit and "quotalens-work.log" in unit
     assert os.path.basename(str(data)) == "data"
+
+
+def test_a_port_conflict_is_a_sentence_that_names_the_fix() -> None:
+    """A derived port the user cannot predict is only acceptable if we tell them."""
+    message = service.port_conflict_message("127.0.0.1", 8876, "work", derived=True)
+    assert "127.0.0.1:8876" in message and '"work" profile' in message
+    assert "--port 8877" in message and "--profile work" in message
+    assert "derived from the profile name" in message
+    assert "Traceback" not in message
+    # but not when the user chose the port themselves
+    chosen = service.port_conflict_message("127.0.0.1", 9000, "work", derived=False)
+    assert "derived" not in chosen and '"work" profile' in chosen
+    plain = service.port_conflict_message("127.0.0.1", 8787, "")
+    assert "QuotaLens cannot start" in plain and "--profile" not in plain
+    assert "quotalens start --port 8788" in plain
+
+
+def test_port_in_use_sees_a_held_port(tmp_path) -> None:
+    import socket
+
+    with socket.socket() as held:
+        held.bind(("127.0.0.1", 0))
+        held.listen(1)
+        port = held.getsockname()[1]
+        assert service.port_in_use("127.0.0.1", port) is True
+    assert service.port_in_use("127.0.0.1", port) is False
+
+
+def test_start_and_status_always_print_the_port(tmp_path, capsys) -> None:
+    """Nobody should have to compute crc32 to find their own dashboard."""
+    from quotalens import cli
+    from quotalens.secrets import MemorySecretStore
+
+    def fake_start(data_dir, serve_args, **kwargs):
+        return service.StartResult(4242, data_dir / "q.log", data_dir / "q.pid")
+
+    original = service.start
+    service.start = fake_start
+    try:
+        argv = ["--data-dir", str(tmp_path), "--profile", "work", "start"]
+        assert cli.main(argv, secrets=MemorySecretStore("sessionKey=abcdefghijkl")) == 0
+    finally:
+        service.start = original
+    out = capsys.readouterr().out
+    assert f"http://127.0.0.1:{default_port('work')}/" in out
+    assert 'profile "work"' in out

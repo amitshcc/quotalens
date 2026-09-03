@@ -61,9 +61,10 @@ def test_the_webhook_body_carries_no_account_identifier() -> None:
     body = payload(ALERT_KIND, 1700, 42.0, 20.0, 37.0, "2026-09-03T18:00:00+00:00", "http://x/")
     text = json.dumps(body)
     assert SECRET not in text and COOKIE not in text
-    assert "org" not in text.lower() and "uuid" not in text.lower()
+    assert "uuid" not in text.lower()
     assert set(body) == {
         "event",
+        "profile",
         "ts",
         "rate_pts_per_hour",
         "threshold_pts_per_hour",
@@ -73,6 +74,10 @@ def test_the_webhook_body_carries_no_account_identifier() -> None:
         "url",
     }
     assert body["rate_pts_per_hour"] == 42.0 and body["url"] == "http://x/"
+    # the profile is a local label the user chose, so a receiver can tell two apart
+    assert body["profile"] == "default"
+    named = payload(ALERT_KIND, 1700, 42.0, 20.0, None, None, "http://x/", profile="work")
+    assert named["profile"] == "work"
 
 
 # -- through the poller ------------------------------------------------------------
