@@ -16,6 +16,7 @@ from quotalens.parse import QuotaReading, SpendReading
 from quotalens.poller import Poller, PollerStatus
 from quotalens.secrets import Redactor
 from quotalens.state import collector_state, magnitude_state
+from quotalens.views import ViewOptions, parse_view, resolve_range
 
 EM_DASH = "—"
 
@@ -239,10 +240,10 @@ def test_healthy_page_shows_three_windows_and_values(settings, store, secrets) -
     with TestClient(app) as tc:
         html = tc.get("/").text
     assert html.count('class="meter"') == 3
-    assert "limit:fable" not in html and ">Fable<" in html
+    assert ">limit:fable<" not in html and ">Fable<" in html  # raw keys never as visible text
     assert '<span class="num">35</span>' in html
     assert "$3.16 / $2.00" in html and '<span class="num">158</span>' in html
-    assert 'style="width:100.0%;background:var(--s4)"' in html
+    assert 'style="width:100.0%;background:var(--hair-firm)"' in html  # neutral: off
     assert 'stroke="var(--s1)" stroke-width="var(--trace-hero)"' in html
     assert 'stroke-dasharray="var(--dash-3)"' in html
     assert "No local session data yet" in html  # honest empty attribution
@@ -292,3 +293,140 @@ def test_live_payload_end_to_end_renders_three_windows(settings, store, secrets)
     assert [w.label for w in dash.windows] == ["5-hour", "7-day", "Sonnet"]
     assert dash.spend is not None and dash.spend.pct_text == "158"
     assert dash.diagnostics == ["Payload blocks without a reset time, not charted: nimbus_quill."]
+
+
+# -- Job A: fixes from the running dashboard -------------------------------------
+
+
+def test_cold_start_picks_smallest_covering_range_or_says_collecting() -> None:
+    now = 1_000_000
+    assert resolve_range(ViewOptions(), None, now).collecting
+    r = resolve_range(ViewOptions(), now - 27 * 60, now)
+    assert (r.key, r.auto, r.collecting) == ("1h", True, False)
+    r = resolve_range(ViewOptions(), now - 5 * 60, now)
+    assert (r.key, r.collecting) == ("15m", True)
+    assert resolve_range(ViewOptions(), now - 30 * 3600, now).key == "7d"
+    assert resolve_range(ViewOptions(), now - 40 * 86400, now).key == "all"
+    explicit = resolve_range(ViewOptions(range_key="24h"), now - 60, now)
+    assert (explicit.key, explicit.auto) == ("24h", False)
+
+
+def test_collecting_text_replaces_the_grid(settings, store, secrets) -> None:
+    now = int(time.time())
+    _seed(store, now, minutes=5)
+    app = create_app(settings, store, secrets)
+    app.state.qw.poller.status.state = "ok"
+    app.state.qw.poller.status.last_success_ts = now
+    with TestClient(app) as tc:
+        html = tc.get("/").text
+    assert "Collecting: 4m of data" in html
+    assert '<line x1="44"' not in html  # no near-empty grid
+
+
+def test_gap_is_hatched_and_counted_while_reset_is_a_clean_break(settings, store) -> None:
+    now = int(time.time())
+    # 10 minutes of samples, a 20-minute hole, then a reset and 10 more minutes.
+    for i in range(10):
+        store.record_quota(
+            now - 40 * 60 + i * 60, [QuotaReading("five_hour", "5-hour", 50 + i, "r1")]
+        )
+    for i in range(10):
+        store.record_quota(
+            now - 10 * 60 + i * 60, [QuotaReading("five_hour", "5-hour", 1 + i, "r2")]
+        )
+    dash = build_dashboard(settings, store, _status(state="ok", last_success_ts=now), now, 20.0)
+    assert len(dash.chart.series[0].paths) == 2  # the reset splits the line
+    assert len(dash.chart.gaps) == 1  # the hole is marked
+    assert dash.chart.gap_minutes == 21  # last sample of the first block to first of the second
+    assert dash.side["Not collected"] == "21 min in range"
+    from quotalens.render import render_app
+
+    html = render_app(dash)
+    assert html.count('fill="url(#gap)"') == 1
+
+
+def test_trailing_gap_counts_when_collector_stopped(settings, store) -> None:
+    now = int(time.time())
+    _seed(store, now - 30 * 60)
+    dash = build_dashboard(
+        settings, store, _status(state="ok", last_success_ts=now - 30 * 60), now, 20.0
+    )
+    assert dash.chart.gap_minutes == 30
+
+
+def test_diagnostics_live_in_side_panel_not_hero(settings, store, secrets) -> None:
+    now = int(time.time())
+    _seed(store, now)
+    app = create_app(settings, store, secrets)
+    st = app.state.qw.poller.status
+    st.state, st.last_success_ts = "ok", now
+    st.ignored_blocks = [{"key": "nimbus_quill", "reason": "no resets_at"}]
+    with TestClient(app) as tc:
+        html = tc.get("/").text
+    assert "hstrip" not in html
+    assert "Diagnostics" in html and "nimbus_quill" in html
+    assert html.index("nimbus_quill") > html.index('class="cols"')
+
+
+def test_extra_usage_neutral_when_off_critical_when_on_and_over(settings, store) -> None:
+    now = int(time.time())
+    off = SpendReading(316, 200, 2, "USD", "spend", is_enabled=False)
+    on = SpendReading(316, 200, 2, "USD", "spend", is_enabled=True)
+    under = SpendReading(50, 200, 2, "USD", "spend", is_enabled=True)
+    dash = build_dashboard(
+        settings, store, _status(state="ok", last_success_ts=now, spend=off), now, 20.0
+    )
+    assert dash.spend.state == "normal" and dash.chip == ""
+    dash = build_dashboard(
+        settings, store, _status(state="ok", last_success_ts=now, spend=on), now, 20.0
+    )
+    assert dash.spend.state == "critical" and dash.chip == "critical"
+    dash = build_dashboard(
+        settings, store, _status(state="ok", last_success_ts=now, spend=under), now, 20.0
+    )
+    assert dash.spend.state == "normal"
+
+
+def test_burn_rate_withheld_under_five_minutes(settings, store) -> None:
+    now = int(time.time())
+    _seed(store, now, minutes=4, base=10)
+    dash = build_dashboard(settings, store, _status(state="ok", last_success_ts=now), now, 20.0)
+    assert dash.burn.withheld and dash.burn.rate_text == EM_DASH
+    assert dash.burn.why.startswith("Collecting: 3m of samples")
+    _seed(store, now, minutes=7, base=10)
+    dash = build_dashboard(settings, store, _status(state="ok", last_success_ts=now), now, 20.0)
+    assert not dash.burn.withheld
+    assert "lookback 15m" in dash.burn.why
+
+
+def test_view_query_parsing_and_invalid_input() -> None:
+    now = 1_800_000_000
+    v = parse_view(
+        {"range": "6h", "hide": "seven_day,limit:fable", "lookback": "1h", "refresh": "off"}, now
+    )
+    assert v.range_key == "6h" and v.hidden == {"seven_day", "limit:fable"}
+    assert v.lookback_s(900) == 3600 and v.refresh_s(30) == 0
+    assert v.query() == "range=6h&hide=limit%3Afable%2Cseven_day&lookback=1h&refresh=off"
+    bad = parse_view(
+        {"range": "yesterday", "hide": "<script>", "lookback": "2h", "refresh": "9s"}, now
+    )
+    assert bad == ViewOptions()
+    custom = parse_view({"range": f"{now - 3600}-{now + 999}"}, now)
+    assert custom.range_key == "custom" and custom.custom == (now - 3600, now)
+    assert parse_view({"range": f"{now}-{now + 10}"}, now).range_key == "auto"  # span too short
+    assert ViewOptions(range_key="1h").toggled("x") == {"x"}
+    assert ViewOptions(hidden=frozenset({"x"})).toggled("x") == frozenset()
+
+
+def test_meter_change_is_over_the_selected_range(settings, store) -> None:
+    now = int(time.time())
+    _seed(store, now, minutes=16)
+    dash = build_dashboard(
+        settings,
+        store,
+        _status(state="ok", last_success_ts=now),
+        now,
+        20.0,
+        ViewOptions(range_key="1h"),
+    )
+    assert dash.windows[0].delta_text == "+15 pts over 1h"

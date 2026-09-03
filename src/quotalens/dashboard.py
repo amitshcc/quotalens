@@ -7,6 +7,7 @@ never re-implemented.
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -18,22 +19,34 @@ from quotalens.config import Settings
 from quotalens.parse import SpendReading, humanize
 from quotalens.poller import PollerStatus
 from quotalens.state import (
+    CRITICAL,
     ELEVATED,
+    NORMAL,
     OK,
+    STALE_AFTER_INTERVALS,
     Epistemic,
     collector_state,
     magnitude_state,
     worst,
 )
 from quotalens.store import QuotaRow, Store
+from quotalens.views import (
+    LOOKBACKS,
+    RANGE_KEYS,
+    REFRESH,
+    ResolvedRange,
+    ViewOptions,
+    resolve_range,
+)
 
 HERO_HOURS = 5
-CHART_HOURS = 24
 CHART_W, CHART_H = 1272, 216
 CHART_L, CHART_R, CHART_T, CHART_B = 44, 122, 14, 20
 HERO_W, HERO_H = 1272, 108
-MAX_SLOTS = 6
 LABEL_GAP = 13.0
+MAX_POINTS_PER_SERIES = 600  # longer ranges are bucketed, keeping the last sample per bucket
+DISPLAY_MIN_BURN_SPAN_S = 300  # a rate over less than this is noise at 68px
+FORCE_NOTE_TTL_S = 15
 
 RATE_WINDOW = "five_hour"
 DISPLAY_LABELS = {
@@ -133,7 +146,7 @@ class WindowView:
     state: str  # magnitude
     is_active: bool
     resets_text: str
-    delta_text: str
+    delta_text: str  # change over the selected range
     bar_pct: float  # clipped to the track
     withheld: bool
 
@@ -159,6 +172,8 @@ class SeriesView:
     end_x: float
     end_y: float
     label_y: float
+    hidden: bool
+    toggle_href: str
 
 
 @dataclass
@@ -168,6 +183,10 @@ class ChartView:
     x_ticks: list[tuple[float, str]]
     y_max: float
     has_data: bool
+    gaps: list[tuple[float, float]]  # x spans where nothing was collected
+    gap_minutes: int
+    data_json: str  # for the hover readout
+    collecting_text: str  # non-empty on cold start instead of a grid
 
 
 @dataclass
@@ -178,7 +197,16 @@ class SpendView:
     pct_text: str
     bar_pct: float
     status_text: str
+    state: str  # normal | critical (neutral while disabled)
     withheld: bool
+
+
+@dataclass
+class Control:
+    key: str
+    label: str
+    href: str
+    active: bool
 
 
 @dataclass
@@ -194,10 +222,17 @@ class Dashboard:
     polled_text: str
     last_success_ts: int | None
     health_message: str
-    diagnostics: list[str]
+    notes: list[str]  # transient notes (forced refresh suppressed, etc.)
+    diagnostics: list[str]  # permanent, unactionable: side panel
     side: dict[str, str]
     footer: dict[str, str]
     refresh_s: int
+    view: ViewOptions
+    rng: ResolvedRange
+    range_controls: list[Control]
+    lookback_controls: list[Control]
+    refresh_controls: list[Control]
+    lookback_s: int
 
 
 # -- builders -------------------------------------------------------------------
@@ -209,47 +244,75 @@ def build_dashboard(
     status: PollerStatus,
     now: int,
     burn_alert: float,
+    view: ViewOptions | None = None,
 ) -> Dashboard:
+    view = view or ViewOptions()
     epistemic = collector_state(status, settings.poll_interval_s, now)
     withheld = epistemic.kind != OK
-    lookback_s = settings.burn_lookback_min * 60
+    lookback_s = view.lookback_s(settings.burn_lookback_min * 60)
+    refresh_default = max(10, min(settings.poll_interval_s // 2, 30))
+    refresh_s = view.refresh_s(refresh_default)
 
     latest = store.latest_quota()
     order = _window_order(status, latest)
     slots = assign_slots(order)
-    series_rows = _series_by_window(store, now - CHART_HOURS * 3600)
+    oldest = store.oldest_ts()
+    rng = resolve_range(view, oldest, now)
+    # Fetch a little before the range so the reset split and the burn lookback have context.
+    fetch_from = min(rng.start, now - max(lookback_s * 4, HERO_HOURS * 3600))
+    all_rows = _series_by_window(store, fetch_from)
+    range_rows = {
+        w: [r for r in rows if rng.start <= r.ts <= rng.end] for w, rows in all_rows.items()
+    }
 
-    burns = {w: burn_rate(w, series_rows.get(w, []), lookback_s, now) for w in order}
+    burns = {w: burn_rate(w, all_rows.get(w, []), lookback_s, now) for w in order}
     rate_burn = burns.get(RATE_WINDOW)
-    # The alert needs evidence: at least half the lookback, not two samples a minute apart.
     burn_elevated = bool(
         rate_burn
         and rate_burn.rate_pct_per_hour is not None
         and rate_burn.rate_pct_per_hour >= burn_alert
-        and rate_burn.span_s >= lookback_s / 2
+        and rate_burn.span_s >= max(lookback_s / 2, DISPLAY_MIN_BURN_SPAN_S)
     )
 
     windows = [
-        _window_view(row, slots[row.window], burns[row.window], withheld, burn_elevated, now)
+        _window_view(
+            row,
+            slots[row.window],
+            range_rows.get(row.window, []),
+            rng,
+            withheld,
+            burn_elevated,
+            now,
+        )
         for row in sorted(latest, key=lambda r: slots[r.window])
     ]
     burn = _burn_view(
         rate_burn,
         next((r for r in latest if r.window == RATE_WINDOW), None),
-        series_rows.get(RATE_WINDOW, []),
+        all_rows.get(RATE_WINDOW, []),
         lookback_s,
         withheld,
         burn_elevated,
         burn_alert,
         now,
     )
-    chart = _chart_view(series_rows, slots, {r.window: r.label for r in latest}, now)
+    gap_threshold = STALE_AFTER_INTERVALS * settings.poll_interval_s
+    chart = _chart_view(
+        range_rows,
+        slots,
+        {r.window: r.label for r in latest},
+        rng,
+        view,
+        gap_threshold,
+        now,
+        withheld,
+    )
     spend = _spend_view(status.spend, withheld, now)
 
-    magnitude = worst([w.state for w in windows])
+    magnitude = worst([w.state for w in windows] + ([spend.state] if spend else []))
     if withheld:
         chip, chip_text = epistemic.kind, epistemic.title
-    elif magnitude != "normal":
+    elif magnitude != NORMAL:
         chip, chip_text = magnitude, magnitude
     else:
         chip, chip_text = "", ""
@@ -258,22 +321,23 @@ def build_dashboard(
     if status.ignored_blocks:
         keys = ", ".join(b["key"] for b in status.ignored_blocks)
         diagnostics.append(f"Payload blocks without a reset time, not charted: {keys}.")
+    notes = _transient_notes(status, now)
 
     counts = store.counts()
-    oldest = store.oldest_ts()
     size = store.db_size_bytes()
     side = {
+        "Range": rng.label + (" (auto)" if rng.auto else ""),
+        "Not collected": f"{chart.gap_minutes} min in range"
+        if chart.gap_minutes
+        else "0 min in range",
         "Poll interval": f"{settings.poll_interval_s}s",
         "Samples stored": f"{counts['quota']:,}",
         "Database": f"{size / 1_048_576:.1f} MB" if size is not None else "in memory",
-        "Oldest sample": local(oldest).strftime("%-d %b") if oldest else "none",
+        "Oldest sample": local(oldest).strftime("%-d %b %H:%M") if oldest else "none",
         "Last poll": clock(status.last_attempt_ts) if status.last_attempt_ts else "never",
         "Next poll": clock(status.next_poll_ts) if status.next_poll_ts else "pending",
     }
-    footer = {
-        "bind": f"{settings.host}:{settings.port}",
-        "db": str(store.path),
-    }
+    footer = {"bind": f"{settings.host}:{settings.port}", "db": str(store.path)}
     return Dashboard(
         now=now,
         epistemic=epistemic,
@@ -286,11 +350,32 @@ def build_dashboard(
         polled_text=_polled_text(status.last_success_ts, now),
         last_success_ts=status.last_success_ts,
         health_message=epistemic.message,
+        notes=notes,
         diagnostics=diagnostics,
         side=side,
         footer=footer,
-        refresh_s=max(10, min(settings.poll_interval_s // 2, 30)),
+        refresh_s=refresh_s,
+        view=view,
+        rng=rng,
+        range_controls=[
+            Control(k, k, view.href(range_key=k, custom=None), rng.key == k and not rng.auto)
+            for k in RANGE_KEYS
+        ],
+        lookback_controls=[
+            Control(k, k, view.href(lookback_key=k), LOOKBACKS[k] == lookback_s) for k in LOOKBACKS
+        ],
+        refresh_controls=[
+            Control(k, k, view.href(refresh_key=k), REFRESH[k] == refresh_s) for k in REFRESH
+        ],
+        lookback_s=lookback_s,
     )
+
+
+def _transient_notes(status: PollerStatus, now: int) -> list[str]:
+    note = status.extra.get("force_note") if status.extra else None
+    if isinstance(note, dict) and now - int(note.get("ts", 0)) <= FORCE_NOTE_TTL_S:
+        return [str(note.get("text", ""))]
+    return []
 
 
 def _window_order(status: PollerStatus, latest: list[QuotaRow]) -> list[str]:
@@ -315,43 +400,54 @@ def _polled_text(last_ok: int | None, now: int) -> str:
     return f"polled {age}s ago" if age < 120 else f"last ok {clock(last_ok)}"
 
 
+def _change_over_range(rows: list[QuotaRow], rng: ResolvedRange) -> str:
+    """Change of the window over the selected range, honest about resets in between."""
+    if len(rows) < 2:
+        return "no change data in range"
+    segments = split_at_resets(rows)
+    if len(segments) > 1:
+        return f"{len(segments) - 1} reset{'s' if len(segments) > 2 else ''} in range"
+    delta = rows[-1].pct - rows[0].pct
+    return f"{delta:+.0f} pts over {rng.label}"
+
+
 def _window_view(
-    row: QuotaRow, slot: int, burn: BurnResult, withheld: bool, burn_elevated: bool, now: int
+    row: QuotaRow,
+    slot: int,
+    rows_in_range: list[QuotaRow],
+    rng: ResolvedRange,
+    withheld: bool,
+    burn_elevated: bool,
+    now: int,
 ) -> WindowView:
-    state = magnitude_state(row.pct, row.severity)
-    if row.window == RATE_WINDOW and burn_elevated and state == "normal":
-        state = ELEVATED
-    reset_dt = parse_iso(row.resets_at)
-    resets_text = f"resets {when(reset_dt, now)}"
-    if burn.rate_pct_per_hour is not None and burn.from_pct is not None and burn.to_pct is not None:
-        delta = burn.to_pct - burn.from_pct
-        delta_text = f"{delta:+.0f} pts in {duration(burn.span_s)}"
-    else:
-        delta_text = "no rate yet"
+    label = display_label(row.window, row.label)
     if withheld:
         return WindowView(
             row.window,
-            display_label(row.window, row.label),
+            label,
             slot,
             None,
             "—",
-            "normal",
+            NORMAL,
             bool(row.is_active),
             f"last ok {clock(row.ts)}",
             "",
             0.0,
             True,
         )
+    state = magnitude_state(row.pct, row.severity)
+    if row.window == RATE_WINDOW and burn_elevated and state == NORMAL:
+        state = ELEVATED
     return WindowView(
         row.window,
-        display_label(row.window, row.label),
+        label,
         slot,
         row.pct,
         fmt_pct(row.pct),
         state,
         bool(row.is_active),
-        resets_text,
-        delta_text,
+        f"resets {when(parse_iso(row.resets_at), now)}",
+        _change_over_range(rows_in_range, rng),
         max(0.0, min(row.pct, 100.0)),
         False,
     )
@@ -368,47 +464,44 @@ def _burn_view(
     now: int,
 ) -> BurnView:
     trace, ticks, alert_y = _hero_trace(rows, lookback_s, alert, now)
+    lookback_label = duration(lookback_s)
     if withheld or burn is None or current is None:
         why = (
             "Rate unknown while the collector is not reporting."
             if withheld
-            else ("No 5-hour readings yet.")
+            else "No 5-hour readings yet."
         )
         return BurnView("—", "pts/hr", why, True, False, trace, ticks, alert_y)
     rate = burn.rate_pct_per_hour
-    if rate is None:
-        return BurnView(
-            "—",
-            "pts/hr",
-            f"Not enough samples yet: {burn.reason}.",
-            True,
-            False,
-            trace,
-            ticks,
-            alert_y,
+    if rate is None or burn.span_s < DISPLAY_MIN_BURN_SPAN_S:
+        have = duration(burn.span_s) if burn.span_s else "0m"
+        why = (
+            f"Collecting: {have} of samples since the last reset. The {lookback_label} rate "
+            f"needs at least {DISPLAY_MIN_BURN_SPAN_S // 60} minutes."
         )
+        return BurnView("—", "pts/hr", why, True, False, trace, ticks, alert_y)
     text = f"{rate:.2f}" if abs(rate) < 100 else f"{rate:.0f}"
     reset_dt = parse_iso(current.resets_at)
-    lookback_text = duration(burn.span_s)
+    over = f"Over the last {duration(burn.span_s)} (lookback {lookback_label})."
     if rate > 0.05:
         hours_left = (100 - current.pct) / rate
         eta = local(now) + timedelta(hours=hours_left)
         if reset_dt is not None and eta >= reset_dt:
             at_reset = current.pct + rate * max(0.0, (reset_dt - local(now)).total_seconds() / 3600)
             why = (
-                f"Over the last {lookback_text}. At this rate the 5-hour window reaches "
-                f"about {fmt_pct(min(at_reset, 100))}% by its reset at {when(reset_dt, now)}."
+                f"{over} At this rate the 5-hour window reaches about "
+                f"{fmt_pct(min(at_reset, 100))}% by its reset at {when(reset_dt, now)}."
             )
         else:
             why = (
-                f"Over the last {lookback_text}. At this rate the 5-hour window is exhausted "
-                f"at {when(eta, now)}, in {duration(hours_left * 3600)}"
+                f"{over} At this rate the 5-hour window is exhausted at {when(eta, now)}, "
+                f"in {duration(hours_left * 3600)}"
                 + (f", before it resets at {when(reset_dt, now)}." if reset_dt else ".")
             )
     elif rate < -0.05:
-        why = f"Falling over the last {lookback_text}; the window is draining faster than use."
+        why = f"{over} Falling; the window is draining faster than use."
     else:
-        why = f"Flat over the last {lookback_text}. Nothing is consuming the 5-hour window."
+        why = f"{over} Flat. Nothing is consuming the 5-hour window."
     if elevated:
         why += f" Above the {alert:.0f} pts/hr alert threshold."
     return BurnView(text, "pts/hr", why, False, elevated, trace, ticks, alert_y)
@@ -425,7 +518,8 @@ def _hero_trace(
         if row.ts < start:
             continue
         result = burn_rate(row.window, recent[: i + 1], lookback_s, row.ts)
-        points.append((row.ts, result.rate_pct_per_hour))
+        rate = result.rate_pct_per_hour if result.span_s >= DISPLAY_MIN_BURN_SPAN_S else None
+        points.append((row.ts, rate))
     ticks = [(HERO_W * (h / HERO_HOURS), clock(start + h * 3600)) for h in range(0, HERO_HOURS + 1)]
     rates = [p[1] for p in points if p[1] is not None]
     if not rates:
@@ -453,52 +547,136 @@ def _hero_trace(
     return " ".join(segments), ticks, y_of(alert)
 
 
+def find_gaps(
+    timestamps: list[int], start: int, end: int, threshold_s: int
+) -> list[tuple[int, int]]:
+    """Spans inside [start, end] longer than ``threshold_s`` with no sample. Trailing gaps count."""
+    ts = sorted(t for t in timestamps if start <= t <= end)
+    gaps: list[tuple[int, int]] = []
+    for a, b in pairwise(ts):
+        if b - a > threshold_s:
+            gaps.append((a, b))
+    if ts and end - ts[-1] > threshold_s:
+        gaps.append((ts[-1], end))
+    return gaps
+
+
+def _bucket(rows: list[QuotaRow], bucket_s: int) -> list[QuotaRow]:
+    """Keep the last sample per bucket. Called per reset-free segment, so resets survive."""
+    if bucket_s <= 1:
+        return rows
+    kept: dict[int, QuotaRow] = {}
+    for r in rows:
+        kept[r.ts // bucket_s] = r
+    return list(kept.values())
+
+
 def _chart_view(
     series_rows: dict[str, list[QuotaRow]],
     slots: dict[str, int],
     labels: dict[str, str],
+    rng: ResolvedRange,
+    view: ViewOptions,
+    gap_threshold_s: int,
     now: int,
+    withheld: bool,
 ) -> ChartView:
-    start = now - CHART_HOURS * 3600
+    start, end = rng.start, rng.end
+    span = max(1, end - start)
     plot_w = CHART_W - CHART_L - CHART_R
     plot_h = CHART_H - CHART_T - CHART_B
-    max_pct = max((r.pct for rows in series_rows.values() for r in rows), default=0.0)
+    visible = {w: rows for w, rows in series_rows.items() if w in slots and rows}
+    max_pct = max((r.pct for rows in visible.values() for r in rows), default=0.0)
     y_max = max(100.0, math.ceil(max_pct / 25) * 25)
 
     def x_of(ts: int) -> float:
-        return CHART_L + (ts - start) / (CHART_HOURS * 3600) * plot_w
+        return CHART_L + (ts - start) / span * plot_w
 
     def y_of(pct: float) -> float:
         return CHART_T + plot_h - (pct / y_max) * plot_h
 
+    bucket_s = max(1, span // MAX_POINTS_PER_SERIES)
     series: list[SeriesView] = []
-    for window, rows in series_rows.items():
-        if window not in slots:
-            continue
-        paths = []
+    data: list[dict[str, Any]] = []
+    for window, rows in visible.items():
+        hidden = window in view.hidden
+        paths: list[str] = []
+        pts_out: list[list[float]] = []
         for segment in split_at_resets(rows):
-            pts = [f"{x_of(r.ts):.1f} {y_of(r.pct):.1f}" for r in segment]
+            seg = _bucket(segment, bucket_s)
+            pts = [f"{x_of(r.ts):.1f} {y_of(r.pct):.1f}" for r in seg]
             if len(pts) == 1:
                 pts.append(pts[0])
             paths.append("M" + " L".join(pts))
+            pts_out.extend([r.ts, r.pct] for r in seg)
         last = rows[-1]
         series.append(
             SeriesView(
                 window,
                 display_label(window, labels.get(window)),
                 slots[window],
-                paths,
+                [] if hidden else paths,
                 x_of(last.ts),
                 y_of(last.pct),
                 y_of(last.pct),
+                hidden,
+                view.href(hidden=view.toggled(window)),
             )
         )
+        if not hidden:
+            data.append(
+                {"key": window, "label": series[-1].label, "slot": slots[window], "pts": pts_out}
+            )
     _spread_labels(series)
     series.sort(key=lambda s: -s.slot)  # draw the hero trace last, on top
+
+    timestamps = sorted({r.ts for rows in visible.values() for r in rows})
+    gaps = find_gaps(timestamps, start, end, gap_threshold_s)
+    gap_minutes = sum(b - a for a, b in gaps) // 60
+    gap_x = [(x_of(a), x_of(b)) for a, b in gaps]
+
     step = 25 if y_max <= 150 else 50
     y_ticks = [(y_of(v), fmt_pct(v)) for v in range(0, int(y_max) + 1, step)]
-    x_ticks = [(x_of(start + h * 3600), clock(start + h * 3600)) for h in range(0, 25, 4)]
-    return ChartView(series, y_ticks, x_ticks, y_max, bool(series))
+    x_ticks = _x_ticks(start, end, x_of)
+    collecting = ""
+    if rng.collecting and not withheld:
+        have = duration(rng.data_span_s) if rng.data_span_s else "0m"
+        collecting = f"Collecting: {have} of data. The chart fills in as samples arrive."
+    payload = {
+        "start": start,
+        "end": end,
+        "l": CHART_L,
+        "r": CHART_R,
+        "w": CHART_W,
+        "ymax": y_max,
+        "series": data,
+    }
+    return ChartView(
+        series,
+        y_ticks,
+        x_ticks,
+        y_max,
+        bool(series),
+        gap_x,
+        gap_minutes,
+        json.dumps(payload, separators=(",", ":")),
+        collecting,
+    )
+
+
+def _x_ticks(start: int, end: int, x_of: Any) -> list[tuple[float, str]]:
+    span = end - start
+    for step in (60, 120, 300, 600, 900, 1800, 3600, 7200, 14400, 21600, 43200, 86400, 172800):
+        if span / step <= 7:
+            break
+    first = math.ceil(start / step) * step
+    ticks = []
+    t = first
+    while t <= end:
+        label = clock(t) if span <= 2 * 86400 else local(t).strftime("%-d %b")
+        ticks.append((x_of(t), label))
+        t += step
+    return ticks
 
 
 def _spread_labels(series: list[SeriesView]) -> None:
@@ -509,6 +687,7 @@ def _spread_labels(series: list[SeriesView]) -> None:
 
 
 def _spend_view(spend: SpendReading | None, withheld: bool, now: int) -> SpendView | None:
+    """Neutral while extra usage is off (it cannot cost more); critical when on and over limit."""
     if spend is None:
         return None
     if spend.is_enabled is False:
@@ -523,8 +702,9 @@ def _spend_view(spend: SpendReading | None, withheld: bool, now: int) -> SpendVi
     if spend.conflict:
         status = (status + ". " if status else "") + "Sources disagree on amounts; figures hidden."
     pct = spend.pct
+    state = CRITICAL if spend.is_enabled and pct is not None and pct >= 100 else NORMAL
     if withheld:
-        return SpendView(None, None, None, "—", 0.0, status, True)
+        return SpendView(None, None, None, "—", 0.0, status, NORMAL, True)
     return SpendView(
         spend.used_text,
         spend.limit_text,
@@ -532,6 +712,7 @@ def _spend_view(spend: SpendReading | None, withheld: bool, now: int) -> SpendVi
         f"{pct:.0f}" if pct is not None else "—",
         max(0.0, min(pct or 0.0, 100.0)),
         status,
+        state,
         False,
     )
 
@@ -547,6 +728,16 @@ def as_json(dash: Dashboard) -> dict[str, Any]:
             "last_success_ts": dash.last_success_ts,
         },
         "chip": dash.chip,
+        "range": {
+            "key": dash.rng.key,
+            "start": dash.rng.start,
+            "end": dash.rng.end,
+            "auto": dash.rng.auto,
+            "collecting": dash.rng.collecting,
+        },
+        "lookback_s": dash.lookback_s,
+        "hidden": sorted(dash.view.hidden),
+        "gap_minutes": dash.chart.gap_minutes,
         "windows": [
             {
                 "key": w.key,
@@ -556,6 +747,7 @@ def as_json(dash: Dashboard) -> dict[str, Any]:
                 "state": w.state,
                 "is_active": w.is_active,
                 "withheld": w.withheld,
+                "change": w.delta_text,
             }
             for w in dash.windows
         ],
@@ -566,7 +758,9 @@ def as_json(dash: Dashboard) -> dict[str, Any]:
             "used": dash.spend.used_text,
             "limit": dash.spend.limit_text,
             "pct": dash.spend.pct,
+            "state": dash.spend.state,
             "status": dash.spend.status_text,
         },
+        "notes": dash.notes,
         "diagnostics": dash.diagnostics,
     }

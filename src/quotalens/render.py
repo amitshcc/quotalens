@@ -5,7 +5,7 @@ from __future__ import annotations
 from html import escape as e
 
 from quotalens import __version__
-from quotalens.dashboard import Dashboard, SeriesView, WindowView
+from quotalens.dashboard import Control, Dashboard, SeriesView, WindowView
 
 ICONS = (
     '<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>'
@@ -19,6 +19,9 @@ ICONS = (
     '<path d="M9.9 4h3.5v3.4"/></symbol>'
     '<symbol id="i-theme" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/>'
     '<path d="M8 2a6 6 0 0 1 0 12Z" fill="currentColor" stroke="none"/></symbol>'
+    '<pattern id="gap" width="6" height="6" patternUnits="userSpaceOnUse" '
+    'patternTransform="rotate(-45)"><line x1="0" y1="0" x2="0" y2="6" '
+    'stroke="var(--st-stale)" stroke-width="1.2" opacity=".45"/></pattern>'
     "</defs></svg>"
 )
 
@@ -44,13 +47,12 @@ WITHHELD = '<span class="num">—</span><span class="dash">—</span>'
 DISCLAIMER = "Unofficial. Uses undocumented claude.ai endpoints. Observes only."
 
 
-def chip(kind: str, text: str, extra_id: str = "") -> str:
+def chip(kind: str, text: str) -> str:
     if kind not in _CHIP or not text:
         return ""
     cls, icon = _CHIP[kind]
-    id_attr = f' id="{extra_id}"' if extra_id else ""
     return (
-        f'<span class="chip {cls}"{id_attr}><svg class="ic" aria-hidden="true">'
+        f'<span class="chip {cls}"><svg class="ic" aria-hidden="true">'
         f'<use href="#{icon}"/></svg>{e(text)}</span>'
     )
 
@@ -64,6 +66,7 @@ def render_page(dash: Dashboard) -> str:
         '<link rel="stylesheet" href="/static/tokens.css">\n'
         '<link rel="stylesheet" href="/static/app.css">\n'
         '<script src="/static/app.js"></script>\n'
+        '<script src="/static/chart.js" defer></script>\n'
         "</head>\n"
         f'<body data-refresh="{dash.refresh_s}">\n{ICONS}\n'
         f'<div id="app">{render_app(dash)}</div>\n</body>\n</html>\n'
@@ -96,11 +99,13 @@ def _header(dash: Dashboard) -> str:
 
 
 def _main(dash: Dashboard) -> str:
+    q = dash.view.query()
     return (
-        '<main class="wrap">'
+        f'<main class="wrap" data-query="{e(q)}" data-lookback="{dash.lookback_s}">'
         + _health_strip(dash)
         + _hero(dash)
         + _meters(dash)
+        + _toolbar(dash)
         + _chart(dash)
         + '<div class="cols">'
         + _attribution()
@@ -112,24 +117,22 @@ def _main(dash: Dashboard) -> str:
 
 
 def _health_strip(dash: Dashboard) -> str:
-    if not dash.health_message and not dash.diagnostics:
+    if not dash.health_message and not dash.notes:
         return ""
     kind = dash.epistemic.kind if dash.epistemic.kind != "ok" else "note"
-    parts = []
-    if dash.health_message:
-        parts.append(f"<p>{e(dash.health_message)}</p>")
-    for note in dash.diagnostics:
-        parts.append(f'<p class="far">{e(note)}</p>')
+    parts = [f"<p>{e(dash.health_message)}</p>"] if dash.health_message else []
+    parts += [f'<p class="far">{e(note)}</p>' for note in dash.notes]
     return f'<section class="hstrip {kind}" aria-live="polite">{"".join(parts)}</section>'
 
 
 def _hero(dash: Dashboard) -> str:
     b = dash.burn
     cls = "readout off" if b.withheld else "readout"
-    if b.withheld:
-        value = WITHHELD
-    else:
-        value = f'<span class="num">{e(b.rate_text)}</span><span class="dash">—</span>'
+    value = (
+        WITHHELD
+        if b.withheld
+        else (f'<span class="num">{e(b.rate_text)}</span><span class="dash">—</span>')
+    )
     trace = ""
     if b.trace:
         alert = (
@@ -198,14 +201,57 @@ def _meter(w: WindowView) -> str:
     )
 
 
+def _controls(name: str, controls: list[Control], legend: str) -> str:
+    links = []
+    for c in controls:
+        cls = "rb on" if c.active else "rb"
+        current = ' aria-current="true"' if c.active else ""
+        links.append(
+            f'<a class="{cls}" href="{e(c.href)}" data-{name}="{e(c.key)}"{current}>'
+            f"{e(c.label)}</a>"
+        )
+    return (
+        f'<span class="ctl" role="group" aria-label="{e(legend)}">'
+        f'<span class="lbl">{e(legend)}</span>{"".join(links)}</span>'
+    )
+
+
+def _toolbar(dash: Dashboard) -> str:
+    q = dash.view.query()
+    action = "/poll" + (f"?{q}" if q else "")
+    custom = ""
+    if dash.rng.key == "custom":
+        custom = f'<span class="lbl m" id="custom-range">{e(dash.rng.label)}</span>'
+    return (
+        '<nav class="toolbar" aria-label="Chart controls">'
+        + _controls("range", dash.range_controls, "range")
+        + custom
+        + _controls("lookback", dash.lookback_controls, "lookback")
+        + '<span class="spacer"></span>'
+        + _controls("refresh", dash.refresh_controls, "auto")
+        + f'<form method="post" action="{e(action)}" class="ctl" id="poll-form">'
+        '<button type="submit" id="poll" title="Force a poll now">'
+        '<svg class="ic" aria-hidden="true"><use href="#i-rate"/></svg>poll now</button></form>'
+        "</nav>"
+    )
+
+
 def _chart(dash: Dashboard) -> str:
     c = dash.chart
-    if not c.has_data:
+    if c.collecting_text:
         inner = (
-            '<text x="636" y="112" class="ax" text-anchor="middle">'
-            "No readings in the last 24 hours</text>"
+            f'<text x="636" y="112" class="ax" text-anchor="middle">{e(c.collecting_text)}</text>'
+        )
+    elif not c.has_data:
+        inner = (
+            '<text x="636" y="112" class="ax" text-anchor="middle">No readings in this range</text>'
         )
     else:
+        gaps = "".join(
+            f'<rect x="{a:.1f}" y="14" width="{max(b - a, 1.5):.1f}" height="182" '
+            'fill="url(#gap)" class="gap"/>'
+            for a, b in c.gaps
+        )
         grid = "".join(
             f'<line x1="44" y1="{y:.1f}" x2="1150" y2="{y:.1f}" class="{_gclass(t)}"/>'
             f'<text x="36" y="{y + 4:.1f}" class="ax" text-anchor="end">{e(t)}</text>'
@@ -215,12 +261,16 @@ def _chart(dash: Dashboard) -> str:
             f'<text x="{x:.1f}" y="211" class="ax" text-anchor="middle">{e(t)}</text>'
             for x, t in c.x_ticks
         )
-        inner = grid + xt + "".join(_series(s) for s in c.series)
+        inner = gaps + grid + xt + "".join(_series(s) for s in c.series)
     return (
-        '<section class="screen chart" aria-label="All windows, last 24 hours">'
-        '<svg viewBox="0 0 1272 216" role="img" '
-        'aria-label="Utilisation of all quota windows over the last 24 hours">'
-        f'<g class="trace">{inner}</g></svg></section>'
+        '<section class="screen chart" aria-label="All windows, selected range">'
+        f'<script type="application/json" id="chart-data">{c.data_json}</script>'
+        '<svg id="chart" viewBox="0 0 1272 216" role="img" '
+        'aria-label="Utilisation of all quota windows over the selected range">'
+        f'<g class="trace">{inner}</g>'
+        '<g id="hover" hidden><line class="xh" y1="14" y2="196"/></g>'
+        '<rect id="sel" class="sel" y="14" height="182" hidden/></svg>'
+        '<div id="readout" class="readout-box m" hidden></div></section>'
     )
 
 
@@ -238,10 +288,17 @@ def _series(s: SeriesView) -> str:
     paths = "".join(
         f'<path d="{p}" stroke="var(--s{s.slot})" stroke-width="{width}"{dash}/>' for p in s.paths
     )
+    marker = (
+        ""
+        if s.hidden
+        else (f'<circle cx="{s.end_x:.1f}" cy="{s.end_y:.1f}" r="2.4" fill="var(--s{s.slot})"/>')
+    )
+    state = "hidden" if s.hidden else "shown"
     return (
-        paths + f'<circle cx="{s.end_x:.1f}" cy="{s.end_y:.1f}" r="2.4" fill="var(--s{s.slot})"/>'
-        f'<text x="{s.end_x + 9:.1f}" y="{s.label_y + 4:.1f}" fill="var(--s{s.slot})" class="el">'
-        f"{e(s.label)}</text>"
+        paths + marker + f'<a href="{e(s.toggle_href)}" class="el-link" data-series="{e(s.key)}" '
+        f'aria-label="{e(s.label)}: {state}, activate to toggle">'
+        f'<text x="{s.end_x + 9:.1f}" y="{s.label_y + 4:.1f}" fill="var(--s{s.slot})" '
+        f'class="el{" off" if s.hidden else ""}">{e(s.label)}</text></a>'
     )
 
 
@@ -264,9 +321,8 @@ def _side(dash: Dashboard) -> str:
     if dash.spend is not None:
         s = dash.spend
         if s.withheld:
-            figure = WITHHELD
-            pct = WITHHELD
-            bar = '<div class="bar hatch"></div>'
+            figure, pct, bar = WITHHELD, WITHHELD, '<div class="bar hatch"></div>'
+            style = ""
         else:
             money = (
                 f"{s.used_text} / {s.limit_text}"
@@ -278,17 +334,22 @@ def _side(dash: Dashboard) -> str:
                 f'<span class="num">{e(s.pct_text)}</span><span class="u">%</span>'
                 '<span class="dash">—</span>'
             )
-            bar = (
-                f'<div class="bar"><i style="width:{s.bar_pct:.1f}%;background:var(--s4)"></i>'
-                "</div>"
-            )
+            fill = "var(--st-critical)" if s.state == "critical" else "var(--hair-firm)"
+            bar = f'<div class="bar"><i style="width:{s.bar_pct:.1f}%;background:{fill}"></i></div>'
+            style = ' style="color:var(--st-critical)"' if s.state == "critical" else ""
+        state_chip = " " + chip(s.state, s.state) if s.state != "normal" else ""
         spend = (
-            '<div class="rule"></div><dl><dt>Extra usage</dt>'
+            f'<div class="rule"></div><dl><dt>Extra usage{state_chip}</dt>'
             f'<dd class="m">{figure}</dd></dl>'
-            f'<div class="v m spend-pct">{pct}</div>{bar}'
+            f'<div class="v m spend-pct"{style}>{pct}</div>{bar}'
             + (f'<p class="far">{e(s.status_text)}</p>' if s.status_text else "")
         )
-    return f'<aside class="side"><dl>{rows}</dl>{spend}</aside>'
+    diag = ""
+    if dash.diagnostics:
+        diag = '<div class="rule"></div><dl><dt>Diagnostics</dt><dd></dd></dl>' + "".join(
+            f'<p class="far">{e(d)}</p>' for d in dash.diagnostics
+        )
+    return f'<aside class="side"><dl>{rows}</dl>{spend}{diag}</aside>'
 
 
 def _footer(dash: Dashboard) -> str:
