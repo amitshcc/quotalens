@@ -94,9 +94,21 @@ consumed in each hour of the window. The chart's default range is the current
 window from start to reset, with now inside it, hourly separators, and a dashed
 projection at the current rate that turns critical where it crosses 100%.
 
-Below the chart, the history table lists your session windows, derived
-from the API's own `resets_at` values: when it jumps forward a new session
-started, and its start is that value minus five hours. Each row shows the peak
+Below the chart, the history table lists your session windows, derived from the
+API's own `resets_at` values: when it jumps forward a new session started.
+
+**Where a session *starts* is an inference.** Anthropic documents that the
+session limit resets every five hours and has never published how the window is
+anchored, so QuotaLens infers the start as the reset time minus five hours. The
+evidence for it is that the server recomputes `resets_at` on every call and only
+the sub-second part moves, which is what a fixed anchor looks like. Rather than
+hedge, the collector checks the inference on every poll: if a reset time ever
+moves forward by less than five hours without the percentage dropping, the model
+is wrong, and QuotaLens records it and says so on the page. Anything derived from
+session history — the table, the hour strip, the auto range, the coverage badge —
+rests on that inference.
+
+Each row shows the peak
 utilisation reached in the window, how far each weekly limit moved during it,
 a sparkline of its shape, and how much of it was observed. Sort by consumption to find
 the expensive session, click it, and the chart shows exactly that window. On the
