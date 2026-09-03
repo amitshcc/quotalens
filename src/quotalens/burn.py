@@ -1,8 +1,12 @@
 """Burn rate: percentage points of quota per hour.
 
-The subtle part is the window reset. When a 5-hour window rolls over the
+The subtle part is the window reset. When a session window rolls over the
 percentage drops sharply; that is a discontinuity, not a negative rate. We cut
 the series into segments at every reset and only measure inside the newest one.
+
+Where a window *begins* is an inference, not documentation: see
+:mod:`quotalens.sessions`. This module only needs to know where one *ends*, which
+the API states directly, so nothing here depends on the inference.
 
 A reset is detected between two consecutive samples by ``resets_at`` when both
 samples carry one: the boundary is where it moves by more than
