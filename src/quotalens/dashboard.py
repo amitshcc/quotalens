@@ -18,7 +18,7 @@ from quotalens.burn import BurnResult, burn_rate, split_at_resets
 from quotalens.config import Settings
 from quotalens.parse import SpendReading, humanize
 from quotalens.poller import PollerStatus
-from quotalens.sessions import SessionWindow, idle_spans, window_from_row
+from quotalens.sessions import SessionWindow, coverage_pct, idle_spans, window_from_row
 from quotalens.state import (
     CRITICAL,
     ELEVATED,
@@ -49,7 +49,8 @@ MAX_POINTS_PER_SERIES = 600  # longer ranges are bucketed, keeping the last samp
 DISPLAY_MIN_BURN_SPAN_S = 300  # a rate over less than this is noise at 68px
 FORCE_NOTE_TTL_S = 15
 HISTORY_ROWS = 20
-THIN_COVERAGE = 0.25  # under this share of expected samples a window is a guess
+THIN_COVERAGE_PCT = 25.0  # under this coverage a window is a guess
+PEAK_FINAL_NOTE_PTS = 2.0  # peak and close differ by more than this: worth a note
 
 RATE_WINDOW = "five_hour"
 DISPLAY_LABELS = {
@@ -202,9 +203,11 @@ class SessionRowView:
     window_text: str
     href: str
     peak_text: str
-    final_text: str
+    note: str  # row title: peak versus close when they genuinely differ
     columns: list[str]  # one per weekly limit, in header order
     samples: int
+    coverage_pct: float
+    coverage_text: str
     thin: bool  # too few samples to trust
     is_current: bool
     selected: bool  # the chart range is exactly this window
@@ -761,8 +764,11 @@ def _history_view(
     rows = []
     for w in windows:
         end = min(w.ends_at, now)
-        elapsed = max(60, end - w.started_at)
-        expected = elapsed / interval_s
+        elapsed = max(1, end - w.started_at)
+        coverage = coverage_pct(w.samples, elapsed, interval_s)
+        note = ""
+        if abs(w.peak_pct - w.final_pct) > PEAK_FINAL_NOTE_PTS:
+            note = f"Peak {fmt_pct(w.peak_pct)}%, closed at {fmt_pct(w.final_pct)}%"
         rows.append(
             SessionRowView(
                 started_at=w.started_at,
@@ -770,10 +776,12 @@ def _history_view(
                 window_text=_window_text(w, now),
                 href=view.href(range_key="custom", custom=(w.started_at, end)),
                 peak_text=f"{fmt_pct(w.peak_pct)}%",
-                final_text=f"{fmt_pct(w.final_pct)}%",
+                note=note,
                 columns=[_delta_text(w, k) for k in columns],
                 samples=w.samples,
-                thin=w.samples < THIN_COVERAGE * expected,
+                coverage_pct=coverage,
+                coverage_text=f"{coverage:.0f}%",
+                thin=coverage < THIN_COVERAGE_PCT,
                 is_current=w.is_current,
                 selected=view.custom == (w.started_at, end),
             )
@@ -891,9 +899,10 @@ def as_json(dash: Dashboard) -> dict[str, Any]:
                 "started_at": r.started_at,
                 "ends_at": r.ends_at,
                 "peak": r.peak_text,
-                "final": r.final_text,
+                "note": r.note,
                 "columns": r.columns,
                 "samples": r.samples,
+                "coverage_pct": r.coverage_pct,
                 "thin": r.thin,
                 "is_current": r.is_current,
             }

@@ -351,17 +351,22 @@ def _history(dash: Dashboard) -> str:
     recent_on = h.sort == "recent"
     sort_recent = ' aria-sort="descending"' if recent_on else ""
     sort_consumed = ' aria-sort="descending"' if not recent_on else ""
-    heads = (
-        f'<th><a href="{e(h.sort_links["recent"])}" data-sort="recent"{sort_recent}>Window</a>'
-        f'</th><th class="n"><a href="{e(h.sort_links["consumed"])}" data-sort="consumed"'
-        f"{sort_consumed}>Consumed</a></th>"
-        '<th class="n">Final</th>'
-        + "".join(f'<th class="n">{e(x)}</th>' for x in h.headers)
-        + '<th class="n">Samples</th>'
+    weekly = len(h.headers)
+    group = (
+        f'<th class="n grp" colspan="{weekly}" scope="colgroup">weekly limits</th>'
+        if weekly
+        else ""
     )
+    head1 = (
+        f'<th rowspan="2"><a href="{e(h.sort_links["recent"])}" data-sort="recent"'
+        f"{sort_recent}>Window</a></th>"
+        f'<th class="n" rowspan="2"><a href="{e(h.sort_links["consumed"])}" data-sort="consumed"'
+        f"{sort_consumed}>Consumed</a></th>" + group + '<th class="n" rowspan="2">Coverage</th>'
+    )
+    head2 = "".join(f'<th class="n">{e(x)}</th>' for x in h.headers)
     if not h.rows:
         body = (
-            f'<tr><td colspan="{4 + len(h.headers)}" class="empty">'
+            f'<tr><td colspan="{3 + weekly}" class="empty">'
             "No 5-hour windows yet. They appear once the first session has samples.</td></tr>"
         )
     else:
@@ -370,19 +375,20 @@ def _history(dash: Dashboard) -> str:
     return (
         '<section class="screen history"><table>'
         f"<caption>History — 5-hour session windows{caption}</caption>"
-        f"<thead><tr>{heads}</tr></thead><tbody>{body}</tbody></table></section>"
+        f"<thead><tr>{head1}</tr><tr>{head2}</tr></thead><tbody>{body}</tbody></table></section>"
     )
 
 
 def _history_row(r: SessionRowView) -> str:
     cls = " ".join(c for c in ("r-thin" if r.thin else "", "r-on" if r.selected else "") if c)
+    title = f' title="{e(r.note)}"' if r.note else ""
     current = ' <span class="far">current</span>' if r.is_current else ""
     cells = "".join(f'<td class="m n">{e(c)}</td>' for c in r.columns)
     return (
-        f'<tr class="{cls}"><th scope="row"><a href="{e(r.href)}" class="sess" '
+        f'<tr class="{cls}"{title}><th scope="row"><a href="{e(r.href)}" class="sess" '
         f'data-session="{r.started_at}">{e(r.window_text)}</a>{current}</th>'
-        f'<td class="m n rt">{e(r.peak_text)}</td><td class="m n">{e(r.final_text)}</td>{cells}'
-        f'<td class="m n">{r.samples}</td></tr>'
+        f'<td class="m n rt">{e(r.peak_text)}</td>{cells}'
+        f'<td class="m n">{e(r.coverage_text)}</td></tr>'
     )
 
 

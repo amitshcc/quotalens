@@ -12,7 +12,13 @@ from quotalens.dashboard import build_dashboard
 from quotalens.parse import QuotaReading
 from quotalens.poller import PollerStatus
 from quotalens.render import render_app
-from quotalens.sessions import SESSION_LENGTH_S, derive_sessions, idle_spans, rebuild
+from quotalens.sessions import (
+    SESSION_LENGTH_S,
+    coverage_pct,
+    derive_sessions,
+    idle_spans,
+    rebuild,
+)
 from quotalens.store import QuotaRow, Store
 from quotalens.views import ViewOptions
 
@@ -104,6 +110,15 @@ def test_weekly_delta_and_reset_mid_window() -> None:
     assert "limit:fable" not in w.deltas
 
 
+def test_coverage_percentage_including_a_window_shorter_than_the_interval() -> None:
+    assert coverage_pct(287, 5 * 3600, 60) == 95.7
+    assert coverage_pct(300, 5 * 3600, 60) == 100.0
+    assert coverage_pct(600, 5 * 3600, 60) == 100.0  # capped
+    assert coverage_pct(1, 30, 60) == 100.0  # shorter than one interval: one sample is full
+    assert coverage_pct(0, 30, 60) == 0.0
+    assert coverage_pct(3, 4 * 3600, 60) == 1.2
+
+
 def test_backfill_is_idempotent_and_survives_reopen(tmp_path) -> None:
     store = Store(tmp_path / "s.db")
     e1 = T0 + SESSION_LENGTH_S
@@ -161,6 +176,9 @@ def test_history_table_sorted_and_row_links_select_the_window(settings, store, s
         json_view = tc.get("/api/dashboard?sort=consumed").json()
     assert "History — 5-hour session windows, most recent first" in recent
     assert '<th class="n">All models</th>' in recent and '<th class="n">Fable</th>' in recent
+    assert '<th class="n grp" colspan="2" scope="colgroup">weekly limits</th>' in recent
+    assert ">Final<" not in recent and '<th class="n" rowspan="2">Coverage</th>' in recent
+    assert 'title="Peak ' not in recent  # peak and close agree within 2 points
     assert "limit:fable" not in recent.split('id="chart-data"')[0]
     assert json_view["sessions"][0]["peak"] == "80%"  # the expensive window first
     assert f'href="/?range={start2}-{end2}&amp;sort=consumed"' in by_use
@@ -184,6 +202,7 @@ def test_thin_windows_render_far_and_idle_differs_from_gap(settings, store) -> N
     dash = build_dashboard(settings, store, status, now, 20.0, ViewOptions(range_key="24h"))
     thin = [r for r in dash.history.rows if r.samples == 3]
     assert thin and thin[0].thin and not dash.history.rows[0].thin
+    assert thin[0].coverage_text == "1%" and dash.history.rows[0].coverage_text == "50%"
     assert dash.chart.idle_minutes > 0 and dash.chart.gap_minutes > 0
     assert len(dash.chart.session_x) == 2
     html = render_app(dash)
