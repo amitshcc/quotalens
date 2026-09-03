@@ -113,9 +113,22 @@ class ResolvedRange:
     data_span_s: int  # oldest sample to now
 
 
-def resolve_range(opts: ViewOptions, oldest_ts: int | None, now: int) -> ResolvedRange:
-    """Pick the concrete window. Auto = the smallest preset that covers all the data."""
+def resolve_range(
+    opts: ViewOptions,
+    oldest_ts: int | None,
+    now: int,
+    session: tuple[int, int] | None = None,
+) -> ResolvedRange:
+    """Pick the concrete window.
+
+    Auto = the current 5-hour session window, start to reset, when one is running;
+    otherwise the smallest preset that covers all the data.
+    """
     data_span = max(0, now - oldest_ts) if oldest_ts is not None else 0
+    if opts.range_key == AUTO and session is not None and session[1] > now:
+        return ResolvedRange(
+            session[0], session[1], "session", "this window", True, False, data_span
+        )
     if opts.range_key == "custom" and opts.custom:
         start, end = opts.custom
         return ResolvedRange(

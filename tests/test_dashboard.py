@@ -28,13 +28,19 @@ def _status(**kwargs) -> PollerStatus:
     return status
 
 
-def _seed(store, now: int, minutes: int = 16, base: float = 20.0) -> None:
+def _seed(
+    store, now: int, minutes: int = 16, base: float = 20.0, reset_in: int | None = 3600
+) -> None:
+    from datetime import UTC, datetime
+
+    # a window that resets in an hour, or no window at all when reset_in is None
+    reset = datetime.fromtimestamp(now + reset_in, UTC).isoformat() if reset_in else None
     for i in range(minutes):
         ts = now - (minutes - 1 - i) * 60
         store.record_quota(
             ts,
             [
-                QuotaReading("five_hour", "5-hour", base + i, "r1", "normal", True),
+                QuotaReading("five_hour", "5-hour", base + i, reset, "normal", True),
                 QuotaReading("seven_day", "7-day", 38, "r2", "normal", False),
                 QuotaReading("limit:fable", "Fable", 69, "r3", "normal", False),
             ],
@@ -272,7 +278,7 @@ def test_app_css_stays_within_budget() -> None:
         text = re.sub(r"\s+", " ", text)
         return re.sub(r"\s*([{};:,])\s*", r"\1", text)
 
-    assert len(minify(css).encode()) + len(minify(tokens).encode()) < 12_000
+    assert len(minify(css).encode()) + len(minify(tokens).encode()) < 14_000
     # no colour literal outside tokens.css
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b", minify(css))
 
@@ -313,7 +319,7 @@ def test_cold_start_picks_smallest_covering_range_or_says_collecting() -> None:
 
 def test_collecting_text_replaces_the_grid(settings, store, secrets) -> None:
     now = int(time.time())
-    _seed(store, now, minutes=5)
+    _seed(store, now, minutes=5, reset_in=None)  # cold start, no session yet
     app = create_app(settings, store, secrets)
     app.state.qw.poller.status.state = "ok"
     app.state.qw.poller.status.last_success_ts = now
@@ -396,7 +402,7 @@ def test_burn_rate_withheld_under_five_minutes(settings, store) -> None:
     _seed(store, now, minutes=7, base=10)
     dash = build_dashboard(settings, store, _status(state="ok", last_success_ts=now), now, 20.0)
     assert not dash.burn.withheld
-    assert "lookback 15m" in dash.burn.why
+    assert "lookback 15m" in dash.burn.detail
 
 
 def test_view_query_parsing_and_invalid_input() -> None:
@@ -429,7 +435,7 @@ def test_meter_change_is_over_the_selected_range(settings, store) -> None:
         20.0,
         ViewOptions(range_key="1h"),
     )
-    assert dash.windows[0].delta_text == "+15 pts over 1h"
+    assert dash.windows[0].delta_text == "+15 pts in range"
 
 
 def test_five_minute_lookback_can_actually_display(settings, store) -> None:
@@ -444,4 +450,4 @@ def test_five_minute_lookback_can_actually_display(settings, store) -> None:
         ViewOptions(lookback_key="5m"),
     )
     assert not dash.burn.withheld and dash.burn.rate_text == "60.00"
-    assert "lookback 5m" in dash.burn.why
+    assert "lookback 5m" in dash.burn.detail

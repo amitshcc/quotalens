@@ -34,11 +34,18 @@
   /* ---- polled-ago ticker ----------------------------------------------- */
   function tick() {
     var el = document.getElementById("polled");
-    if (!el) return;
-    var ts = Number(el.dataset.ts);
-    if (!ts) return;
-    var age = Math.round(Date.now() / 1000 - ts);
-    el.textContent = age < 120 ? "polled " + age + "s ago" : (el.dataset.fallback || el.textContent);
+    if (el && Number(el.dataset.ts)) {
+      var age = Math.round(Date.now() / 1000 - Number(el.dataset.ts));
+      el.textContent = age < 120 ? "polled " + age + "s ago" : (el.dataset.fallback || el.textContent);
+    }
+    var reset = document.getElementById("reset-in");
+    if (reset && Number(reset.dataset.reset)) {
+      var left = Math.round(Number(reset.dataset.reset) - Date.now() / 1000);
+      var pad = function (n) { return (n < 10 ? "0" : "") + n; };
+      if (left <= 0) reset.textContent = "reset due";
+      else if (left >= 3600) reset.textContent = Math.floor(left / 3600) + "h " + pad(Math.floor((left % 3600) / 60)) + "m";
+      else reset.textContent = Math.floor(left / 60) + "m " + pad(left % 60) + "s";
+    }
   }
 
   /* ---- fragment refresh and the link-lost watchdog ---------------------- */
