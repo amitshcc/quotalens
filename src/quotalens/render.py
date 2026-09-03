@@ -5,7 +5,16 @@ from __future__ import annotations
 from html import escape as e
 
 from quotalens import __version__
-from quotalens.dashboard import Control, Dashboard, SeriesView, SessionRowView, WindowView
+from quotalens.dashboard import (
+    Control,
+    Dashboard,
+    SeriesView,
+    SessionRowView,
+    WindowView,
+    clock,
+    fmt_pct,
+)
+from quotalens.runway import fmt_span
 from quotalens.views import AUTO, RANGE_KEYS
 
 ICONS = (
@@ -155,12 +164,85 @@ def _hero(dash: Dashboard) -> str:
             f'<path d="{b.trace}" class="trace" stroke="var(--s1)" '
             f'stroke-width="var(--trace-hero)"/>{ticks}</svg>'
         )
+    verdict = f"<b>{e(b.why)}</b>" if not b.withheld else e(b.why)
+    detail = f'<br><span class="far">{e(b.detail)}</span>' if b.detail else ""
     return (
         '<section class="screen hero" aria-labelledby="br"><h2 class="lbl" id="br">Burn rate'
         + (" " + chip("elevated", "elevated") if b.elevated else "")
         + '</h2><div class="hrow">'
         f'<div class="{cls}">{value}<span class="u">{e(b.unit)}</span></div>'
-        f'<p class="why">{e(b.why)}</p></div>{trace}</section>'
+        + _runway_stats(dash)
+        + f'<p class="why">{verdict}{detail}</p></div>'
+        + _hour_strip(dash)
+        + f"{trace}</section>"
+    )
+
+
+def _runway_stats(dash: Dashboard) -> str:
+    r = dash.burn.runway
+    withheld = dash.burn.withheld and dash.epistemic.kind != "ok"
+    if r is None or withheld:
+        return (
+            '<dl class="runway m"><div><dt>resets in</dt><dd>' + WITHHELD + "</dd></div>"
+            "<div><dt>headroom</dt><dd>" + WITHHELD + "</dd></div>"
+            "<div><dt>sustainable</dt><dd>" + WITHHELD + "</dd></div></dl>"
+        )
+    if r.reset_ts and r.remaining_s > 0:
+        resets = (
+            f'<span class="num" id="reset-in" data-reset="{r.reset_ts}">'
+            f"{e(fmt_span(r.remaining_s))}</span>"
+        )
+    else:
+        resets = '<span class="num">no window</span>'
+    headroom = (
+        f'<span class="num">{fmt_pct(r.headroom_pct)}</span><span class="u">%</span>'
+        if r.headroom_pct is not None
+        else WITHHELD
+    )
+    sustain = (
+        f'<span class="num">{r.sustainable:.1f}</span><span class="u">pts/hr</span>'
+        if r.sustainable is not None
+        else WITHHELD
+    )
+    crit = ' class="crit-v"' if r.critical else ""
+    return (
+        '<dl class="runway m">'
+        f"<div><dt>resets in</dt><dd>{resets}</dd></div>"
+        f"<div><dt>headroom</dt><dd{crit}>{headroom}</dd></div>"
+        f"<div><dt>sustainable</dt><dd>{sustain}</dd></div></dl>"
+    )
+
+
+def _hour_strip(dash: Dashboard) -> str:
+    bars = dash.burn.hours
+    if not bars:
+        return ""
+    scale = dash.burn.hours_max or 20.0
+    cells = []
+    for bar in bars:
+        label = clock(bar.start_ts)
+        if bar.state == "future":
+            cells.append(
+                f'<div class="hb future" title="{label}: not started"><i></i>'
+                f'<span class="ax-l">{label}</span></div>'
+            )
+            continue
+        if bar.consumed is None:
+            cells.append(
+                f'<div class="hb nodata" title="{label}: no samples"><i class="hatch"></i>'
+                f'<span class="ax-l">{label}</span></div>'
+            )
+            continue
+        height = max(2.0, min(100.0, bar.consumed / scale * 100))
+        cells.append(
+            f'<div class="hb {bar.state}" title="{label}: {bar.consumed:.0f} pts">'
+            f'<span class="hv">{bar.consumed:.0f}</span><i style="height:{height:.0f}%"></i>'
+            f'<span class="ax-l">{label}</span></div>'
+        )
+    return (
+        '<div class="hours" role="img" aria-label="Points consumed per hour of this window">'
+        + "".join(cells)
+        + "</div>"
     )
 
 
@@ -296,11 +378,33 @@ def _chart(dash: Dashboard) -> str:
         gaps += "".join(
             f'<line x1="{x:.1f}" y1="14" x2="{x:.1f}" y2="196" class="sess"/>' for x in c.session_x
         )
+        grid_end = c.now_x if c.future else 1150.0
         grid = "".join(
-            f'<line x1="44" y1="{y:.1f}" x2="1150" y2="{y:.1f}" class="{_gclass(t)}"/>'
+            f'<line x1="44" y1="{y:.1f}" x2="{grid_end:.1f}" y2="{y:.1f}" class="{_gclass(t)}"/>'
             f'<text x="36" y="{y + 4:.1f}" class="ax" text-anchor="end">{e(t)}</text>'
             for y, t in c.y_ticks
         )
+        grid += "".join(
+            f'<line x1="{x:.1f}" y1="14" x2="{x:.1f}" y2="196" class="hr"/>' for x in c.hour_x
+        )
+        if c.future:
+            grid += (
+                f'<line x1="{c.now_x:.1f}" y1="14" x2="{c.now_x:.1f}" y2="196" class="now"/>'
+                f'<text x="{c.now_x + 4:.1f}" y="24" class="ax">now</text>'
+            )
+        if c.projection:
+            colour = "var(--st-critical)" if c.projection_critical else "var(--s1)"
+            grid += (
+                f'<path d="{c.projection}" class="proj" stroke="{colour}" '
+                'stroke-width="var(--trace-dim)" stroke-dasharray="var(--dash-3)"/>'
+            )
+        if c.cross:
+            cx, cy, text = c.cross
+            grid += (
+                f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="3" fill="var(--st-critical)"/>'
+                f'<text x="{cx:.1f}" y="{cy - 6:.1f}" class="ax cross" text-anchor="middle">'
+                f"{e(text)}</text>"
+            )
         xt = "".join(
             f'<text x="{x:.1f}" y="211" class="ax" text-anchor="middle">{e(t)}</text>'
             for x, t in c.x_ticks

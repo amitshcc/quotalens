@@ -59,6 +59,22 @@ button:hover{background:var(--hover);color:var(--txt)}
 .readout.off{color:var(--txt-far)}
 .readout .u{font-size:var(--fs-sub);color:var(--txt-dim);letter-spacing:0}
 .why{flex:1;min-width:280px;max-width:62ch;margin:0;font-size:var(--fs-sm);color:var(--txt-dim)}
+.why b{color:var(--txt);font-weight:var(--w-med)}
+.runway{display:flex;gap:var(--sp-5);margin:0;flex:none}
+.runway div{display:flex;flex-direction:column;gap:var(--sp-1)}
+.runway dt{font-size:var(--fs-sm);color:var(--txt-dim);font-family:var(--font-ui)}
+.runway dd{margin:0;font-size:var(--fs-sub);line-height:var(--lh-num);letter-spacing:var(--tr-readout)}
+.runway dd .u{font-size:var(--fs-xs);color:var(--txt-far);margin-left:var(--sp-1)}
+.runway dd.crit-v{color:var(--st-critical)}
+.hours{display:grid;grid-template-columns:repeat(5,1fr);gap:var(--sp-2);margin-top:var(--sp-3);
+  height:56px;align-items:end}
+.hb{position:relative;height:100%;background:var(--grid);border-radius:var(--r-1);overflow:hidden}
+.hb i{position:absolute;left:0;right:0;bottom:0;background:var(--s1);display:block}
+.hb.partial i{background:var(--s1-soft);border-top:var(--hair) solid var(--s1)}
+.hb.future i,.hb.nodata i{display:none}
+.hb.nodata{background:repeating-linear-gradient(-45deg,var(--st-stale-bg) 0 3px,transparent 3px 6px)}
+.hb .hv{position:absolute;top:2px;right:4px;font:var(--fs-xs)/1 var(--font-num);color:var(--txt-dim)}
+.hb .ax-l{position:absolute;left:4px;bottom:2px;font:var(--fs-xs)/1 var(--font-num);color:var(--txt-far)}
 .htrace{width:100%;height:98px;display:block;margin-top:var(--sp-2)}
 
 /* window meters — one surface, internal rules */
@@ -114,6 +130,10 @@ tbody th a:hover{text-decoration:underline}
 .r-on{background:var(--select)}
 .rt{color:var(--txt)}
 .xh{stroke:var(--txt-far);stroke-width:1;stroke-dasharray:2 3}
+.hr{stroke:var(--grid);stroke-width:1}
+.now{stroke:var(--txt-far);stroke-width:1;stroke-dasharray:2 3}
+.proj{fill:none;stroke-linecap:round}
+.cross{fill:var(--st-critical)}
 .sel{fill:var(--select);stroke:var(--focus);stroke-width:1}
 #chart{cursor:crosshair;user-select:none}
 .readout-box{position:absolute;pointer-events:none;background:var(--chrome);border:var(--hair) solid var(--hairline);

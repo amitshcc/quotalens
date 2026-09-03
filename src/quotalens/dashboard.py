@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from itertools import pairwise
 from typing import Any
 
@@ -18,6 +18,7 @@ from quotalens.burn import BurnResult, burn_rate, split_at_resets
 from quotalens.config import Settings
 from quotalens.parse import SpendReading, humanize
 from quotalens.poller import PollerStatus
+from quotalens.runway import HourBar, Runway, compute_runway, hour_strip, median_peak
 from quotalens.sessions import SessionWindow, coverage_pct, idle_spans, window_from_row
 from quotalens.state import (
     CRITICAL,
@@ -159,12 +160,16 @@ class WindowView:
 class BurnView:
     rate_text: str  # "4.82" or em dash
     unit: str
-    why: str
+    why: str  # the verdict sentence (plus the median comparison)
     withheld: bool
     elevated: bool
     trace: str  # SVG path data, may be empty
     trace_ticks: list[tuple[float, str]] = field(default_factory=list)  # (x, label)
     alert_y: float | None = None
+    detail: str = ""  # quiet second line: span, lookback, threshold
+    runway: Runway | None = None
+    hours: list[HourBar] = field(default_factory=list)
+    hours_max: float = 20.0  # scale for the hour bars
 
 
 @dataclass
@@ -194,6 +199,12 @@ class ChartView:
     session_x: list[float] = field(default_factory=list)  # session window starts
     idle: list[tuple[float, float]] = field(default_factory=list)  # no window running
     idle_minutes: int = 0
+    now_x: float = 0.0  # where "now" falls; beyond it the chart is the future
+    future: bool = False
+    hour_x: list[float] = field(default_factory=list)  # hourly separators in the current window
+    projection: str = ""  # SVG path from now to the reset at the current rate
+    projection_critical: bool = False
+    cross: tuple[float, float, str] | None = None  # the 100% crossing, if before the reset
 
 
 @dataclass
@@ -292,12 +303,18 @@ def build_dashboard(
     order = _window_order(status, latest)
     slots = assign_slots(order)
     oldest = store.oldest_ts()
-    rng = resolve_range(view, oldest, now)
+    sessions_all = [window_from_row(r) for r in store.sessions(limit=500, order="recent")]
+    current = next((w for w in sessions_all if w.is_current), None)
+    session = (current.started_at, current.ends_at) if current else None
+    rng = resolve_range(view, oldest, now, session)
     # Fetch a little before the range so the reset split and the burn lookback have context.
     fetch_from = min(rng.start, now - max(lookback_s * 4, HERO_HOURS * 3600))
+    if current:
+        fetch_from = min(fetch_from, current.started_at)
     all_rows = _series_by_window(store, fetch_from)
     range_rows = {
-        w: [r for r in rows if rng.start <= r.ts <= rng.end] for w, rows in all_rows.items()
+        w: [r for r in rows if rng.start <= r.ts <= min(rng.end, now)]
+        for w, rows in all_rows.items()
     }
 
     burns = {w: burn_rate(w, all_rows.get(w, []), lookback_s, now) for w in order}
@@ -321,6 +338,7 @@ def build_dashboard(
         )
         for row in sorted(latest, key=lambda r: slots[r.window])
     ]
+    baseline = median_peak([w.peak_pct for w in sessions_all if not w.is_current])
     burn = _burn_view(
         rate_burn,
         next((r for r in latest if r.window == RATE_WINDOW), None),
@@ -330,12 +348,14 @@ def build_dashboard(
         burn_elevated,
         burn_alert,
         now,
+        session,
+        baseline,
     )
     gap_threshold = STALE_AFTER_INTERVALS * settings.poll_interval_s
     labels = {r.window: r.label for r in latest}
     chart = _chart_view(range_rows, slots, labels, rng, view, gap_threshold, now, withheld)
-    sessions_all = [window_from_row(r) for r in store.sessions(limit=500, order="recent")]
     _mark_sessions(chart, sessions_all, rng, now)
+    _mark_runway(chart, burn.runway, session, rng, now, withheld)
     sort = view.sort_key or "recent"
     history = _history_view(
         [window_from_row(r) for r in store.sessions(limit=HISTORY_ROWS, order=sort)],
@@ -447,7 +467,7 @@ def _change_over_range(rows: list[QuotaRow], rng: ResolvedRange) -> str:
     if len(segments) > 1:
         return f"{len(segments) - 1} reset{'s' if len(segments) > 2 else ''} in range"
     delta = rows[-1].pct - rows[0].pct
-    return f"{delta:+.0f} pts over {rng.label}"
+    return f"{delta:+.0f} pts in range"
 
 
 def _window_view(
@@ -501,50 +521,54 @@ def _burn_view(
     elevated: bool,
     alert: float,
     now: int,
+    session: tuple[int, int] | None = None,
+    baseline: float | None = None,
 ) -> BurnView:
     trace, ticks, alert_y = _hero_trace(rows, lookback_s, alert, now)
     lookback_label = duration(lookback_s)
-    if withheld or burn is None or current is None:
-        why = (
-            "Rate unknown while the collector is not reporting."
-            if withheld
-            else "No 5-hour readings yet."
-        )
+    if withheld:
+        why = "Rate unknown while the collector is not reporting."
         return BurnView("—", "pts/hr", why, True, False, trace, ticks, alert_y)
-    rate = burn.rate_pct_per_hour
+    if burn is None or current is None:
+        return BurnView(
+            "—", "pts/hr", "No 5-hour readings yet.", True, False, trace, ticks, alert_y
+        )
     need_s = min_burn_span(lookback_s)
-    if rate is None or burn.span_s < need_s:
-        have = duration(burn.span_s) if burn.span_s else "0m"
-        why = (
-            f"Collecting: {have} of samples since the last reset. The {lookback_label} rate "
-            f"needs at least {need_s // 60} minutes."
-        )
-        return BurnView("—", "pts/hr", why, True, False, trace, ticks, alert_y)
-    text = f"{rate:.2f}" if abs(rate) < 100 else f"{rate:.0f}"
+    rate = burn.rate_pct_per_hour
+    displayable = rate is not None and burn.span_s >= need_s
     reset_dt = parse_iso(current.resets_at)
-    over = f"Over the last {duration(burn.span_s)} (lookback {lookback_label})."
-    if rate > 0.05:
-        hours_left = (100 - current.pct) / rate
-        eta = local(now) + timedelta(hours=hours_left)
-        if reset_dt is not None and eta >= reset_dt:
-            at_reset = current.pct + rate * max(0.0, (reset_dt - local(now)).total_seconds() / 3600)
-            why = (
-                f"{over} At this rate the 5-hour window reaches about "
-                f"{fmt_pct(min(at_reset, 100))}% by its reset at {when(reset_dt, now)}."
-            )
-        else:
-            why = (
-                f"{over} At this rate the 5-hour window is exhausted at {when(eta, now)}, "
-                f"in {duration(hours_left * 3600)}"
-                + (f", before it resets at {when(reset_dt, now)}." if reset_dt else ".")
-            )
-    elif rate < -0.05:
-        why = f"{over} Falling; the window is draining faster than use."
-    else:
-        why = f"{over} Flat. Nothing is consuming the 5-hour window."
+    reset_ts = session[1] if session else (int(reset_dt.timestamp()) if reset_dt else None)
+    runway = compute_runway(
+        current.pct, rate if displayable else None, burn.span_s, reset_ts, now, baseline
+    )
+    why = runway.verdict + (f" {runway.comparison}" if runway.comparison else "")
+    hours = hour_strip(rows, session[0], now) if session else []
+    hours_max = max([b.consumed or 0.0 for b in hours] + [20.0])
+    if not displayable:
+        detail = f"The {lookback_label} rate needs at least {need_s // 60} minutes of samples."
+        return BurnView(
+            "—", "pts/hr", why, True, False, trace, ticks, alert_y, detail, runway, hours, hours_max
+        )
+    text = f"{rate:.2f}" if abs(rate) < 100 else f"{rate:.0f}"
+    detail = f"Over the last {duration(burn.span_s)}, lookback {lookback_label}."
+    if runway.sustainable is not None:
+        detail += f" Sustainable {runway.sustainable:.1f} pts/hr to the reset."
     if elevated:
-        why += f" Above the {alert:.0f} pts/hr alert threshold."
-    return BurnView(text, "pts/hr", why, False, elevated, trace, ticks, alert_y)
+        detail += f" Above the {alert:.0f} pts/hr alert threshold."
+    return BurnView(
+        text,
+        "pts/hr",
+        why,
+        False,
+        elevated,
+        trace,
+        ticks,
+        alert_y,
+        detail,
+        runway,
+        hours,
+        hours_max,
+    )
 
 
 def min_burn_span(lookback_s: int) -> int:
@@ -676,7 +700,7 @@ def _chart_view(
     series.sort(key=lambda s: -s.slot)  # draw the hero trace last, on top
 
     timestamps = sorted({r.ts for rows in visible.values() for r in rows})
-    gaps = find_gaps(timestamps, start, end, gap_threshold_s)
+    gaps = find_gaps(timestamps, start, min(end, now), gap_threshold_s)  # the future is not a gap
     gap_minutes = sum(b - a for a, b in gaps) // 60
     gap_x = [(x_of(a), x_of(b)) for a, b in gaps]
 
@@ -709,6 +733,52 @@ def _chart_view(
     )
 
 
+def _mark_runway(
+    chart: ChartView,
+    runway: Runway | None,
+    session: tuple[int, int] | None,
+    rng: ResolvedRange,
+    now: int,
+    withheld: bool,
+) -> None:
+    """The future: hourly separators in the current window and the projection to the reset."""
+    start, end = rng.start, rng.end
+    span = max(1, end - start)
+    plot_w = CHART_W - CHART_L - CHART_R
+    plot_h = CHART_H - CHART_T - CHART_B
+
+    def x_of(ts: float) -> float:
+        return CHART_L + (ts - start) / span * plot_w
+
+    def y_of(pct: float) -> float:
+        return CHART_T + plot_h - (pct / chart.y_max) * plot_h
+
+    chart.now_x = x_of(min(now, end))
+    chart.future = end > now
+    if session:
+        chart.hour_x = [
+            x_of(session[0] + k * 3600) for k in range(1, 5) if start < session[0] + k * 3600 < end
+        ]
+    if withheld or runway is None or runway.rate is None or runway.reset_ts is None:
+        return
+    if runway.reset_ts <= now or runway.pct is None or runway.finish_pct is None:
+        return
+    target_ts = runway.exhaust_ts if runway.exhaust_ts else runway.reset_ts
+    target_pct = 100.0 if runway.exhaust_ts else runway.finish_pct
+    if target_ts <= now or target_ts > end + 1:
+        return
+    chart.projection = (
+        f"M{x_of(now):.1f} {y_of(runway.pct):.1f} L{x_of(target_ts):.1f} {y_of(target_pct):.1f}"
+    )
+    chart.projection_critical = runway.exhaust_ts is not None
+    if runway.exhaust_ts:
+        chart.cross = (
+            x_of(runway.exhaust_ts),
+            y_of(100.0),
+            f"exhausted {clock(runway.exhaust_ts)}",
+        )
+
+
 def _mark_sessions(
     chart: ChartView, windows: list[SessionWindow], rng: ResolvedRange, now: int
 ) -> None:
@@ -736,7 +806,7 @@ def _mark_sessions(
 def _window_text(w: SessionWindow, now: int) -> str:
     start, end = local(w.started_at), local(w.ends_at)
     day = "" if start.date() == local(now).date() else start.strftime("%-d %b ")
-    return f"{day}{start.strftime('%H:%M')}–{end.strftime('%H:%M')}"  # noqa: RUF001 en dash
+    return f"{day}{start.strftime('%H:%M')}–{end.strftime('%H:%M')}"
 
 
 def _delta_text(w: SessionWindow, key: str) -> str:
@@ -883,6 +953,22 @@ def as_json(dash: Dashboard) -> dict[str, Any]:
             for w in dash.windows
         ],
         "burn": {"text": dash.burn.rate_text, "withheld": dash.burn.withheld, "why": dash.burn.why},
+        "runway": None
+        if dash.burn.runway is None
+        else {
+            "reset_ts": dash.burn.runway.reset_ts,
+            "remaining_s": dash.burn.runway.remaining_s,
+            "headroom_pct": dash.burn.runway.headroom_pct,
+            "exhaust_ts": dash.burn.runway.exhaust_ts,
+            "finish_pct": dash.burn.runway.finish_pct,
+            "sustainable": dash.burn.runway.sustainable,
+            "verdict": dash.burn.runway.verdict,
+            "comparison": dash.burn.runway.comparison,
+            "hours": [
+                {"start_ts": b.start_ts, "consumed": b.consumed, "state": b.state}
+                for b in dash.burn.hours
+            ],
+        },
         "spend": None
         if dash.spend is None
         else {

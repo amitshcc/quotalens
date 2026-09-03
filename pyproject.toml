@@ -47,7 +47,7 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "N", "SIM", "RUF"]
-ignore = ["RUF012"]
+ignore = ["RUF012", "RUF001"]  # RUF001: UI strings use en dashes and the multiplication sign on purpose
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
