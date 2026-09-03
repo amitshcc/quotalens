@@ -243,6 +243,29 @@ def _rows_by_window(store: Store, since: int) -> dict[str, list[QuotaRow]]:
     return rows_by_window
 
 
+def window_sample_ts(store: Store, ends_at: int) -> list[int]:
+    """Timestamps of the samples that produced the window expiring at ``ends_at``.
+
+    A contaminated window cannot be removed by deleting a time range. Two
+    collectors writing to one database interleave their samples second by second,
+    which is exactly how contamination arises, so a range takes real rows with it.
+    The expiry is what separates one collector's window from another's, and it is
+    the same key :func:`_group_rate_rows` uses to build the window in the first
+    place.
+    """
+    found: list[int] = []
+    for row in store.quota_series(0):
+        if row.window != RATE_WINDOW:
+            continue
+        ends = _epoch(row.resets_at)
+        if ends is None or abs(ends - ends_at) > RESET_TOLERANCE_S:
+            continue
+        if row.ts > ends + RESET_TOLERANCE_S:
+            continue  # taken after expiry: idle, and not part of this window
+        found.append(row.ts)
+    return sorted(found)
+
+
 def rebuild(store: Store, now: int) -> int:
     """Recompute the whole table from every stored sample. Returns the row count.
 

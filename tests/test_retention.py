@@ -149,3 +149,60 @@ def test_a_failing_prune_never_costs_a_reading(settings, store, secrets) -> None
     assert asyncio.run(poller.poll_once()) == settings.poll_interval_s
     assert poller.status.state == "ok" and store.counts()["quota"] == 3
     assert "prune_failed" in [e.kind for e in store.recent_events()]
+
+
+# -- forgetting a contaminated window, through the CLI ---------------------------
+
+
+def test_forget_writes_to_the_database_the_db_flag_names(tmp_path, capsys, monkeypatch) -> None:
+    """A destructive command that ignores --db deletes from the wrong file."""
+    from quotalens import cli
+    from quotalens.parse import QuotaReading
+    from quotalens.secrets import MemorySecretStore
+
+    real = tmp_path / "real.db"
+    monkeypatch.setenv("QUOTALENS_DB", str(real))
+    target = tmp_path / "target.db"
+    store = Store(target)
+    end = 1_800_000_000
+    for i in range(4):
+        store.record_quota(
+            end - 600 + i * 30,
+            [QuotaReading("five_hour", "5-hour", 10.0 + i, iso_utc(end))],
+        )
+    from quotalens.sessions import rebuild
+
+    rebuild(store, end - 60)
+    started = int(store.sessions(limit=1, order="recent")[0]["started_at"])
+    store.close()
+
+    rc = cli.main(["forget", "--db", str(target)], secrets=MemorySecretStore(None))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert str(target) in out and str(real) not in out
+    assert str(started) in out and "barely observed" in out
+
+    rc = cli.main(["forget", str(started), "--db", str(target)], secrets=MemorySecretStore(None))
+    assert rc == 0
+    after = Store(target)
+    try:
+        assert after.counts()["quota"] == 0 and after.counts()["session_window"] == 0
+    finally:
+        after.close()
+    assert not real.exists(), "the real database was never opened"
+
+
+def test_forget_rejects_an_id_that_is_not_a_window(tmp_path, capsys, monkeypatch) -> None:
+    from quotalens import cli
+    from quotalens.secrets import MemorySecretStore
+
+    monkeypatch.setenv("QUOTALENS_DB", str(tmp_path / "d.db"))
+    rc = cli.main(["forget", "12345"], secrets=MemorySecretStore(None))
+    assert rc == 1
+    assert "no such session window: 12345" in capsys.readouterr().err
+
+
+def iso_utc(ts: int) -> str:
+    from datetime import UTC, datetime
+
+    return datetime.fromtimestamp(ts, UTC).isoformat()

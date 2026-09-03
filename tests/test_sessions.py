@@ -381,3 +381,70 @@ def test_the_watchdog_stays_quiet_for_everything_consistent() -> None:
     assert reset_model_violation(None, 40.0, iso(base), 41.0) is None
     assert reset_model_violation(iso(base), None, iso(base + 3600), 41.0) is None
     assert reset_model_violation("nonsense", 40.0, iso(base + 3600), 41.0) is None
+
+
+# -- forgetting a window another collector wrote ---------------------------------
+
+
+def _two_collectors(store, now: int) -> tuple[int, int]:
+    """One real window, plus a second collector's short one interleaved second by second.
+
+    This is the shape the shipped bug produced: a scratch instance pointed at the
+    real database, writing its own five_hour expiry into the same minutes.
+    """
+    real_end = now + 3600
+    for i in range(60):
+        ts = now - (60 - i) * 60
+        store.record_quota(
+            ts,
+            [
+                QuotaReading("five_hour", "5-hour", 10 + i * 0.5, iso(real_end)),
+                QuotaReading("seven_day", "7-day", 40.0, "wk"),
+            ],
+        )
+    other_end = now + 1800  # a different expiry: a different window
+    for i in range(4):
+        store.record_quota(
+            now - 300 + i * 30 + 2,  # +2s: between the real samples, not on top of them
+            [QuotaReading("five_hour", "5-hour", 90.0 + i, iso(other_end))],
+        )
+    return real_end, other_end
+
+
+def test_window_sample_ts_selects_by_expiry_not_by_time_range(settings, store) -> None:
+    now = T0
+    real_end, other_end = _two_collectors(store, now)
+    from quotalens.sessions import window_sample_ts
+
+    stray = window_sample_ts(store, other_end)
+    real = window_sample_ts(store, real_end)
+
+    assert len(stray) == 4
+    assert len(real) == 60
+    assert not set(stray) & set(real)
+    # The stray samples sit inside the real window's span, so a range would take both.
+    assert min(real) < min(stray) < max(stray) < max(real)
+
+
+def test_forget_removes_one_window_and_leaves_the_interleaved_real_rows(settings, store) -> None:
+    now = T0
+    real_end, other_end = _two_collectors(store, now)
+    from quotalens.sessions import window_sample_ts
+
+    assert rebuild(store, now) == 2  # the real window and the stray one
+
+    stray = window_sample_ts(store, other_end)
+    result = store.forget_samples(stray, dry_run=True)
+    assert result.samples == 0  # record_quota writes no raw sample rows
+    assert result.quota_rows == 4
+    assert store.forget_samples(stray).quota_rows == 4
+
+    assert rebuild(store, now) == 1
+    remaining = store.sessions(limit=10, order="recent")
+    assert [int(w["started_at"]) for w in remaining] == [real_end - SESSION_LENGTH_S]
+    assert int(remaining[0]["samples"]) == 60  # every real row survived
+
+
+def test_forget_of_nothing_is_not_an_error(settings, store) -> None:
+    result = store.forget_samples([])
+    assert result.total == 0

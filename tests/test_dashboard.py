@@ -61,7 +61,7 @@ def test_severity_mapping_prefers_api_then_thresholds() -> None:
 
 
 def test_stale_watchdog_fires_on_last_success_not_last_error() -> None:
-    now = 10_000
+    now = 1_800_000_000  # a real epoch: Windows cannot render one near 1970
     fresh = _status(state="ok", last_success_ts=now - 179)
     assert collector_state(fresh, 60, now).kind == "ok"
     # An error two minutes ago does not make recent data stale.
@@ -75,7 +75,7 @@ def test_stale_watchdog_fires_on_last_success_not_last_error() -> None:
 
 
 def test_every_condition_has_distinct_wording() -> None:
-    now = 10_000
+    now = 1_800_000_000  # a real epoch: Windows cannot render one near 1970
     old = now - 1000
 
     def msg(**kw) -> str:
