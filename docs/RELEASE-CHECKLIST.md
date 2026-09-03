@@ -8,21 +8,26 @@ CI does not have. The second kind is the point of this file.
 `.github/workflows/ci.yml` on `ubuntu-latest`, `macos-latest` and
 `windows-latest`, Python 3.11 and 3.13:
 
-- [ ] the wheel builds, installs, and carries the stylesheet, the scripts and
+All seven jobs green as of `e979b1b` (run 33795392935, 4 Sep 2026):
+
+- [x] the wheel builds, installs, and carries the stylesheet, the scripts and
       the favicon (`quotalens.web`)
-- [ ] `ruff check` and `ruff format --check` clean
-- [ ] the unit tests pass against the **installed wheel**, not the source tree
-- [ ] `qa/smoke.py`: a real server polls a fake claude.ai, writes rows and reads
+- [x] `ruff check` and `ruff format --check` clean
+- [x] the unit tests pass against the **installed wheel**, not the source tree
+- [x] `qa/smoke.py`: a real server polls a fake claude.ai, writes rows and reads
       them back through the API, `/metrics` and an export
-- [ ] `qa/smoke.py`: `start`, a refused double start, `logs`, `status`, `stop`
+- [x] `qa/smoke.py`: `start`, a refused double start, `logs`, `status`, `stop`
       and a stale pid file
+- [x] on Windows, `service install` registers the logon task, `service status`
+      reads it back, and `service uninstall` removes it
 
 **What CI does not prove: the OS keyring.** Storing a cookie in CI would need
 either an environment-variable credential path (a security regression) or an
 extra package. The smoke test substitutes the in-memory secret store the unit
 tests already use, so everything except the keyring backend is exercised on all
-three platforms. Until someone runs `quotalens auth` on Windows, the README says
-Windows is untested.
+three platforms. So the README claims the wheel installs and the app runs on all
+three, and says in the same breath that the credential path is not covered
+anywhere. Item 3 below is what would close that on Windows.
 
 ## What a person has to do
 
@@ -64,14 +69,18 @@ service command at all.
 
 ### 3. Windows, once
 
-Nobody has run this on Windows outside CI.
+CI now builds, installs, tests and smoke-runs on Windows, and registers and
+removes the logon task there. What no machine has done is read a real cookie out
+of the Windows Credential Manager.
 
 - [ ] `pipx install quotalens`, `quotalens auth` — does the Windows Credential
       Manager backend work through `keyring`?
 - [ ] `quotalens start`, `status`, `logs`, `stop`
 - [ ] The dashboard renders in a browser
-- [ ] If all of that holds, change the README's platform section from "Windows
-      untested" to supported. Not before.
+- [ ] `quotalens service install`, log out and back in, and confirm after an
+      hour that it collected without a credential prompt
+- [ ] If all of that holds, drop the credential caveat from the README's
+      platform section. Not before.
 
 ## Before tagging
 
