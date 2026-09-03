@@ -140,3 +140,15 @@ def test_json_export_of_an_empty_table_is_still_valid(settings, store, secrets) 
     assert body["rows"] == []
     assert json.dumps(body)  # round-trips
     assert text.strip() == "ts,kind,detail"
+
+
+def test_event_details_are_masked_unless_raw_is_asked_for(settings, store, secrets) -> None:
+    """An export is a file people attach to issues; probe already masks these."""
+    org = "deadbeef-1234-4567-89ab-cdef01234567"
+    store.record_event("overage_unavailable", f"HTTP 404 on /api/organizations/{org}/x", ts=1)
+    with _client(settings, store, secrets) as tc:
+        masked = tc.get("/api/export.json?table=events").json()
+        plain = tc.get("/api/export.json?table=events&raw=1")
+    assert org not in json.dumps(masked) and "<uuid>" in masked["rows"][0]["detail"]
+    assert "warning" not in masked
+    assert org in plain.text and "redact" in plain.headers["x-quotalens-warning"]

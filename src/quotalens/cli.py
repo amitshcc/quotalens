@@ -8,7 +8,6 @@ import getpass
 import json
 import logging
 import os
-import re
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -26,7 +25,7 @@ from quotalens.config import (
     settings_from_env,
     validate,
 )
-from quotalens.export import RAW_WARNING
+from quotalens.export import RAW_WARNING, mask_uuids
 from quotalens.parse import ParseError, parse_spend, parse_usage
 from quotalens.secrets import (
     KeyringSecretStore,
@@ -42,14 +41,6 @@ PROBE_WARNING = (
     "!! WARNING: the output below is your account's usage data. UUID-shaped values\n"
     "!! are masked unless --no-redact is given. " + RAW_WARNING + "\n"
 )
-
-_UUID_RE = re.compile(
-    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
-)
-
-
-def mask_uuids(text: str) -> str:
-    return _UUID_RE.sub("<uuid>", text)
 
 
 def _setup_logging(verbose: bool, log_file: Path | None = None) -> None:
