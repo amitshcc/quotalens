@@ -1,4 +1,18 @@
-# quotawatch — project plan
+# QuotaLens — project plan
+
+> **This document is the original plan, kept for its architecture and schema.
+> The current scope is [`docs/MVP-SCOPE.md`](docs/MVP-SCOPE.md), which is the
+> output of a pre-release review and wins wherever the two disagree.** The
+> milestones below described the road to a release; the scope document moved the
+> line. In particular **M3 (per-project attribution from Claude Code's JSONL) is
+> deferred indefinitely**, because Claude Code's own `/usage` now attributes
+> recent usage to skills, subagents, plugins, MCP servers and scheduled tasks —
+> better than local logs could, with no cookie — and because quota is pooled
+> across surfaces, so local token counts can only ever show correlation with a
+> number they cannot see. The evidence is in
+> [`docs/FEATURE-REVIEW.md`](docs/FEATURE-REVIEW.md) §2.1 and §2.5.
+>
+> Retention and multi-account moved the other way, from post-1.0 into v0.1.0.
 
 ## Decisions made up front
 
