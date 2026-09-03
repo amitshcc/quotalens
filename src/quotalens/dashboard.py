@@ -146,7 +146,7 @@ def clock(ts: int) -> str:
 
 
 def day_month(dt: datetime) -> str:
-    """"4 Sep", without a leading zero on any platform.
+    """ "4 Sep", without a leading zero on any platform.
 
     ``%-d`` is a glibc and BSD extension and ``%#d`` is the Windows spelling;
     neither is portable, and asking for the wrong one raises ValueError rather
@@ -472,9 +472,7 @@ def build_dashboard(
         "Poll interval": f"{settings.poll_interval_s}s",
         "Samples stored": f"{counts['quota']:,}",
         "Database": f"{size / 1_048_576:.1f} MB" if size is not None else "in memory",
-        "Oldest sample": (
-            f"{day_month(local(oldest))} {clock(oldest)}" if oldest else "none"
-        ),
+        "Oldest sample": (f"{day_month(local(oldest))} {clock(oldest)}" if oldest else "none"),
         "Last poll": clock(status.last_attempt_ts) if status.last_attempt_ts else "never",
         "Next poll": clock(status.next_poll_ts) if status.next_poll_ts else "pending",
     }

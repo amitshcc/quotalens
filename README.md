@@ -36,6 +36,7 @@ curl 'http://127.0.0.1:8787/metrics'                       # Prometheus, hand ro
 curl 'http://127.0.0.1:8787/api/export.csv?table=quota'    # or export.json
 curl 'http://127.0.0.1:8787/api/events'                    # threshold crossings, anomalies
 quotalens prune --dry-run                                  # what retention would remove
+quotalens forget                                           # session windows, and their ids
 ```
 
 Set `QUOTALENS_WEBHOOK_URL` to get one POST when the burn rate crosses
@@ -208,6 +209,34 @@ applies whether or not you ever run the command.
 (Those figures are measured, not arithmetic. Before v0.1.0 the overage endpoint
 was fetched every poll too, which added a second 1.0 KB payload a minute; it is
 now fetched once at startup.)
+
+### Rows another collector wrote
+
+If a second instance ever pointed at this database, its samples are in here too,
+and the history shows session windows that were never yours. Version 0.1.0 fixed
+the cause: a scratch `--data-dir` now implies a scratch database. It cannot fix
+databases that already have the rows.
+
+```sh
+quotalens forget                       # every session window, with its id
+quotalens forget <id> [<id>] --dry-run # what removing them would take
+quotalens forget <id> [<id>]           # take it, then rebuild the history
+```
+
+The listing marks windows where only minutes of a five-hour span were ever
+observed, which is what a collector that ran for two minutes leaves behind. It
+is a reason to look, not a verdict: a window where you genuinely only had the
+collector up for two minutes looks identical, and only you know which it was.
+
+Removal is by **expiry, not by time range**. Two collectors writing to one
+database interleave their samples second by second, so deleting a time range
+takes real readings with it. The five-hour expiry is what separates one
+collector's window from another's, and it is the same key the history is built
+from. Stop the server first, so the startup rebuild runs on what is left:
+
+```sh
+quotalens stop && quotalens forget <id> && quotalens start
+```
 
 ## What this doesn't do
 

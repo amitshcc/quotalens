@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import sys
+import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import IO, Any
@@ -253,6 +254,98 @@ def cmd_prune(args: argparse.Namespace, settings: Settings, secrets: SecretStore
     return 0
 
 
+# Commands that take --db. Missing one means the flag is silently ignored, which
+# for a command that deletes rows would mean deleting them from the wrong file.
+DB_FLAG_COMMANDS = ("serve", "prune", "forget")
+
+
+def _local_stamp(ts: int) -> str:
+    return time.strftime("%Y-%m-%d %H:%M", time.localtime(ts))
+
+
+def _session_rows(store: Any) -> list[dict[str, Any]]:
+    return sorted(store.sessions(limit=1000, order="recent"), key=lambda w: w["started_at"])
+
+
+BARELY_OBSERVED_RATIO = 0.05  # 15 minutes of a five-hour window
+
+
+def _forget_listing(rows: list[dict[str, Any]]) -> list[str]:
+    """Every window with the id `forget` takes, and a note on the ones worth a look.
+
+    A window another collector left behind shows up as minutes of observation
+    inside a five-hour window, because that collector ran for minutes. That is a
+    reason to look, not proof: a window where you genuinely only had the collector
+    up for two minutes looks the same, and only you know which it was.
+    """
+    out = []
+    for w in rows:
+        started, samples = int(w["started_at"]), int(w["samples"])
+        span = int(w["last_ts"]) - int(w["first_ts"])
+        length = max(1, int(w["ends_at"]) - started)
+        marker = "  <- barely observed" if span < length * BARELY_OBSERVED_RATIO else ""
+        out.append(
+            f"  {started}  {_local_stamp(started)}  {samples:>4} samples  "
+            f"peak {float(w['peak_pct']):5.1f}%  {_span(span):>7} observed{marker}"
+        )
+    return out
+
+
+def _span(seconds: int) -> str:
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    return f"{seconds // 3600}h {seconds % 3600 // 60:02d}m"
+
+
+def cmd_forget(args: argparse.Namespace, settings: Settings, secrets: SecretStore) -> int:
+    """Remove session windows that came from somewhere other than this account."""
+    from quotalens.sessions import rebuild, window_sample_ts
+    from quotalens.store import Store
+
+    store = Store(settings.db_path)
+    try:
+        rows = _session_rows(store)
+        print(f"{settings.db_path}")
+        if not args.session:
+            print(f"{len(rows)} session windows. Pass one or more ids to remove them:")
+            for line in _forget_listing(rows):
+                print(line)
+            print("\n  quotalens forget <id> [<id>...] --dry-run")
+            return 0
+
+        known = {int(w["started_at"]): w for w in rows}
+        missing = [s for s in args.session if s not in known]
+        if missing:
+            print(f"no such session window: {', '.join(str(m) for m in missing)}", file=sys.stderr)
+            print("run `quotalens forget` with no arguments to list them", file=sys.stderr)
+            return 1
+
+        stamps: list[int] = []
+        for started in args.session:
+            window = known[started]
+            found = window_sample_ts(store, int(window["ends_at"]))
+            print(
+                f"{started} ({_local_stamp(started)}): {len(found)} samples, "
+                f"peak {float(window['peak_pct']):.1f}%"
+            )
+            stamps.extend(found)
+
+        result = store.forget_samples(stamps, dry_run=args.dry_run)
+        verb = "would remove" if args.dry_run else "removed"
+        print(
+            f"{verb} {result.samples} samples, {result.quota_rows} quota rows, "
+            f"{result.overage_rows} overage rows"
+        )
+        if args.dry_run:
+            print("nothing was changed. Re-run without --dry-run to apply.")
+            return 0
+        count = rebuild(store, int(time.time()))
+        print(f"session windows rebuilt from what is left: {count}")
+    finally:
+        store.close()
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace, settings: Settings, secrets: SecretStore) -> int:
     import uvicorn
 
@@ -483,6 +576,13 @@ def build_parser() -> argparse.ArgumentParser:
     prune.add_argument("--keep", type=int, help=f"samples to keep (default {DEFAULT_SAMPLE_KEEP})")
     prune.add_argument("--dry-run", action="store_true", help="report without deleting")
     prune.add_argument("--db", type=Path, help="SQLite file path")
+    forget = sub.add_parser(
+        "forget",
+        help="remove session windows written by another collector (list them with no arguments)",
+    )
+    forget.add_argument("session", type=int, nargs="*", help="session window ids, as listed")
+    forget.add_argument("--dry-run", action="store_true", help="report without deleting")
+    forget.add_argument("--db", type=Path, help="SQLite file path")
     logs = sub.add_parser("logs", help="show the log")
     logs.add_argument("-f", "--follow", action="store_true")
     logs.add_argument("-n", "--lines", type=int, default=50)
@@ -513,7 +613,7 @@ def main(argv: Sequence[str] | None = None, secrets: SecretStore | None = None) 
             settings = settings.with_overrides(
                 db_path=args.data_dir / default_db_path(settings.profile).name
             )
-        if args.command in ("serve", "prune"):
+        if args.command in DB_FLAG_COMMANDS:
             settings = settings.with_overrides(db_path=getattr(args, "db", None))
         if args.command == "serve":
             settings = validate(
@@ -540,6 +640,7 @@ def main(argv: Sequence[str] | None = None, secrets: SecretStore | None = None) 
         "status": cmd_status,
         "logs": cmd_logs,
         "service": cmd_service,
+        "forget": cmd_forget,
     }
     try:
         return handlers[args.command](args, settings, secrets)

@@ -257,7 +257,12 @@ def test_install_linux_writes_unit_and_mentions_linger(tmp_path) -> None:
     text = unit.read_text()
     assert "Restart=on-failure" in text
     # The unit outlives this shell, so the data dir it collects into is explicit.
-    assert f"ExecStart=/usr/bin/python3 -m quotalens --data-dir {data} serve" in text
+    # Asserted piecewise: a path with a colon or a space gets quoted, and on a
+    # Windows host tmp_path has both.
+    exec_line = next(ln for ln in text.splitlines() if ln.startswith("ExecStart="))
+    assert exec_line.startswith("ExecStart=/usr/bin/python3 -m quotalens ")
+    assert "--data-dir" in exec_line and str(data) in exec_line
+    assert " serve " in exec_line
     assert ["systemctl", "--user", "enable", "--now", "quotalens.service"] in calls
     assert any("loginctl enable-linger" in n for n in actions.notes)
     uninstall_service("linux", home, data, runner=run)

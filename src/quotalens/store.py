@@ -192,6 +192,19 @@ def key_signature(payload: Any) -> str:
 
 
 @dataclass(frozen=True)
+class ForgetResult:
+    """What removing a set of sample timestamps did, or would do."""
+
+    samples: int
+    quota_rows: int
+    overage_rows: int
+
+    @property
+    def total(self) -> int:
+        return self.samples + self.quota_rows + self.overage_rows
+
+
+@dataclass(frozen=True)
 class PruneResult:
     candidates: int  # rows the retention rule selects; what a dry run would remove
     deleted: int  # rows actually removed: zero on a dry run
@@ -431,6 +444,30 @@ class Store:
             if candidate.exists():
                 total += candidate.stat().st_size
         return total
+
+    def forget_samples(self, timestamps: Sequence[int], dry_run: bool = False) -> ForgetResult:
+        """Remove every row written by the samples at these timestamps.
+
+        For rows that came from somewhere other than this account: a second
+        collector, a fake upstream, a test run pointed at the real database. The
+        derived ``session_window`` table is not touched here; the caller rebuilds
+        it, because deriving it is the one place that logic should live.
+        """
+        stamps = sorted(set(int(t) for t in timestamps))
+        if not stamps:
+            return ForgetResult(0, 0, 0)
+        marks = ",".join("?" * len(stamps))
+        with self._tx() as cur:
+            counts = {
+                table: cur.execute(
+                    f"SELECT COUNT(*) AS n FROM {table} WHERE ts IN ({marks})", stamps
+                ).fetchone()["n"]
+                for table in ("sample", "quota", "overage")
+            }
+            if not dry_run:
+                for table in ("sample", "quota", "overage"):
+                    cur.execute(f"DELETE FROM {table} WHERE ts IN ({marks})", stamps)
+        return ForgetResult(counts["sample"], counts["quota"], counts["overage"])
 
     def prune_samples(self, keep_last: int, dry_run: bool = False) -> PruneResult:
         """Keep the newest ``keep_last`` samples plus the first of every key signature.

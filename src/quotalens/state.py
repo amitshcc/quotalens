@@ -59,7 +59,12 @@ class Epistemic:
 def _clock(ts: int | None) -> str:
     if ts is None:
         return "never"
-    return datetime.fromtimestamp(ts).astimezone().strftime("%H:%M")
+    try:
+        return datetime.fromtimestamp(ts).astimezone().strftime("%H:%M")
+    except (OSError, OverflowError, ValueError):
+        # Windows raises on timestamps near or before the epoch. A health message
+        # that cannot render one clock should still deliver the rest of itself.
+        return "an unknown time"
 
 
 def collector_state(status: PollerStatus, interval_s: int, now: int) -> Epistemic:
