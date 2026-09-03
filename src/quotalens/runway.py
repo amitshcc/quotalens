@@ -148,7 +148,7 @@ def hour_strip(rows: list[QuotaRow], window_start: int, now: int) -> list[HourBa
     for i in range(HOURS_PER_WINDOW):
         start = window_start + i * 3600
         end = start + 3600
-        if start > now:
+        if start >= now:  # an hour that has not begun, including one starting this second
             bars.append(HourBar(i, start, end, None, "future"))
             continue
         inside = [r for r in ordered if start <= r.ts <= min(end, now)]

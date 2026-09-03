@@ -80,6 +80,8 @@ def test_hour_strip_partial_window() -> None:
     assert bars[0].consumed == 10.0 and bars[1].consumed == 10.0
     assert bars[2].consumed == 5.0  # half an hour into the third
     assert bars[3].consumed is None and bars[4].consumed is None
+    on_the_hour = hour_strip(rows, NOW - 3 * 3600, NOW)  # the fourth hour starts this second
+    assert [b.state for b in on_the_hour][2:] == ["done", "future", "future"]
 
 
 def test_hour_strip_spanning_a_reset_and_no_data() -> None:

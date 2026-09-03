@@ -122,3 +122,53 @@ def test_sparkline_per_history_row(settings, store, secrets) -> None:
     assert points.startswith("2.0,17.0") and points.endswith("58.0,1.0")
     assert len(points.split()) <= 42
     assert sparkline(rows[:1], 1000) == ""
+
+
+def test_future_region_is_blank_not_a_gap_and_projection_reaches_reset(
+    settings, store, secrets
+) -> None:
+    now = int(time.time())
+    cur_end = now + 2 * 3600 + 1800  # two and a half hours in
+    for i in range(0, 150, 2):  # climbing 20 pts/hr: survives to the reset
+        ts = cur_end - SESSION_LENGTH_S + i * 60
+        store.record_quota(ts, [QuotaReading("five_hour", "5-hour", i / 3, iso(cur_end))])
+    rebuild(store, now)
+    app = create_app(settings, store, secrets)
+    app.state.qw.poller.status.state = "ok"
+    app.state.qw.poller.status.last_success_ts = now
+    with TestClient(app) as tc:
+        html = tc.get("/").text
+        body = tc.get("/api/dashboard").json()
+    assert body["range"]["key"] == "session" and body["range"]["end"] == cur_end
+    assert body["gap_minutes"] == 0  # two hours of future are not "not collected"
+    assert 'fill="url(#gap)"' not in html
+    assert 'class="now"' in html and ">now</text>" in html
+    assert 'x2="1150.0"' not in html.split('class="gz"')[0]  # gridlines stop at now
+    assert html.count('class="hr"') == 4  # hourly separators inside the window
+    assert 'class="proj" stroke="var(--s1)"' in html  # 60 pts/hr on 40% left over 2h: survives
+    assert body["runway"]["exhaust_ts"] is None
+    assert 'id="reset-in"' in html and "resets in" in html
+    assert body["runway"]["sustainable"] == round(body["runway"]["headroom_pct"] / 2.5, 2)
+    assert (
+        'class="hb done"' in html and 'class="hb partial"' in html and 'class="hb future"' in html
+    )
+
+
+def test_projection_turns_critical_when_exhausted_before_reset(settings, store, secrets) -> None:
+    now = int(time.time())
+    cur_end = now + 3 * 3600
+    for i in range(0, 120, 2):  # two hours in at 40 pts/hr: 80% now, 100% in 30 minutes
+        ts = cur_end - SESSION_LENGTH_S + i * 60
+        store.record_quota(ts, [QuotaReading("five_hour", "5-hour", i * 2 / 3, iso(cur_end))])
+    rebuild(store, now)
+    app = create_app(settings, store, secrets)
+    app.state.qw.poller.status.state = "ok"
+    app.state.qw.poller.status.last_success_ts = now
+    with TestClient(app) as tc:
+        html = tc.get("/").text
+        body = tc.get("/api/dashboard").json()
+    assert body["runway"]["exhaust_ts"] is not None
+    assert body["burn"]["why"].startswith("Exhausted at ")
+    assert 'class="proj" stroke="var(--st-critical)"' in html
+    assert 'class="ax cross"' in html and "exhausted " in html
+    assert 'dd class="crit-v"' in html
