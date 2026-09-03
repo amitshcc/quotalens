@@ -1,5 +1,7 @@
 # QuotaLens
 
+[![CI](https://github.com/amitshcc/quotalens/actions/workflows/ci.yml/badge.svg)](https://github.com/amitshcc/quotalens/actions/workflows/ci.yml)
+
 Claude tells you what is consuming your quota right now, and then forgets.
 QuotaLens remembers.
 
@@ -9,9 +11,9 @@ leads with the question you open it to ask: **will this session window run out
 before it resets, and when.** When something surprises you, the record is still
 there — which five-hour session, how steep the climb, the minute it started.
 
-macOS and Linux; **Windows untested** (it should work, and there is no CI
-evidence yet — see [Platforms](#platforms)). Binds loopback, keeps your cookie
-in the OS keychain, phones nothing home. MIT.
+macOS, Linux and Windows, each tested on every push — with one caveat about
+Windows worth reading before you rely on it, in [Platforms](#platforms). Binds
+loopback, keeps your cookie in the OS keychain, phones nothing home. MIT.
 
 Status: **v0.1.0, pre-release.**
 
@@ -289,9 +291,22 @@ than something to bolt on. It is the first issue on the list.
 
 ## Platforms
 
-macOS and Linux are what this has actually run on. All three platforms are in
-the CI matrix on Python 3.11 and 3.13, and until that matrix is green on the
-Windows runner, treat Windows as untested rather than supported.
+macOS, Linux and Windows are in the CI matrix on Python 3.11 and 3.13, six jobs,
+green on every push. Each one builds the wheel, installs *that* rather than the
+source tree, runs the whole suite against it, and then runs a smoke test that
+starts a real server against a fake upstream, polls it, reads the series back
+through the API, and drives `start`, `status`, `logs` and `stop` on the pid
+file. The Windows job additionally registers the logon task for real, queries
+it, and removes it, so the task definition is checked by Task Scheduler rather
+than by me.
+
+**Be precise about what that proves.** It proves the wheel installs and the app
+runs on all three. It does **not** prove the credential path on any of them: the
+smoke test injects an in-memory store, so Windows Credential Manager and the
+macOS Keychain are exercised by hand, not by CI. Two known Windows limits:
+`stop` terminates the server rather than signalling it, because Windows has no
+SIGTERM; and log rotation can fail to roll the 2 MB file while the server holds
+it open, in which case it keeps appending rather than losing lines.
 
 ## The Terms, stated plainly
 
