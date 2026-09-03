@@ -157,6 +157,8 @@ class Poller:
         self._clock = clock
         self._client: ClaudeClient | None = None
         self._overage_failed_once = False
+        self._overage_raw: Any = None  # the last payload from the dedicated endpoint
+        self._overage_fetched = False
         self._last_ignored: frozenset[str] = frozenset()
         self._last_prune_ts: float | None = None
         self.schedule = Schedule(interval_s=float(settings.poll_interval_s))
@@ -364,28 +366,42 @@ class Poller:
             )
         self._last_ignored = ignored
 
+    @staticmethod
+    def _usage_carries_spend(usage_raw: Any) -> bool:
+        """True when the usage payload already answers the spend question by itself."""
+        if not isinstance(usage_raw, dict):
+            return False
+        return isinstance(usage_raw.get("spend"), dict) or isinstance(
+            usage_raw.get("extra_usage"), dict
+        )
+
     async def _poll_overage(self, client: ClaudeClient, now: int, usage_raw: Any) -> None:
         """Spend figures. The dedicated endpoint is optional; its failure never fails the poll.
 
         The usage payload's ``spend`` block is the primary source (it carries an
         explicit exponent); the endpoint only fills in ``disabled_until`` or serves
-        as a last resort.
+        as a last resort. So it is fetched once at startup and thereafter only when
+        the usage payload carries neither block. That halves our request rate against
+        endpoints documented to rate limit hard, at the cost of ``disabled_until``
+        being as fresh as the last startup rather than the last minute.
         """
-        overage_raw: Any = None
-        try:
-            overage_raw = await client.fetch_overage()
-        except AuthError:
-            raise  # a 401 here means the same thing as on usage
-        except ClientError as exc:
-            if not self._overage_failed_once:
-                self._store.record_event(
-                    "overage_unavailable", self._redactor.redact(str(exc)), ts=now
-                )
-                self._overage_failed_once = True
-        else:
-            self._store.record_sample(now, "overage", overage_raw)
-            self._overage_failed_once = False  # a later failure is news again
-        spend = parse_spend(usage_raw, overage_raw)
+        if not self._overage_fetched or not self._usage_carries_spend(usage_raw):
+            self._overage_fetched = True
+            try:
+                fetched = await client.fetch_overage()
+            except AuthError:
+                raise  # a 401 here means the same thing as on usage
+            except ClientError as exc:
+                if not self._overage_failed_once:
+                    self._store.record_event(
+                        "overage_unavailable", self._redactor.redact(str(exc)), ts=now
+                    )
+                    self._overage_failed_once = True
+            else:
+                self._overage_raw = fetched
+                self._store.record_sample(now, "overage", fetched)
+                self._overage_failed_once = False  # a later failure is news again
+        spend = parse_spend(usage_raw, self._overage_raw)
         self.status.spend = spend
         if spend is None:
             self.status.overage_available = False
