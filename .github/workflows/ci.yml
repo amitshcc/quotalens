@@ -85,6 +85,7 @@ jobs:
           schtasks /Query /TN QuotaLens 2>$null
           if ($LASTEXITCODE -eq 0) { throw "the task survived uninstall" }
           Write-Host "registered, queried and removed"
+          exit 0  # the query above is meant to fail; without this the step inherits its code
 
       - name: Package contents
         shell: bash

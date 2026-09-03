@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" aria-label="QuotaLens">
+<title>QuotaLens — Bar mark</title><style>svg{color:var(--txt,#D5DBDB)}@media (prefers-color-scheme:light){svg:not([data-theme=dark]){color:var(--txt,#171A1B)}}</style>
+<rect x="2" y="8" width="20" height="8" rx="4" fill="none" stroke="currentColor" stroke-width="2"/><rect x="4.7" y="10.4" width="9.8" height="3.2" rx="1.6" fill="currentColor"/>
+</svg>
