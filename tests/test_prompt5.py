@@ -143,7 +143,11 @@ def test_future_region_is_blank_not_a_gap_and_projection_reaches_reset(
     assert body["gap_minutes"] == 0  # two hours of future are not "not collected"
     assert 'fill="url(#gap)"' not in html
     assert 'class="now"' in html and ">now</text>" in html
-    assert 'x2="1150.0"' not in html.split('class="gz"')[0]  # gridlines stop at now
+    # The rules run to the right edge of the plot, not to "now". Stopping them at
+    # "now" read as a cropped chart, in a region the pointer still reads values
+    # from; the `now` line asserted above is what marks the present.
+    zero_rule = next(ln for ln in html.split("<line") if 'class="gz"' in ln)
+    assert 'x2="1150.0"' in zero_rule
     assert html.count('class="hr"') == 4  # hourly separators inside the window
     assert 'class="proj" stroke="var(--s1)"' in html  # 60 pts/hr on 40% left over 2h: survives
     assert body["runway"]["exhaust_ts"] is None

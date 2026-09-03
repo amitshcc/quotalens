@@ -260,7 +260,10 @@ def test_page_renders_offline_with_no_external_resources(settings, store, secret
     assert "font-variant-numeric" in css
     assert not re.search(r'(src|href)="https?://', html)
     assert "<img" not in html
-    assert '<symbol id="i-alert"' in html and html.count("<symbol") == 5
+    assert '<symbol id="i-alert"' in html and html.count("<symbol") == 6
+    # The theme button ships both faces and CSS picks one: the server cannot know
+    # which theme the browser settled on.
+    assert '<use href="#i-sun"' in html and '<use href="#i-moon"' in html
 
 
 def test_never_polled_renders_em_dash_not_zero(settings, store, secrets) -> None:

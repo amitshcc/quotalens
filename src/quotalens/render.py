@@ -7,6 +7,7 @@ from html import escape as e
 from quotalens import __version__
 from quotalens.alerts import ALERT_KIND
 from quotalens.dashboard import (
+    PLOT_RIGHT,
     Control,
     Dashboard,
     SeriesView,
@@ -27,8 +28,11 @@ ICONS = (
     '<path d="M8.2 8h6.2M12.1 8v2.6"/></symbol>'
     '<symbol id="i-rate" viewBox="0 0 16 16"><path d="M3 11.4 6.7 7l2.7 2.3L13.4 4"/>'
     '<path d="M9.9 4h3.5v3.4"/></symbol>'
-    '<symbol id="i-theme" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/>'
-    '<path d="M8 2a6 6 0 0 1 0 12Z" fill="currentColor" stroke="none"/></symbol>'
+    '<symbol id="i-sun" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3.1"/>'
+    '<path d="M8 1.4V3M8 13v1.6M1.4 8H3M13 8h1.6'
+    'M11.5 4.5 12.7 3.3M4.5 4.5 3.3 3.3M11.5 11.5l1.2 1.2M4.5 11.5l-1.2 1.2"/></symbol>'
+    '<symbol id="i-moon" viewBox="0 0 16 16">'
+    '<path d="M9.9 2.7a5.6 5.6 0 1 0 3.4 8.9A5.6 5.6 0 0 1 9.9 2.7Z"/></symbol>'
     '<pattern id="gap" width="6" height="6" patternUnits="userSpaceOnUse" '
     'patternTransform="rotate(-45)"><line x1="0" y1="0" x2="0" y2="6" '
     'stroke="var(--st-stale)" stroke-width="1.2" opacity=".45"/></pattern>'
@@ -102,8 +106,11 @@ def _header(dash: Dashboard) -> str:
         f"{lost}{_alert_chip(dash)}{chip(dash.chip, dash.chip_text)}"
         f'<span class="lbl m" id="polled" data-ts="{ts}" data-fallback="{e(fallback)}">'
         f"{e(dash.polled_text)}</span>"
-        '<button id="t" type="button" aria-label="Switch theme"><svg class="ic" aria-hidden="true">'
-        '<use href="#i-theme"/></svg>theme</button>'
+        # Both icons ship; CSS shows the one for the theme a click would give you,
+        # because the theme is settled in the browser and the server cannot know it.
+        '<button id="t" type="button" aria-label="Switch theme">'
+        '<svg class="ic ic-sun" aria-hidden="true"><use href="#i-sun"/></svg>'
+        '<svg class="ic ic-moon" aria-hidden="true"><use href="#i-moon"/></svg>theme</button>'
         "</div></header>"
     )
 
@@ -360,7 +367,11 @@ def _chart(dash: Dashboard) -> str:
         gaps += "".join(
             f'<line x1="{x:.1f}" y1="14" x2="{x:.1f}" y2="196" class="sess"/>' for x in c.session_x
         )
-        grid_end = c.now_x if c.future else 1150.0
+        # The horizontal rules run the full width of the plot, including the part of
+        # the window that has not happened yet. Stopping them at "now" left the
+        # chart looking cropped, in an area that is still live to the pointer; the
+        # `now` line is what marks the present.
+        grid_end = PLOT_RIGHT
         grid = "".join(
             f'<line x1="44" y1="{y:.1f}" x2="{grid_end:.1f}" y2="{y:.1f}" class="{_gclass(t)}"/>'
             f'<text x="36" y="{y + 4:.1f}" class="ax" text-anchor="end">{e(t)}</text>'
