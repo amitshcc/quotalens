@@ -137,6 +137,12 @@ def derive_sessions(rows_by_window: dict[str, list[QuotaRow]], now: int) -> list
     return windows
 
 
+def coverage_pct(samples: int, elapsed_s: int, interval_s: int) -> float:
+    """Share of the samples the poll interval would have produced, capped at 100."""
+    expected = max(1.0, elapsed_s / max(1, interval_s))
+    return min(100.0, round(samples / expected * 100, 1))
+
+
 def idle_spans(windows: list[SessionWindow], now: int) -> list[tuple[int, int]]:
     """Spans where no session window was running, between and after known windows."""
     spans: list[tuple[int, int]] = []
