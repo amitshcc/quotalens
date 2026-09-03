@@ -154,6 +154,35 @@ it only in the OS keychain (via `keyring`), never in a file, the database, or a
 log line, and redacts it from error output. The server binds loopback only.
 Treat `quotalens probe` output as sensitive and redact it before sharing.
 
+## Storage, and what gets pruned
+
+Two things accumulate, and only one of them is pruned.
+
+**The readings are the product and are never pruned.** One row per window per
+poll, about 100 bytes each. With three windows at a minute a poll that is
+roughly 0.4 MB a day, 150 MB a year. If you want less, poll less often.
+
+**The raw payloads are debugging material and are bounded.** Every response is
+stored verbatim so that when the endpoint shape changes there is a record of it.
+Measured on a real database: a usage payload averages **2.0 KB**, so at a minute
+a poll the `sample` table grows **2.8 MB a day, about 1 GB a year** if nothing
+prunes it. Something does:
+
+```sh
+quotalens prune --dry-run    # what it would remove
+quotalens prune --keep 50000 # or set QUOTALENS_SAMPLE_KEEP
+```
+
+The default keeps the newest **20,000 samples, about 14 days, roughly 39 MB**,
+plus the first sample of every distinct payload shape, forever — that set is the
+endpoint-drift record and pruning it would defeat the point of keeping payloads
+at all. The poller prunes on the same rule every six hours, so the default
+applies whether or not you ever run the command.
+
+(Those figures are measured, not arithmetic. Before v0.1.0 the overage endpoint
+was fetched every poll too, which added a second 1.0 KB payload a minute; it is
+now fetched once at startup.)
+
 ## What this doesn't do
 
 Each of these is a decision, and in most cases something else already does it

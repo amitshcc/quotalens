@@ -1,6 +1,6 @@
 [project]
 name = "quotalens"
-version = "0.1.0.dev0"
+version = "0.1.0"
 description = "QuotaLens: local, self-hosted monitor for Claude subscription quota, with burn rate and history."
 readme = "README.md"
 license = "MIT"
