@@ -239,3 +239,37 @@ def test_a_cleared_alert_stops_standing(settings, store, secrets) -> None:
         html = tc.get("/").text
     assert view["alert_standing"] is False
     assert "burn alert" not in html
+
+
+def test_the_reset_model_watchdog_fires_through_the_poller(settings, store, secrets) -> None:
+    """The session model is an inference; a violation reaches the event log and the page."""
+    from quotalens.sessions import MODEL_VIOLATION_KIND
+
+    now = int(time.time())
+    first = iso(now + 3 * 3600)
+    extended = iso(now + 3 * 3600 + 2 * 3600)  # moved forward 2h, not 5h
+    handlers = iter([_continuing(first, 40.0), _continuing(extended, 41.0)])
+    poller = Poller(
+        settings,
+        store,
+        secrets,
+        Redactor(),
+        client_factory=lambda c: make_client(next(handlers), c),
+        clock=lambda: float(now),
+    )
+    asyncio.run(poller.poll_once())
+    assert store.recent_events(limit=5, kind=MODEL_VIOLATION_KIND) == []
+    poller._client = None  # force a fresh client, so the second payload is served
+    asyncio.run(poller.poll_once())
+    violations = store.recent_events(limit=5, kind=MODEL_VIOLATION_KIND)
+    assert len(violations) == 1 and "moved forward 2h 00m" in violations[0].detail
+    assert poller.status.model_violation is not None
+
+    app = create_app(settings, store, secrets)
+    app.state.qw.poller.status.state = "ok"
+    app.state.qw.poller.status.last_success_ts = now
+    with TestClient(app) as tc:
+        html = tc.get("/").text
+        view = tc.get("/api/dashboard").json()
+    assert "does not hold here" in html  # said plainly on the page
+    assert any("moved forward" in d for d in view["diagnostics"])

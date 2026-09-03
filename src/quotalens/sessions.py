@@ -1,10 +1,19 @@
-"""Derive 5-hour session windows from stored samples.
+"""Derive session windows from stored samples.
 
-The 5-hour window is not a clock schedule: it starts at the first message and
-expires five hours later. The API's ``five_hour.resets_at`` *is* the expiry of
-the running window, so a jump forward means a new session started, and the start
-is that value minus five hours. Samples taken after the expiry that still carry
-the old value belong to no window: the account was idle.
+**This module rests on an inference, not on documentation.** Anthropic publishes
+that the session limit "resets every five hours" and never publishes how the
+window is anchored. We infer that it starts at the first message and expires five
+hours later, so ``five_hour.resets_at`` is the expiry of the running window, a
+jump forward means a new session started, and the start is that value minus five
+hours. Samples taken after the expiry that still carry the old value belong to no
+window: the account was idle.
+
+The evidence for the inference is in this repository rather than in the docs: the
+server recomputes ``resets_at`` on every call and only the sub-second part moves,
+which is what a fixed anchor looks like and not what a sliding one would.
+
+Because it is an inference, :func:`reset_model_violation` checks it on every poll
+and says so loudly when it fails. See ``docs/FEATURE-REVIEW.md`` §2.3.
 
 Derivation is pure and idempotent. :func:`rebuild` replaces the table from all
 stored samples and runs at startup; :func:`rebuild_recent` runs on every poll and
@@ -28,6 +37,7 @@ RATE_WINDOW = "five_hour"
 RESET_TOLERANCE_S = 60  # resets_at jitters by a second or so between polls
 GAP_THRESHOLD_S = 180  # a longer silence than this counts as not observed
 INCREMENTAL_MARGIN_S = 600  # read a little before the previous window, for clock skew
+MODEL_VIOLATION_KIND = "reset_model_violation"
 
 
 @dataclass(frozen=True)
@@ -167,6 +177,44 @@ def derive_sessions(rows_by_window: dict[str, list[QuotaRow]], now: int) -> list
             )
         )
     return windows
+
+
+def reset_model_violation(
+    prev_reset: str | None, prev_pct: float | None, cur_reset: str | None, cur_pct: float | None
+) -> str | None:
+    """Falsify the fixed-window inference, or return None.
+
+    Under a fixed window a new expiry is at least five hours after the old one: a
+    window can only begin at or after the previous one ended. So an expiry that
+    moves *forward by less than five hours* while the percentage does not drop is
+    a window extended in place, which the model says cannot happen. Anthropic's
+    own tracker has reports of exactly that shape.
+
+    A forward move under five hours *with* a large drop is also inconsistent, but
+    it is far more likely a genuine new window plus a server-side correction, so
+    it is left alone rather than reported as a broken model.
+    """
+    if not prev_reset or not cur_reset or prev_pct is None or cur_pct is None:
+        return None
+    before, after = _epoch(prev_reset), _epoch(cur_reset)
+    if before is None or after is None:
+        return None
+    moved = after - before
+    if not (RESET_TOLERANCE_S < moved < SESSION_LENGTH_S - RESET_TOLERANCE_S):
+        return None
+    if cur_pct < prev_pct:
+        return None  # the percentage dropped: a new window, however oddly timed
+    hours, minutes = divmod(moved // 60, 60)
+    return (
+        f"The session reset time moved forward {hours}h {minutes:02d}m without the "
+        f"percentage dropping ({fmt_pct(prev_pct)}% then {fmt_pct(cur_pct)}%). QuotaLens "
+        "infers a session's start from its reset time minus five hours; that inference "
+        "does not hold here, so session history may be wrong."
+    )
+
+
+def fmt_pct(value: float) -> str:
+    return f"{value:.0f}" if abs(value - round(value)) < 0.05 else f"{value:.1f}"
 
 
 def coverage_pct(covered_s: int, elapsed_s: int) -> float:

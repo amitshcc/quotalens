@@ -21,6 +21,7 @@ from quotalens.parse import SpendReading, humanize
 from quotalens.poller import PollerStatus
 from quotalens.runway import HourBar, Runway, compute_runway, hour_strip, median_peak
 from quotalens.sessions import (
+    MODEL_VIOLATION_KIND,
     SESSION_LENGTH_S,
     SessionWindow,
     coverage_pct,
@@ -416,6 +417,9 @@ def build_dashboard(
         chip, chip_text = "", ""
 
     diagnostics = []
+    violation = store.recent_events(limit=1, kind=MODEL_VIOLATION_KIND)
+    if violation:
+        diagnostics.append(violation[0].detail)
     if status.ignored_blocks:
         keys = ", ".join(b["key"] for b in status.ignored_blocks)
         diagnostics.append(f"Payload blocks without a reset time, not charted: {keys}.")
