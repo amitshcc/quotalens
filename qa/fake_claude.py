@@ -8,7 +8,7 @@ Switch what it returns while running:
     curl -X POST http://127.0.0.1:8799/mode/401        # cookie rejected -> auth failed
     curl -X POST http://127.0.0.1:8799/mode/drift      # unrecognisable JSON -> unverified
     curl -X POST http://127.0.0.1:8799/mode/429        # rate limited (Retry-After 30)
-    curl -X POST http://127.0.0.1:8799/mode/down       # connection closed -> unreachable, then stale
+    curl -X POST http://127.0.0.1:8799/mode/down       # connection closed -> stale later
     curl -X POST http://127.0.0.1:8799/mode/reset      # the session window rolls over now
 
 Standard library only. Binds loopback only. Not part of the installed package.
@@ -111,15 +111,16 @@ class Handler(BaseHTTPRequestHandler):
             self.connection.close()
             return
         if mode == "401":
-            body = {"type": "error", "error": {"type": "authentication_error", "message": "Invalid session"}}
-            self._send(401, json.dumps(body).encode())
+            error = {"type": "authentication_error", "message": "Invalid session"}
+            self._send(401, json.dumps({"type": "error", "error": error}).encode())
             return
         if mode == "429":
             self._send(429, b'{"error":"rate limited"}', extra={"Retry-After": "30"})
             return
         if self.path.endswith("/usage"):
             if mode == "drift":
-                self._send(200, json.dumps({"message": "usage moved", "status": "maintenance"}).encode())
+                drifted = {"message": "usage moved", "status": "maintenance"}
+                self._send(200, json.dumps(drifted).encode())
                 return
             self._send(200, json.dumps(_usage()).encode())
             return

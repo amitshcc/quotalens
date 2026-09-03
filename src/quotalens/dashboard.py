@@ -165,18 +165,19 @@ class WindowView:
 
 @dataclass
 class BurnView:
-    rate_text: str  # "4.82" or em dash
+    """The hero: how much session is left and how long until it resets."""
+
+    rate_text: str  # "4.82" or em dash; a supporting figure inside the verdict line
     unit: str
     why: str  # the verdict sentence (plus the median comparison)
     withheld: bool
     elevated: bool
-    trace: str  # SVG path data, may be empty
-    trace_ticks: list[tuple[float, str]] = field(default_factory=list)  # (x, label)
-    alert_y: float | None = None
-    detail: str = ""  # quiet second line: span, lookback, threshold
+    detail: str = ""  # quiet second line: rate, span, lookback, threshold
     runway: Runway | None = None
     hours: list[HourBar] = field(default_factory=list)
     hours_max: float = 20.0  # scale for the hour bars
+    headroom_text: str = "—"  # the lit figure
+    critical: bool = False  # exhausted before the reset at the current rate
 
 
 @dataclass
@@ -540,15 +541,12 @@ def _burn_view(
     session: tuple[int, int] | None = None,
     baseline: float | None = None,
 ) -> BurnView:
-    trace, ticks, alert_y = _hero_trace(rows, lookback_s, alert, now)
     lookback_label = duration(lookback_s)
     if withheld:
-        why = "Rate unknown while the collector is not reporting."
-        return BurnView("—", "pts/hr", why, True, False, trace, ticks, alert_y)
+        why = "Session state unknown while the collector is not reporting."
+        return BurnView("—", "pts/hr", why, True, False)
     if burn is None or current is None:
-        return BurnView(
-            "—", "pts/hr", "No 5-hour readings yet.", True, False, trace, ticks, alert_y
-        )
+        return BurnView("—", "pts/hr", "No session readings yet.", True, False)
     need_s = min_burn_span(lookback_s)
     rate = burn.rate_pct_per_hour
     displayable = rate is not None and burn.span_s >= need_s
@@ -560,15 +558,14 @@ def _burn_view(
     why = runway.verdict + (f" {runway.comparison}" if runway.comparison else "")
     hours = hour_strip(rows, session[0], now) if session else []
     hours_max = max([b.consumed or 0.0 for b in hours] + [20.0])
+    headroom = fmt_pct(runway.headroom_pct) if runway.headroom_pct is not None else "—"
     if not displayable:
         detail = f"The {lookback_label} rate needs at least {need_s // 60} minutes of samples."
         return BurnView(
-            "—", "pts/hr", why, True, False, trace, ticks, alert_y, detail, runway, hours, hours_max
+            "—", "pts/hr", why, False, False, detail, runway, hours, hours_max, headroom, False
         )
     text = f"{rate:.2f}" if abs(rate) < 100 else f"{rate:.0f}"
-    detail = f"Over the last {duration(burn.span_s)}, lookback {lookback_label}."
-    if runway.sustainable is not None:
-        detail += f" Sustainable {runway.sustainable:.1f} pts/hr to the reset."
+    detail = f"{text} pts/hr over the last {duration(burn.span_s)}, lookback {lookback_label}."
     if elevated:
         detail += f" Above the {alert:.0f} pts/hr alert threshold."
     return BurnView(
@@ -577,59 +574,18 @@ def _burn_view(
         why,
         False,
         elevated,
-        trace,
-        ticks,
-        alert_y,
         detail,
         runway,
         hours,
         hours_max,
+        headroom,
+        runway.critical,
     )
 
 
 def min_burn_span(lookback_s: int) -> int:
     """5 minutes, or 80% of a shorter lookback: at 60s polling a 5m lookback spans 4m."""
     return int(min(DISPLAY_MIN_BURN_SPAN_S, lookback_s * 0.8))
-
-
-def _hero_trace(
-    rows: list[QuotaRow], lookback_s: int, alert: float, now: int
-) -> tuple[str, list[tuple[float, str]], float | None]:
-    """Rolling burn rate over the last five hours, computed by calling burn_rate at each sample."""
-    start = now - HERO_HOURS * 3600
-    recent = [r for r in rows if r.ts >= start - lookback_s]
-    points: list[tuple[int, float | None]] = []
-    for i, row in enumerate(recent):
-        if row.ts < start:
-            continue
-        result = burn_rate(row.window, recent[: i + 1], lookback_s, row.ts)
-        rate = result.rate_pct_per_hour if result.span_s >= min_burn_span(lookback_s) else None
-        points.append((row.ts, rate))
-    ticks = [(HERO_W * (h / HERO_HOURS), clock(start + h * 3600)) for h in range(0, HERO_HOURS + 1)]
-    rates = [p[1] for p in points if p[1] is not None]
-    if not rates:
-        return "", ticks, None
-    y_max = max(max(rates), alert, 1.0) * 1.1
-    y_min = min(min(rates), 0.0)
-    span = (y_max - y_min) or 1.0
-    top, bottom = 8.0, HERO_H - 4.0
-
-    def y_of(v: float) -> float:
-        return bottom - (v - y_min) / span * (bottom - top)
-
-    segments: list[str] = []
-    current: list[str] = []
-    for ts, rate in points:
-        if rate is None:
-            if current:
-                segments.append(" ".join(current))
-                current = []
-            continue
-        x = (ts - start) / (HERO_HOURS * 3600) * HERO_W
-        current.append(f"{'M' if not current else 'L'}{x:.1f} {y_of(rate):.1f}")
-    if current:
-        segments.append(" ".join(current))
-    return " ".join(segments), ticks, y_of(alert)
 
 
 def find_gaps(
@@ -988,7 +944,13 @@ def as_json(dash: Dashboard) -> dict[str, Any]:
             }
             for w in dash.windows
         ],
-        "burn": {"text": dash.burn.rate_text, "withheld": dash.burn.withheld, "why": dash.burn.why},
+        "burn": {
+            "text": dash.burn.rate_text,
+            "withheld": dash.burn.withheld,
+            "why": dash.burn.why,
+            "headroom": dash.burn.headroom_text,
+            "critical": dash.burn.critical,
+        },
         "runway": None
         if dash.burn.runway is None
         else {
