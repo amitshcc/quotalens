@@ -68,13 +68,11 @@ def collector_state(status: PollerStatus, interval_s: int, now: int) -> Epistemi
     error = status.last_error or ""
 
     if status.state == "keyring_error":
+        # The store's message already names the problem and the fix; do not bury it.
         return Epistemic(
             AUTH,
             "keyring",
-            "Could not read the session cookie from the OS keyring: "
-            + (status.last_error or "unknown error")
-            + ". When QuotaLens runs as a background service the keychain may refuse or "
-            "prompt; run `quotalens auth` from a terminal and grant access.",
+            "The session cookie could not be read: " + (status.last_error or "unknown error"),
             last_ok,
         )
     if status.state == "no_cookie":

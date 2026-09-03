@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -286,6 +287,34 @@ def stop(data_dir: Path, timeout_s: float = STOP_TIMEOUT_S, profile: str = "") -
 # -- status ---------------------------------------------------------------------
 
 
+def port_in_use(host: str, port: int) -> bool:
+    """True when something already holds the port. Cheap, and races nobody in practice."""
+    with socket.socket() as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind((host, port))
+        except OSError:
+            return True
+    return False
+
+
+def port_conflict_message(host: str, port: int, profile: str, derived: bool = False) -> str:
+    """Name the port, the profile and the flag that fixes it. Never a traceback."""
+    who = f'the "{profile}" profile' if profile else "QuotaLens"
+    derived = (
+        f" Nothing chose {port}: it is derived from the profile name {profile!r}, so it"
+        " is not obvious what else might want it."
+        if derived and profile
+        else ""
+    )
+    flag = f" --profile {profile}" if profile else ""
+    return (
+        f"{host}:{port} is already in use, so {who} cannot start.{derived}\n"
+        f"Another QuotaLens instance, or something unrelated, is on it. Pick another:\n"
+        f"    quotalens{flag} start --port {port + 1}"
+    )
+
+
 def fetch_json(url: str, timeout_s: float = 3.0) -> Any:
     with urllib.request.urlopen(url, timeout=timeout_s) as resp:
         return json.loads(resp.read())
@@ -295,6 +324,7 @@ def fetch_json(url: str, timeout_s: float = 3.0) -> Any:
 class StatusReport:
     exit_code: int  # 0 healthy, 1 not running, 2 running but stalled or misconfigured
     lines: list[str] = field(default_factory=list)
+    port: int | None = None  # the port this instance is actually on
 
 
 STALLED_KINDS = {"stale", "auth", "unverified"}
@@ -321,9 +351,9 @@ def status(
         health = fetch(f"{base}/api/health")
     except (urllib.error.URLError, OSError, ValueError) as exc:
         if pid is None:
-            return StatusReport(1, ["not running", f"pid file: {pidfile} (absent)"])
+            return StatusReport(1, ["not running", f"pid file: {pidfile} (absent)"], port)
         return StatusReport(
-            1, [f"process alive (pid {pid}) but {base}/api/health did not answer: {exc}"]
+            1, [f"process alive (pid {pid}) but {base}/api/health did not answer: {exc}"], port
         )
     poller = health.get("poller", {})
     collector = health.get("collector", {})
@@ -358,7 +388,7 @@ def status(
         "auth_expired",
         "blocked",
     }
-    return StatusReport(2 if stalled else 0, lines)
+    return StatusReport(2 if stalled else 0, lines, port)
 
 
 def _session_lines(dash: dict[str, Any], now: float) -> list[str]:
