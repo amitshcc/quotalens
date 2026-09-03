@@ -263,6 +263,7 @@ class Dashboard:
     refresh_controls: list[Control]
     lookback_s: int
     history: HistoryView
+    cooldown_s: int = 0  # seconds until another forced poll is allowed
 
 
 # -- builders -------------------------------------------------------------------
@@ -275,6 +276,7 @@ def build_dashboard(
     now: int,
     burn_alert: float,
     view: ViewOptions | None = None,
+    cooldown_s: int = 0,
 ) -> Dashboard:
     view = view or ViewOptions()
     epistemic = collector_state(status, settings.poll_interval_s, now)
@@ -401,6 +403,7 @@ def build_dashboard(
         ],
         lookback_s=lookback_s,
         history=history,
+        cooldown_s=cooldown_s,
     )
 
 

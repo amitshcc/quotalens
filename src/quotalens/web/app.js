@@ -4,6 +4,7 @@
   "use strict";
   var root = document.documentElement;
   var KEY = "quotalens-theme";
+  root.dataset.js = "1"; // progressive enhancement: hides no-script-only controls
   try {
     var saved = localStorage.getItem(KEY);
     if (saved === "light" || saved === "dark") root.dataset.theme = saved;
@@ -92,14 +93,48 @@
     setQuery(q, push);
     return refresh();
   }
+  /* ---- forced poll with a visible cooldown ------------------------------- */
+  var cooldownUntil = 0;
+  function applyCooldown() {
+    var button = document.getElementById("poll");
+    var label = document.getElementById("poll-label");
+    if (!button || !label) return;
+    var left = Math.ceil((cooldownUntil - Date.now()) / 1000);
+    if (left > 0) {
+      button.disabled = true;
+      label.textContent = "poll in " + left + "s";
+    } else {
+      button.disabled = false;
+      label.textContent = "poll now";
+    }
+  }
+  function startCooldown(seconds) {
+    if (seconds > 0) cooldownUntil = Math.max(cooldownUntil, Date.now() + seconds * 1000);
+    applyCooldown();
+  }
   function pollNow(form) {
     var button = form.querySelector("button");
+    if (button && button.disabled) return;
     if (button) button.disabled = true;
     fetch("/api/poll", { method: "POST" })
       .then(function (res) { return res.json(); })
-      .then(function () { return refresh(); })
-      .catch(markLost)
-      .then(function () { if (button) button.disabled = false; });
+      .then(function (data) {
+        startCooldown(data.cooldown_s || data.retry_in_s || 0);
+        return refresh();
+      })
+      .catch(function () { markLost(); applyCooldown(); });
+  }
+  function adoptServerCooldown() {
+    var button = document.getElementById("poll");
+    if (button) startCooldown(Number(button.dataset.cooldown) || 0);
+    applyCooldown();
+  }
+  function submitRange(select) {
+    var data = new FormData(select.form);
+    var params = new URLSearchParams();
+    data.forEach(function (v, k) { if (v && !(k === "range" && v === "auto")) params.set(k, v); });
+    var q = params.toString();
+    navigate(q ? "/?" + q : "/", true);
   }
 
   document.addEventListener("click", function (ev) {
@@ -114,13 +149,21 @@
     if (ev.target && ev.target.id === "poll-form") {
       ev.preventDefault();
       pollNow(ev.target);
+    } else if (ev.target && ev.target.id === "range-form") {
+      ev.preventDefault();
+      submitRange(ev.target.querySelector("select"));
     }
   });
+  document.addEventListener("change", function (ev) {
+    if (ev.target && ev.target.id === "range") submitRange(ev.target);
+  });
+  document.addEventListener("quotalens:rendered", adoptServerCooldown);
   window.addEventListener("popstate", function () { refresh(); });
   window.quotalens = { navigate: navigate, refresh: refresh };
 
   document.addEventListener("DOMContentLoaded", function () {
-    setInterval(tick, 1000);
+    adoptServerCooldown();
+    setInterval(function () { tick(); applyCooldown(); }, 1000);
     schedule();
   });
 })();

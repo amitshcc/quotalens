@@ -98,6 +98,7 @@ def create_app(
             int(time.time()),
             settings.burn_alert_pts_per_hour,
             view,
+            cooldown_s=state.poller.cooldown_remaining(),
         )
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
@@ -118,12 +119,16 @@ def create_app(
     @app.post("/api/poll")
     async def force_poll() -> dict[str, Any]:
         """Poll claude.ai now (rate limited to one forced poll per 10 seconds)."""
+        before = state.poller.status.last_success_ts
         accepted, retry_in = await state.poller.force_poll()
+        after = state.poller.status.last_success_ts
         return {
             "accepted": accepted,
             "retry_in_s": retry_in,
+            "cooldown_s": state.poller.cooldown_remaining(),
             "state": state.poller.status.state,
-            "last_success_ts": state.poller.status.last_success_ts,
+            "last_success_ts": after,
+            "sample_ts": after if accepted and after != before else None,
         }
 
     @app.post("/poll", include_in_schema=False)
