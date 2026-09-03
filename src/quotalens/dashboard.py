@@ -14,6 +14,7 @@ from datetime import datetime
 from itertools import pairwise
 from typing import Any
 
+from quotalens.alerts import ALERT_KIND, CLEARED_KIND
 from quotalens.burn import BurnResult, burn_rate, split_at_resets
 from quotalens.config import Settings
 from quotalens.parse import SpendReading, humanize
@@ -310,6 +311,8 @@ class Dashboard:
     lookback_s: int
     history: HistoryView
     cooldown_s: int = 0  # seconds until another forced poll is allowed
+    events: list[dict[str, Any]] = field(default_factory=list)
+    alert_standing: bool = False  # a burn alert fired and has not cleared
 
 
 # -- builders -------------------------------------------------------------------
@@ -418,6 +421,8 @@ def build_dashboard(
         diagnostics.append(f"Payload blocks without a reset time, not charted: {keys}.")
     notes = _transient_notes(status, now)
 
+    events = [e.as_dict() for e in store.recent_events(limit=6)]
+    alert_standing = _alert_standing(store)
     counts = store.counts()
     size = store.db_size_bytes()
     side = {
@@ -464,7 +469,18 @@ def build_dashboard(
         lookback_s=lookback_s,
         history=history,
         cooldown_s=cooldown_s,
+        events=events,
+        alert_standing=alert_standing,
     )
+
+
+def _alert_standing(store: Store) -> bool:
+    """True when the most recent threshold event was a crossing, not a clearing."""
+    latest = store.recent_events(limit=1, kind=ALERT_KIND)
+    if not latest:
+        return False
+    cleared = store.recent_events(limit=1, kind=CLEARED_KIND)
+    return not cleared or cleared[0].ts < latest[0].ts
 
 
 def _transient_notes(status: PollerStatus, now: int) -> list[str]:
@@ -1001,6 +1017,8 @@ def as_json(dash: Dashboard) -> dict[str, Any]:
         },
         "notes": dash.notes,
         "diagnostics": dash.diagnostics,
+        "events": dash.events,
+        "alert_standing": dash.alert_standing,
         "sessions": [
             {
                 "started_at": r.started_at,

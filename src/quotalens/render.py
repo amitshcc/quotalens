@@ -5,6 +5,7 @@ from __future__ import annotations
 from html import escape as e
 
 from quotalens import __version__
+from quotalens.alerts import ALERT_KIND
 from quotalens.dashboard import (
     Control,
     Dashboard,
@@ -98,7 +99,7 @@ def _header(dash: Dashboard) -> str:
     return (
         '<header><div class="wrap">'
         f'<span class="brand">{MARK}QuotaLens</span><span class="spacer"></span>'
-        f"{lost}{chip(dash.chip, dash.chip_text)}"
+        f"{lost}{_alert_chip(dash)}{chip(dash.chip, dash.chip_text)}"
         f'<span class="lbl m" id="polled" data-ts="{ts}" data-fallback="{e(fallback)}">'
         f"{e(dash.polled_text)}</span>"
         '<button id="t" type="button" aria-label="Switch theme"><svg class="ic" aria-hidden="true">'
@@ -126,6 +127,24 @@ def _main(dash: Dashboard) -> str:
         + _footer(dash)
         + "</main>"
     )
+
+
+def _alert_chip(dash: Dashboard) -> str:
+    return chip("elevated", "burn alert") if dash.alert_standing else ""
+
+
+def _events_block(dash: Dashboard) -> str:
+    """The last few anomalies and threshold crossings, where the diagnostics live."""
+    if not dash.events:
+        return ""
+    lines = []
+    for event in dash.events:
+        css = "ev ev-alert" if event["kind"] == ALERT_KIND else "ev"
+        stamp = e(clock(int(event["ts"])))
+        lines.append(
+            f'<p class="{css}"><span class="m far">{stamp}</span> {e(str(event["detail"]))}</p>'
+        )
+    return '<div class="rule"></div><dl><dt>Recent events</dt><dd></dd></dl>' + "".join(lines)
 
 
 def _health_strip(dash: Dashboard) -> str:
@@ -533,7 +552,7 @@ def _side(dash: Dashboard) -> str:
         diag = '<div class="rule"></div><dl><dt>Diagnostics</dt><dd></dd></dl>' + "".join(
             f'<p class="far">{e(d)}</p>' for d in dash.diagnostics
         )
-    return f'<aside class="side"><dl>{rows}</dl>{spend}{diag}</aside>'
+    return f'<aside class="side"><dl>{rows}</dl>{spend}{diag}{_events_block(dash)}</aside>'
 
 
 def _footer(dash: Dashboard) -> str:
