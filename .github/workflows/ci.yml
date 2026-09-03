@@ -65,6 +65,27 @@ jobs:
       - name: Smoke (server against a fake upstream, then the CLI lifecycle)
         run: python qa/smoke.py
 
+      # Registering a scheduled task is the one thing unit tests cannot prove: the
+      # XML either satisfies Task Scheduler's schema or it does not, and only
+      # Windows can say. Install for real, confirm the task exists, then remove it.
+      # pwsh, not bash: Git Bash rewrites a leading-slash argument into a path, so
+      # `schtasks /Query` would arrive as `schtasks C:/Program Files/Git/Query`.
+      - name: Auto-start at login registers and unregisters (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $data = Join-Path $env:RUNNER_TEMP "svc"
+          python -m quotalens --data-dir $data service install --interval 300
+          if ($LASTEXITCODE -ne 0) { throw "service install failed" }
+          schtasks /Query /TN QuotaLens
+          if ($LASTEXITCODE -ne 0) { throw "install reported success but no task was registered" }
+          python -m quotalens --data-dir $data service status
+          python -m quotalens --data-dir $data service uninstall
+          if ($LASTEXITCODE -ne 0) { throw "service uninstall failed" }
+          schtasks /Query /TN QuotaLens 2>$null
+          if ($LASTEXITCODE -eq 0) { throw "the task survived uninstall" }
+          Write-Host "registered, queried and removed"
+
       - name: Package contents
         shell: bash
         run: |

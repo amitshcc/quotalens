@@ -9,6 +9,7 @@ import threading
 import time
 import urllib.error
 from pathlib import Path
+from xml.etree import ElementTree
 
 import pytest
 
@@ -236,6 +237,7 @@ def test_install_macos_writes_plist_and_bootstraps(tmp_path) -> None:
     assert actions.written == [plist]
     text = plist.read_text()
     assert "<string>/usr/bin/python3</string>" in text and "<string>45</string>" in text
+    assert f"<string>--data-dir</string>\n    <string>{data}</string>" in text
     assert "<key>KeepAlive</key>\n  <true/>" in text and "RunAtLoad" in text
     assert calls[-1][:2] == ["launchctl", "bootstrap"] and calls[-1][-1] == str(plist)
     assert any("Keychain" in n for n in actions.notes)
@@ -253,24 +255,65 @@ def test_install_linux_writes_unit_and_mentions_linger(tmp_path) -> None:
     unit = home / ".config" / "systemd" / "user" / "quotalens.service"
     assert actions.written == [unit]
     text = unit.read_text()
-    assert "Restart=on-failure" in text and "ExecStart=/usr/bin/python3 -m quotalens serve" in text
+    assert "Restart=on-failure" in text
+    # The unit outlives this shell, so the data dir it collects into is explicit.
+    assert f"ExecStart=/usr/bin/python3 -m quotalens --data-dir {data} serve" in text
     assert ["systemctl", "--user", "enable", "--now", "quotalens.service"] in calls
     assert any("loginctl enable-linger" in n for n in actions.notes)
     uninstall_service("linux", home, data, runner=run)
     assert not unit.exists()
 
 
-def test_install_windows_refuses_and_points_at_the_alternative(tmp_path) -> None:
-    """Documentation shaped like code was worse than documentation."""
-    home, data = tmp_path / "home", tmp_path / "data"
+def test_install_windows_registers_a_logon_task(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("USERNAME", "ada")
+    monkeypatch.setenv("USERDOMAIN", "LAPTOP")
+    home, data = tmp_path / "home", tmp_path / "data with space"
     calls, run = recorder()
-    with pytest.raises(ServiceError, match="Task Scheduler"):
-        install_service("win32", home, data, 60, runner=run, python="C:\\py\\python.exe")
-    with pytest.raises(ServiceError):
-        uninstall_service("win32", home, data, runner=run)
-    assert calls == [] and not list(data.glob("*")) if data.exists() else True
+    actions = install_service("win32", home, data, 60, runner=run, python="C:\\py\\python.exe")
+
+    xml_file = data / "quotalens.task.xml"
+    assert actions.written == [xml_file]
+    assert ["schtasks", "/Create", "/TN", "QuotaLens", "/XML", str(xml_file), "/F"] in calls
+    assert ["schtasks", "/Run", "/TN", "QuotaLens"] in calls
+
+    # schtasks rejects a UTF-8 document, so the encoding is part of the contract.
+    raw = xml_file.read_bytes()
+    assert raw[:2] == b"\xff\xfe", "the definition must be UTF-16"
+    text = raw.decode("utf-16")
+    assert "<LogonTrigger>" in text and "<UserId>LAPTOP\\ada</UserId>" in text
+    assert "<Command>C:\\py\\python.exe</Command>" in text
+    assert "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>" in text  # not the 72-hour default
+    assert f'"{data}"' in text, "a path with a space must survive as one argument"
+
+    root = ElementTree.fromstring(text)  # a document schtasks would reject is a broken install
+    ns = "{http://schemas.microsoft.com/windows/2004/02/mit/task}"
+    assert root.findtext(f"{ns}Actions/{ns}Exec/{ns}WorkingDirectory") == str(data)
+
+    assert service_installed("win32", home, data) == xml_file
+    assert "task scheduler: registered" in service_status("win32", home, data, runner=run)[1]
+
+    uninstall_service("win32", home, data, runner=run)
+    assert ["schtasks", "/Delete", "/TN", "QuotaLens", "/F"] in calls
+    assert not xml_file.exists()
     assert service_installed("win32", home, data) is None
-    assert service_status("win32", home, data, runner=run) == ["service: not installed"]
+
+
+def test_windows_install_reports_a_refused_registration(tmp_path) -> None:
+    def failing(cmd):
+        return (1, "ERROR: Cannot create a file when that file already exists.")
+
+    with pytest.raises(ServiceError, match="already exists"):
+        install_service("win32", tmp_path, tmp_path / "d", 60, runner=failing)
+
+
+def test_windows_uninstall_is_safe_to_run_twice(tmp_path) -> None:
+    """Nothing registered, nothing written: uninstall still must not raise."""
+
+    def missing(cmd):
+        return (1, "ERROR: The system cannot find the file specified.")
+
+    actions = uninstall_service("win32", tmp_path, tmp_path / "d", runner=missing)
+    assert actions.removed == []
 
 
 def test_install_failure_surfaces_command_output(tmp_path) -> None:

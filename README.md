@@ -82,22 +82,30 @@ it, the error names the port, the profile and the `--port` flag that settles it.
 
 ## Running it as a service
 
+One command makes it start on its own every time you log in, and one undoes it:
+
 ```sh
-quotalens service install   # macOS LaunchAgent (RunAtLoad, KeepAlive) or systemd user unit
-quotalens service status
-quotalens service uninstall
+quotalens service install     # start at login, from now on
+quotalens service status      # is it set up, and is it running?
+quotalens service uninstall   # stop doing that, and remove what was written
 ```
 
-Every file written and command run is printed so it can be undone by hand. On
-Linux the unit only runs while you are logged in unless you enable lingering;
-the installer prints the exact `loginctl enable-linger` command. `serve` stays
-the foreground command the service manager execs.
+What that installs depends on the OS:
 
-**Windows has no user-level service manager this installs into**, so
-`service install` says so and stops. Run `quotalens start` at logon instead:
-either a Task Scheduler task with the trigger "At log on" and the action
-`quotalens start`, or a shortcut to it in `shell:startup`. `start`, `stop`,
-`status` and `logs` work the same way on Windows.
+| Platform | What is registered | Restarts if it crashes |
+|---|---|---|
+| macOS | LaunchAgent, `RunAtLoad` and `KeepAlive` | yes, launchd |
+| Linux | systemd **user** unit, `Restart=on-failure` | yes, systemd |
+| Windows | Task Scheduler task `QuotaLens`, trigger "at log on" | no, next login |
+
+Every file written and command run is printed, so it can be undone by hand.
+The installed command carries an explicit `--data-dir`, so the service collects
+into the same place your shell does. `serve` stays the foreground command the
+service manager execs, and `start`/`stop`/`status`/`logs` still work alongside.
+
+On Linux the unit only runs while you are logged in unless you enable lingering;
+the installer prints the exact `loginctl enable-linger` command. On Windows the
+task starts at **login**, not at boot, and only for your account.
 
 A background agent reading the OS keychain may prompt on first run or be
 refused; `quotalens status` then says "keyring" specifically rather than "no
@@ -252,10 +260,9 @@ than something to bolt on. It is the first issue on the list.
 
 ## Platforms
 
-macOS and Linux are what this has actually run on. Windows is expected to work —
-paths, the pid file and the service commands are written for it — but until the
-CI matrix has been green on a Windows runner, treat it as untested rather than
-supported. `service install` is macOS and Linux only in any case.
+macOS and Linux are what this has actually run on. All three platforms are in
+the CI matrix on Python 3.11 and 3.13, and until that matrix is green on the
+Windows runner, treat Windows as untested rather than supported.
 
 ## The Terms, stated plainly
 
