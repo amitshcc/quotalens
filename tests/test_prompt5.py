@@ -261,3 +261,22 @@ def test_hero_at_the_moment_of_reset_says_no_window(settings, store, secrets) ->
     assert '<span class="num">no window</span>' in html
     assert body["burn"]["why"].startswith("No session running")
     assert 'id="reset-in"' not in html  # nothing to count down
+
+
+def test_cold_database_with_a_session_still_says_collecting(settings, store, secrets) -> None:
+    now = int(time.time())
+    for i in range(3):
+        row = QuotaReading("five_hour", "5-hour", 20.5 + i, iso(now + 4 * 3600))
+        store.record_quota(now - (2 - i) * 60, [row])
+    app = create_app(settings, store, secrets)
+    app.state.qw.poller.status.state = "ok"
+    app.state.qw.poller.status.last_success_ts = now
+    with TestClient(app) as tc:
+        html = tc.get("/").text
+        body = tc.get("/api/dashboard").json()
+    assert body["range"]["key"] == "session" and body["range"]["collecting"] is True
+    assert "Collecting: 2m of data" in html and '<line x1="44"' not in html
+    # the lit figure and the verdict agree on the rounding
+    figure = '<span class="num">78</span><span class="dash">—</span><span class="u">% left</span>'
+    assert figure in html
+    assert "78% left, resets in" in body["burn"]["why"]

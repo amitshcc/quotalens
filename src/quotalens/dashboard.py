@@ -578,7 +578,7 @@ def _burn_view(
     why = runway.verdict + (f" {runway.comparison}" if runway.comparison else "")
     hours = hour_strip(rows, session[0], now) if session else []
     hours_max = max([b.consumed or 0.0 for b in hours] + [20.0])
-    headroom = fmt_pct(runway.headroom_pct) if runway.headroom_pct is not None else "—"
+    headroom = f"{runway.headroom_pct:.0f}" if runway.headroom_pct is not None else "—"
     if not displayable:
         detail = f"The {lookback_label} rate needs at least {need_s // 60} minutes of samples."
         return BurnView(

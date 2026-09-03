@@ -262,3 +262,20 @@ def test_start_child_receives_data_dir(tmp_path) -> None:
         assert seen[0][3:5] == ["--data-dir", str(tmp_path)]
     finally:
         stop(tmp_path, timeout_s=5)
+
+
+def test_status_uses_the_recorded_port_when_none_is_given(tmp_path) -> None:
+    service.write_runtime(tmp_path, 8790, 30)
+    seen: list[str] = []
+
+    def fetch(url: str):
+        seen.append(url)
+        raise urllib.error.URLError("refused")
+
+    status(tmp_path, None, fetch=fetch)
+    assert seen and seen[0].startswith("http://127.0.0.1:8790/")
+    assert service.read_runtime(tmp_path) == {"pid": os.getpid(), "port": 8790, "interval_s": 30}
+    service.clear_runtime(tmp_path)
+    assert service.read_runtime(tmp_path) is None
+    status(tmp_path, None, fetch=fetch)
+    assert seen[-1].startswith("http://127.0.0.1:8787/")  # nothing recorded: the default
