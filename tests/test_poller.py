@@ -59,7 +59,13 @@ def test_poll_once_success_writes_quota_sample_overage(settings, store, secrets)
     assert poller.status.state == "ok"
     assert poller.status.last_success_ts == 1_000_000
     assert poller.status.overage_available is True
-    assert store.counts() == {"quota": 3, "sample": 2, "overage": 1, "event": 1}
+    assert store.counts() == {
+        "quota": 3,
+        "sample": 2,
+        "overage": 1,
+        "event": 1,
+        "session_window": 1,
+    }
     assert {r.window for r in store.latest_quota()} == {"five_hour", "seven_day", "limit:opus"}
     assert [e.kind for e in store.recent_events()] == ["unrecognised_block"]
     assert poller.status.ignored_blocks == [{"key": "seven_day_sonnet", "reason": "no resets_at"}]

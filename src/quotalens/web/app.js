@@ -103,7 +103,7 @@
   }
 
   document.addEventListener("click", function (ev) {
-    var target = ev.target.closest ? ev.target.closest("#t, a.rb, a.el-link") : null;
+    var target = ev.target.closest ? ev.target.closest("#t, a.rb, a.el-link, a.sess, th a[data-sort]") : null;
     if (!target) return;
     if (target.id === "t") { toggleTheme(); return; }
     if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.button !== 0) return; // let new-tab clicks through

@@ -24,6 +24,7 @@ from quotalens.client import (
 from quotalens.config import Settings
 from quotalens.parse import ParseError, SpendReading, UsageParse, parse_spend, parse_usage
 from quotalens.secrets import Redactor, SecretStore, SecretStoreError
+from quotalens.sessions import rebuild as rebuild_sessions
 from quotalens.store import Store
 
 log = logging.getLogger(__name__)
@@ -299,6 +300,7 @@ class Poller:
         self._note_diagnostics(parsed, now)
 
         await self._poll_overage(client, now, usage_raw)
+        rebuild_sessions(self._store, now)
 
         self.status.state = "ok"
         self.status.last_success_ts = now
