@@ -9,16 +9,20 @@ from __future__ import annotations
 
 import re
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
+import quotalens
 from quotalens.api import create_app
 from quotalens.dashboard import build_dashboard
 from quotalens.parse import QuotaReading
 from quotalens.render import (
     FAVICON_CIRC,
+    FAVICON_LIGHT_STYLE,
     MARK_CIRC,
+    MARK_COLOURS,
     MARK_GRID,
     MARK_R,
     MARK_SIZE,
@@ -70,17 +74,11 @@ def test_the_canonical_static_mark_matches_the_design_file() -> None:
 # -- state ----------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("state", "colour"),
-    [
-        ("normal", "var(--s1)"),
-        ("elevated", "var(--st-elevated)"),
-        ("critical", "var(--st-critical)"),
-    ],
-)
-def test_the_arc_takes_its_colour_from_the_meter_state(state: str, colour: str) -> None:
+@pytest.mark.parametrize("state", ["normal", "elevated", "critical"])
+def test_the_arc_takes_its_colour_from_the_meter_state(state: str) -> None:
+    token, _light, dark = MARK_COLOURS[state]
     svg = _mark(0.9, state)
-    assert f'stroke="{colour}"' in svg
+    assert f'stroke="var({token}, {dark})"' in svg
     assert svg.count("<circle") == 2  # the track is always behind it
 
 
@@ -89,13 +87,49 @@ def test_no_reading_draws_a_dashed_empty_track_and_no_arc() -> None:
     assert _dash_arc(svg) is None, "a frozen arc would be a stale reading in the tab strip"
     assert svg.count("<circle") == 1
     assert 'stroke-dasharray="3 3"' in svg
-    assert "var(--st-critical)" not in svg and "var(--s1)" not in svg
+    assert "--st-critical" not in svg and "--s1" not in svg
+
+
+def test_every_colour_in_the_mark_carries_a_fallback() -> None:
+    """A bare var() in the favicon is an invalid substitution, and `stroke` becomes `none`.
+
+    That shipped: the icon was fully transparent in the tab strip. The rasterised
+    proof is in test_favicon_render.py; this is the cheap guard that runs everywhere.
+    """
+    for svg in (_mark(0.68), _mark(None), _mark(0.91, "critical"), _mark(0.8, "elevated")):
+        bare = re.findall(r"var\(--[a-z-]+\)", svg)
+        assert bare == [], f"no fallback for {bare}"
+
+
+def test_the_mark_colours_still_match_tokens_css() -> None:
+    """The fallbacks are a copy of tokens.css, so this is what stops it drifting.
+
+    There is no way to resolve a CSS custom property from Python, so the values
+    have to be repeated in render.py. They may be repeated; they may not disagree.
+    """
+    css = (Path(quotalens.__file__).parent / "web" / "tokens.css").read_text()
+    for token, light, dark in MARK_COLOURS.values():
+        m = re.search(rf"{token}:\s*light-dark\(([^,]+),\s*([^)]+)\)", css)
+        assert m, f"{token} is no longer a light-dark() pair in tokens.css"
+        assert (m.group(1).strip().upper(), m.group(2).strip().upper()) == (light, dark), token
+
+
+def test_only_the_favicon_carries_a_style_block() -> None:
+    """The header mark is inlined, so its tokens resolve and follow the theme toggle.
+
+    A media query inside it would override that with the OS preference, which is
+    the one thing the toggle exists to escape.
+    """
+    assert "<style" not in _mark(0.68) and "<style" not in _mark(None)
+    assert "prefers-color-scheme" in FAVICON_LIGHT_STYLE
+    for token, light, _dark in MARK_COLOURS.values():
+        assert f"{token}:{light}" in FAVICON_LIGHT_STYLE
 
 
 def test_the_inlined_mark_is_attributes_only() -> None:
-    """An inline <style> inside inlined SVG fails a strict CSP; DESIGN.md §9 forbids it.
+    """The header mark is built from attributes, so it needs no style attribute either.
 
-    The standalone `favicon.svg` file keeps its own <style>, because an <img> has no
+    The standalone favicon does carry a <style>, because an image document has no
     tokens.css to resolve against. Only what the page inlines is covered here.
     """
     for svg in (_mark(0.68), _mark(None), _mark(0.91, "critical")):
@@ -160,7 +194,7 @@ def test_the_favicon_reflects_the_current_reading_and_is_never_cached(
     with TestClient(app) as tc:
         response = tc.get("/favicon.svg")
 
-    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["cache-control"] == "no-cache"  # revalidate, but cacheable
     assert response.headers["content-type"].startswith("image/svg+xml")
     used, circumference = _dash_arc(response.text)
     assert (used, circumference) == (round(FAVICON_CIRC * 0.44, 2), FAVICON_CIRC)
@@ -173,7 +207,7 @@ def test_the_favicon_falls_back_to_the_static_file_before_the_first_poll(
     with TestClient(create_app(settings, store, secrets)) as tc:
         response = tc.get("/favicon.svg")
     assert response.status_code == 200
-    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["cache-control"] == "no-cache"  # revalidate, but cacheable
     assert "<title>QuotaLens</title>" in response.text
 
 

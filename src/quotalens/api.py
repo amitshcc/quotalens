@@ -170,8 +170,10 @@ def create_app(
         """The mark, live: the session window readable from a background tab.
 
         Built from the whole dashboard rather than from a cheaper query, so the tab
-        strip and the 5-hour meter cannot drift apart. `no-store` because a cached
-        favicon is a favicon that stops being a reading.
+        strip and the 5-hour meter cannot drift apart. `no-cache` rather than
+        `no-store`: it still revalidates on every fetch, so the icon stays a live
+        reading, but it does not forbid writing the file at all, and Chrome's
+        favicon store is a disk cache.
         """
         dash = _dashboard(parse_view({}, int(time.time())))
         body = (
@@ -179,7 +181,7 @@ def create_app(
             if dash.last_success_ts is None  # never polled: the brand, not a guess
             else favicon_svg(dash)
         )
-        return Response(body, media_type="image/svg+xml", headers={"Cache-Control": "no-store"})
+        return Response(body, media_type="image/svg+xml", headers={"Cache-Control": "no-cache"})
 
     @app.get("/metrics", include_in_schema=False)
     def metrics() -> Response:

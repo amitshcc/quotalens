@@ -49,8 +49,38 @@ MARK_SIZE = 22  # as rendered in the header
 FAVICON_GRID, FAVICON_R, FAVICON_STROKE, FAVICON_CIRC = 16, 5.5, 3.0, 34.56  # 2*pi*5.5
 UNKNOWN_DASH = "3 3"  # the empty track when there is no reading to draw
 
-# The arc follows the meters, not the brand: the same three states, the same tokens.
-ARC_COLOUR = {"elevated": "var(--st-elevated)", "critical": "var(--st-critical)"}
+# The arc follows the meters, not the brand: the same states, the same tokens.
+#
+# Every colour carries a fallback because the favicon is fetched as a standalone
+# document with no tokens.css behind it. There, `var(--s1)` alone is an invalid
+# substitution, `stroke` falls back to its initial value of `none`, and the icon
+# renders as nothing at all — which is exactly what shipped.
+#
+# Both halves of each `light-dark()` pair in tokens.css are repeated here, light
+# then dark. There is no way to resolve a CSS custom property from Python, so
+# this is a copy; `test_mark.py` parses tokens.css and fails if either half
+# drifts, which is what keeps it from becoming a second source of truth.
+MARK_COLOURS = {
+    "track": ("--txt-far", "#808887", "#626A6B"),
+    "normal": ("--s1", "#A66A00", "#F2B33D"),
+    "elevated": ("--st-elevated", "#8A5B00", "#F2B33D"),
+    "critical": ("--st-critical", "#B3242B", "#F0575C"),
+}
+
+
+def paint(key: str) -> str:
+    """The token, with the dark value behind it: tokens.css declares dark as the base."""
+    token, _light, dark = MARK_COLOURS[key if key in MARK_COLOURS else "normal"]
+    return f"var({token}, {dark})"
+
+
+# Only the standalone favicon needs this: an inlined mark follows the page's own
+# theme, including a manual toggle, which a media query inside it could not.
+FAVICON_LIGHT_STYLE = (
+    "<style>@media (prefers-color-scheme:light){svg{"
+    + ";".join(f"{token}:{light}" for token, light, _dark in MARK_COLOURS.values())
+    + "}}</style>"
+)
 
 
 def mark_reading(dash: Dashboard) -> tuple[float | None, str]:
@@ -75,8 +105,14 @@ def ring(
     width: float,
     circumference: float,
     tail: str,
+    head: str = "",
 ) -> str:
-    """The mark at one size. Attributes only: an inline <style> would fail a strict CSP."""
+    """The mark at one size. ``head`` is prepended inside the <svg>: the favicon's only.
+
+    The header mark passes no ``head`` and so emits no <style>. It does not need
+    one: inlined in the page, its tokens resolve from tokens.css and follow the
+    theme toggle, which a media query inside the mark could not.
+    """
     centre = grid / 2
     circle = (
         f'<circle cx="{centre:g}" cy="{centre:g}" r="{radius:g}" fill="none" '
@@ -85,16 +121,18 @@ def ring(
     if fraction is None:
         # Stale, auth-failed or unverified. A mark frozen at the last good reading
         # is a lie in the tab strip, the same way a stale red number is one.
-        body = f'{circle} stroke="var(--txt-far)" stroke-dasharray="{UNKNOWN_DASH}"/>'
+        body = f'{circle} stroke="{paint("track")}" stroke-dasharray="{UNKNOWN_DASH}"/>'
     else:
         used = circumference * fraction
         body = (
-            f'{circle} stroke="var(--txt-far)"/>'
-            f'{circle} stroke="{ARC_COLOUR.get(state, "var(--s1)")}" '
+            f'{circle} stroke="{paint("track")}"/>'
+            f'{circle} stroke="{paint(state)}" '
             f'stroke-dasharray="{used:.2f} {circumference:.2f}" '
             f'transform="rotate(-90 {centre:g} {centre:g})"/>'
         )
-    return f'<svg viewBox="0 0 {grid} {grid}" width="{size}" height="{size}" {tail}>{body}</svg>'
+    return (
+        f'<svg viewBox="0 0 {grid} {grid}" width="{size}" height="{size}" {tail}>{head}{body}</svg>'
+    )
 
 
 def header_mark(dash: Dashboard) -> str:
@@ -121,7 +159,7 @@ def favicon_svg(dash: Dashboard) -> str:
         else f"{fraction * 100:.0f}% of the session window used"
     )
     label = f"QuotaLens \u2014 {reading}"
-    svg = ring(
+    return ring(
         fraction,
         state,
         FAVICON_GRID,
@@ -130,8 +168,8 @@ def favicon_svg(dash: Dashboard) -> str:
         FAVICON_STROKE,
         FAVICON_CIRC,
         f'xmlns="http://www.w3.org/2000/svg" role="img" aria-label="{e(label)}"',
+        head=f"<title>{e(label)}</title>{FAVICON_LIGHT_STYLE}",
     )
-    return svg.replace(">", f"><title>{e(label)}</title>", 1)
 
 
 _CHIP = {
