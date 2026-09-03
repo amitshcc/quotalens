@@ -21,6 +21,7 @@ RANGE_PRESETS: dict[str, int] = {
 RANGE_KEYS = (*RANGE_PRESETS, "all")
 LOOKBACKS: dict[str, int] = {"5m": 300, "15m": 900, "1h": 3600, "6h": 6 * 3600}
 REFRESH: dict[str, int] = {"off": 0, "10s": 10, "30s": 30, "1m": 60, "5m": 300}
+SORTS = ("consumed",)  # the default order, most recent first, has no key
 COLLECTING_UNDER_S = 15 * 60  # less data than this: say "collecting" instead of a grid
 MIN_CUSTOM_SPAN_S = 60
 AUTO = "auto"
@@ -36,6 +37,7 @@ class ViewOptions:
     hidden: frozenset[str] = frozenset()
     lookback_key: str | None = None  # None: the server default
     refresh_key: str | None = None  # None: the server default
+    sort_key: str | None = None  # session history: None (recent) or "consumed"
 
     def lookback_s(self, default_s: int) -> int:
         return LOOKBACKS.get(self.lookback_key or "", default_s)
@@ -62,6 +64,8 @@ class ViewOptions:
             params["lookback"] = opts.lookback_key
         if opts.refresh_key:
             params["refresh"] = opts.refresh_key
+        if opts.sort_key:
+            params["sort"] = opts.sort_key
         return urlencode(params)
 
     def href(self, **overrides: object) -> str:
@@ -87,12 +91,14 @@ def parse_view(params: Mapping[str, str], now: int) -> ViewOptions:
     )
     lookback = params.get("lookback")
     refresh = params.get("refresh")
+    sort = params.get("sort")
     return ViewOptions(
         range_key=range_key,
         custom=custom,
         hidden=hidden,
         lookback_key=lookback if lookback in LOOKBACKS else None,
         refresh_key=refresh if refresh in REFRESH else None,
+        sort_key=sort if sort in SORTS else None,
     )
 
 

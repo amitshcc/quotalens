@@ -18,6 +18,7 @@ from quotalens.burn import BurnResult, burn_rate, split_at_resets
 from quotalens.config import Settings
 from quotalens.parse import SpendReading, humanize
 from quotalens.poller import PollerStatus
+from quotalens.sessions import SessionWindow, idle_spans, window_from_row
 from quotalens.state import (
     CRITICAL,
     ELEVATED,
@@ -47,6 +48,8 @@ LABEL_GAP = 13.0
 MAX_POINTS_PER_SERIES = 600  # longer ranges are bucketed, keeping the last sample per bucket
 DISPLAY_MIN_BURN_SPAN_S = 300  # a rate over less than this is noise at 68px
 FORCE_NOTE_TTL_S = 15
+HISTORY_ROWS = 20
+THIN_COVERAGE = 0.25  # under this share of expected samples a window is a guess
 
 RATE_WINDOW = "five_hour"
 DISPLAY_LABELS = {
@@ -187,6 +190,32 @@ class ChartView:
     gap_minutes: int
     data_json: str  # for the hover readout
     collecting_text: str  # non-empty on cold start instead of a grid
+    session_x: list[float] = field(default_factory=list)  # session window starts
+    idle: list[tuple[float, float]] = field(default_factory=list)  # no window running
+    idle_minutes: int = 0
+
+
+@dataclass
+class SessionRowView:
+    started_at: int
+    ends_at: int
+    window_text: str
+    href: str
+    peak_text: str
+    final_text: str
+    columns: list[str]  # one per weekly limit, in header order
+    samples: int
+    thin: bool  # too few samples to trust
+    is_current: bool
+    selected: bool  # the chart range is exactly this window
+
+
+@dataclass
+class HistoryView:
+    rows: list[SessionRowView]
+    headers: list[str]  # weekly-limit column labels
+    sort: str  # recent | consumed
+    sort_links: dict[str, str]
 
 
 @dataclass
@@ -233,6 +262,7 @@ class Dashboard:
     lookback_controls: list[Control]
     refresh_controls: list[Control]
     lookback_s: int
+    history: HistoryView
 
 
 # -- builders -------------------------------------------------------------------
@@ -297,15 +327,18 @@ def build_dashboard(
         now,
     )
     gap_threshold = STALE_AFTER_INTERVALS * settings.poll_interval_s
-    chart = _chart_view(
-        range_rows,
+    labels = {r.window: r.label for r in latest}
+    chart = _chart_view(range_rows, slots, labels, rng, view, gap_threshold, now, withheld)
+    sessions_all = [window_from_row(r) for r in store.sessions(limit=500, order="recent")]
+    _mark_sessions(chart, sessions_all, rng, now)
+    sort = view.sort_key or "recent"
+    history = _history_view(
+        [window_from_row(r) for r in store.sessions(limit=HISTORY_ROWS, order=sort)],
+        labels,
         slots,
-        {r.window: r.label for r in latest},
-        rng,
         view,
-        gap_threshold,
+        settings.poll_interval_s,
         now,
-        withheld,
     )
     spend = _spend_view(status.spend, withheld, now)
 
@@ -327,9 +360,8 @@ def build_dashboard(
     size = store.db_size_bytes()
     side = {
         "Range": rng.label + (" (auto)" if rng.auto else ""),
-        "Not collected": f"{chart.gap_minutes} min in range"
-        if chart.gap_minutes
-        else "0 min in range",
+        "Not collected": f"{chart.gap_minutes} min in range",
+        "No session": f"{chart.idle_minutes} min in range",
         "Poll interval": f"{settings.poll_interval_s}s",
         "Samples stored": f"{counts['quota']:,}",
         "Database": f"{size / 1_048_576:.1f} MB" if size is not None else "in memory",
@@ -368,6 +400,7 @@ def build_dashboard(
             Control(k, k, view.href(refresh_key=k), REFRESH[k] == refresh_s) for k in REFRESH
         ],
         lookback_s=lookback_s,
+        history=history,
     )
 
 
@@ -670,6 +703,87 @@ def _chart_view(
     )
 
 
+def _mark_sessions(
+    chart: ChartView, windows: list[SessionWindow], rng: ResolvedRange, now: int
+) -> None:
+    """Session starts as vertical rules; spans with no window running as flat shading."""
+    start, end = rng.start, rng.end
+    span = max(1, end - start)
+    plot_w = CHART_W - CHART_L - CHART_R
+
+    def x_of(ts: int) -> float:
+        return CHART_L + (ts - start) / span * plot_w
+
+    ordered = sorted(windows, key=lambda w: w.started_at)
+    chart.session_x = [x_of(w.started_at) for w in ordered if start < w.started_at < end]
+    idle = []
+    minutes = 0
+    for a, b in idle_spans(ordered, now):
+        a2, b2 = max(a, start), min(b, end)
+        if b2 > a2:
+            idle.append((x_of(a2), x_of(b2)))
+            minutes += (b2 - a2) // 60
+    chart.idle = idle
+    chart.idle_minutes = minutes
+
+
+def _window_text(w: SessionWindow, now: int) -> str:
+    start, end = local(w.started_at), local(w.ends_at)
+    day = "" if start.date() == local(now).date() else start.strftime("%-d %b ")
+    return f"{day}{start.strftime('%H:%M')}–{end.strftime('%H:%M')}"  # noqa: RUF001 en dash
+
+
+def _delta_text(w: SessionWindow, key: str) -> str:
+    d = w.deltas.get(key)
+    if d is None:
+        return "—"
+    text = f"{fmt_pct(d.start)}% → {fmt_pct(d.end)}%"
+    return text + " (reset)" if d.reset else text
+
+
+def _history_view(
+    windows: list[SessionWindow],
+    labels: dict[str, str],
+    slots: dict[str, int],
+    view: ViewOptions,
+    interval_s: int,
+    now: int,
+) -> HistoryView:
+    keys = sorted(
+        {k for w in windows for k in w.deltas if k.startswith("limit:")},
+        key=lambda k: (slots.get(k, 99), k),
+    )
+    columns = ["seven_day", *keys]
+    headers = ["All models", *(display_label(k, labels.get(k)) for k in keys)]
+    rows = []
+    for w in windows:
+        end = min(w.ends_at, now)
+        elapsed = max(60, end - w.started_at)
+        expected = elapsed / interval_s
+        rows.append(
+            SessionRowView(
+                started_at=w.started_at,
+                ends_at=w.ends_at,
+                window_text=_window_text(w, now),
+                href=view.href(range_key="custom", custom=(w.started_at, end)),
+                peak_text=f"{fmt_pct(w.peak_pct)}%",
+                final_text=f"{fmt_pct(w.final_pct)}%",
+                columns=[_delta_text(w, k) for k in columns],
+                samples=w.samples,
+                thin=w.samples < THIN_COVERAGE * expected,
+                is_current=w.is_current,
+                selected=view.custom == (w.started_at, end),
+            )
+        )
+    sort = view.sort_key or "recent"
+    return HistoryView(
+        rows,
+        headers,
+        sort,
+        {"recent": view.href(sort_key=None), "consumed": view.href(sort_key="consumed")},
+    )
+
+
 def _x_ticks(start: int, end: int, x_of: Any) -> list[tuple[float, str]]:
     span = end - start
     for step in (60, 120, 300, 600, 900, 1800, 3600, 7200, 14400, 21600, 43200, 86400, 172800):
@@ -769,4 +883,18 @@ def as_json(dash: Dashboard) -> dict[str, Any]:
         },
         "notes": dash.notes,
         "diagnostics": dash.diagnostics,
+        "sessions": [
+            {
+                "started_at": r.started_at,
+                "ends_at": r.ends_at,
+                "peak": r.peak_text,
+                "final": r.final_text,
+                "columns": r.columns,
+                "samples": r.samples,
+                "thin": r.thin,
+                "is_current": r.is_current,
+            }
+            for r in dash.history.rows
+        ],
+        "idle_minutes": dash.chart.idle_minutes,
     }

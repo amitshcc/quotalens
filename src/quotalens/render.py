@@ -5,7 +5,7 @@ from __future__ import annotations
 from html import escape as e
 
 from quotalens import __version__
-from quotalens.dashboard import Control, Dashboard, SeriesView, WindowView
+from quotalens.dashboard import Control, Dashboard, SeriesView, SessionRowView, WindowView
 
 ICONS = (
     '<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>'
@@ -108,7 +108,10 @@ def _main(dash: Dashboard) -> str:
         + _toolbar(dash)
         + _chart(dash)
         + '<div class="cols">'
+        + "<div>"
+        + _history(dash)
         + _attribution()
+        + "</div>"
         + _side(dash)
         + "</div>"
         + _footer(dash)
@@ -247,10 +250,23 @@ def _chart(dash: Dashboard) -> str:
             '<text x="636" y="112" class="ax" text-anchor="middle">No readings in this range</text>'
         )
     else:
-        gaps = "".join(
+        idle = "".join(
+            f'<rect x="{a:.1f}" y="14" width="{max(b - a, 1.5):.1f}" height="182" class="idle"/>'
+            + (
+                f'<text x="{(a + b) / 2:.1f}" y="26" class="ax" text-anchor="middle">'
+                "no session</text>"
+                if b - a > 90
+                else ""
+            )
+            for a, b in c.idle
+        )
+        gaps = idle + "".join(
             f'<rect x="{a:.1f}" y="14" width="{max(b - a, 1.5):.1f}" height="182" '
             'fill="url(#gap)" class="gap"/>'
             for a, b in c.gaps
+        )
+        gaps += "".join(
+            f'<line x1="{x:.1f}" y1="14" x2="{x:.1f}" y2="196" class="sess"/>' for x in c.session_x
         )
         grid = "".join(
             f'<line x1="44" y1="{y:.1f}" x2="1150" y2="{y:.1f}" class="{_gclass(t)}"/>'
@@ -299,6 +315,46 @@ def _series(s: SeriesView) -> str:
         f'aria-label="{e(s.label)}: {state}, activate to toggle">'
         f'<text x="{s.end_x + 9:.1f}" y="{s.label_y + 4:.1f}" fill="var(--s{s.slot})" '
         f'class="el{" off" if s.hidden else ""}">{e(s.label)}</text></a>'
+    )
+
+
+def _history(dash: Dashboard) -> str:
+    h = dash.history
+    recent_on = h.sort == "recent"
+    sort_recent = ' aria-sort="descending"' if recent_on else ""
+    sort_consumed = ' aria-sort="descending"' if not recent_on else ""
+    heads = (
+        f'<th><a href="{e(h.sort_links["recent"])}" data-sort="recent"{sort_recent}>Window</a>'
+        f'</th><th class="n"><a href="{e(h.sort_links["consumed"])}" data-sort="consumed"'
+        f"{sort_consumed}>Consumed</a></th>"
+        '<th class="n">Final</th>'
+        + "".join(f'<th class="n">{e(x)}</th>' for x in h.headers)
+        + '<th class="n">Samples</th>'
+    )
+    if not h.rows:
+        body = (
+            f'<tr><td colspan="{4 + len(h.headers)}" class="empty">'
+            "No 5-hour windows yet. They appear once the first session has samples.</td></tr>"
+        )
+    else:
+        body = "".join(_history_row(r) for r in h.rows)
+    caption = " by consumption" if not recent_on else ", most recent first"
+    return (
+        '<section class="screen history"><table>'
+        f"<caption>History — 5-hour session windows{caption}</caption>"
+        f"<thead><tr>{heads}</tr></thead><tbody>{body}</tbody></table></section>"
+    )
+
+
+def _history_row(r: SessionRowView) -> str:
+    cls = " ".join(c for c in ("r-thin" if r.thin else "", "r-on" if r.selected else "") if c)
+    current = ' <span class="far">current</span>' if r.is_current else ""
+    cells = "".join(f'<td class="m n">{e(c)}</td>' for c in r.columns)
+    return (
+        f'<tr class="{cls}"><th scope="row"><a href="{e(r.href)}" class="sess" '
+        f'data-session="{r.started_at}">{e(r.window_text)}</a>{current}</th>'
+        f'<td class="m n rt">{e(r.peak_text)}</td><td class="m n">{e(r.final_text)}</td>{cells}'
+        f'<td class="m n">{r.samples}</td></tr>'
     )
 
 

@@ -20,6 +20,7 @@ from quotalens.dashboard import as_json, build_dashboard
 from quotalens.poller import ClientFactory, Poller, spend_as_dict
 from quotalens.render import render_app, render_page
 from quotalens.secrets import Redactor, SecretStore, global_redactor
+from quotalens.sessions import rebuild as rebuild_sessions
 from quotalens.state import collector_state
 from quotalens.store import Store
 from quotalens.views import ViewOptions, parse_view
@@ -62,6 +63,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        rebuild_sessions(store, int(time.time()))  # backfill from every stored sample
         if settings.poll_enabled:
             poller.start()
         try:

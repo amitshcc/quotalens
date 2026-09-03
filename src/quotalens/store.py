@@ -18,7 +18,7 @@ from typing import Any
 
 from quotalens.parse import QuotaReading, SpendReading
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Statements that bring an older database up to each version, in order.
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
@@ -27,6 +27,7 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
         "ALTER TABLE quota ADD COLUMN is_active INTEGER",
         "ALTER TABLE overage ADD COLUMN exponent INTEGER NOT NULL DEFAULT 2",
     ),
+    3: (),  # session_window is created by the CREATE statements; rebuilt from samples
 }
 
 _SCHEMA = """
@@ -78,6 +79,18 @@ CREATE TABLE IF NOT EXISTS scan_state (
     path TEXT PRIMARY KEY,
     offset INTEGER NOT NULL,
     mtime INTEGER NOT NULL
+);
+-- 5-hour session windows derived from five_hour.resets_at; rebuilt idempotently
+CREATE TABLE IF NOT EXISTS session_window (
+    started_at INTEGER PRIMARY KEY,
+    ends_at INTEGER NOT NULL,
+    is_current INTEGER NOT NULL,
+    peak_pct REAL NOT NULL,
+    final_pct REAL NOT NULL,
+    samples INTEGER NOT NULL,
+    first_ts INTEGER NOT NULL,
+    last_ts INTEGER NOT NULL,
+    deltas TEXT NOT NULL
 );
 -- detected climbs, threshold crossings, poll failures
 CREATE TABLE IF NOT EXISTS event (
@@ -239,6 +252,38 @@ class Store:
                 (ts if ts is not None else now_ts(), kind, detail),
             )
 
+    def replace_sessions(self, windows: Iterable[Any]) -> None:
+        """Replace the whole session_window table in one transaction (idempotent)."""
+        rows = [
+            (
+                w.started_at,
+                w.ends_at,
+                int(w.is_current),
+                w.peak_pct,
+                w.final_pct,
+                w.samples,
+                w.first_ts,
+                w.last_ts,
+                json.dumps({k: d.as_dict() for k, d in w.deltas.items()}),
+            )
+            for w in windows
+        ]
+        with self._tx() as cur:
+            cur.execute("DELETE FROM session_window")
+            cur.executemany(
+                "INSERT INTO session_window (started_at, ends_at, is_current, peak_pct, "
+                "final_pct, samples, first_ts, last_ts, deltas) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rows,
+            )
+
+    def sessions(self, limit: int = 50, order: str = "recent") -> list[dict[str, Any]]:
+        order_sql = "peak_pct DESC, started_at DESC" if order == "consumed" else "started_at DESC"
+        with self._tx() as cur:
+            rows = cur.execute(
+                f"SELECT * FROM session_window ORDER BY {order_sql} LIMIT ?", (limit,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     # -- reads ----------------------------------------------------------------
 
     def latest_quota(self) -> list[QuotaRow]:
@@ -313,6 +358,6 @@ class Store:
     def counts(self) -> dict[str, int]:
         with self._tx() as cur:
             out = {}
-            for table in ("quota", "sample", "overage", "event"):
+            for table in ("quota", "sample", "overage", "event", "session_window"):
                 out[table] = cur.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"]
         return out

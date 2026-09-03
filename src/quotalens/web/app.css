@@ -99,7 +99,17 @@ button:disabled{opacity:.5;cursor:default}
 .el.off{opacity:.45;text-decoration:line-through}
 .el-link{cursor:pointer}
 .el-link:focus-visible{outline:var(--focus-w) solid var(--focus);outline-offset:var(--focus-off)}
-.gap{pointer-events:none}
+.gap,.idle,.sess{pointer-events:none}
+.idle{fill:var(--grid)}
+.sess{stroke:var(--grid-zero);stroke-width:1}
+.history{margin-bottom:var(--sp-3)}
+th a{color:inherit;text-decoration:none}
+th a[aria-sort]{color:var(--txt)}
+th a:hover{color:var(--txt)}
+tbody th a:hover{text-decoration:underline}
+.r-thin th,.r-thin td{color:var(--txt-far)}
+.r-on{background:var(--select)}
+.rt{color:var(--txt)}
 .xh{stroke:var(--txt-far);stroke-width:1;stroke-dasharray:2 3}
 .sel{fill:var(--select);stroke:var(--focus);stroke-width:1}
 #chart{cursor:crosshair;user-select:none}

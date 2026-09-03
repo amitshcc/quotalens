@@ -63,7 +63,13 @@ def test_sample_overage_events_and_counts(store: Store) -> None:
     }
     assert [e.kind for e in store.recent_events()] == ["auth_expired", "poll_error"]
     assert [e.kind for e in store.recent_events(kind="poll_error")] == ["poll_error"]
-    assert store.counts() == {"quota": 0, "sample": 1, "overage": 1, "event": 2}
+    assert store.counts() == {
+        "quota": 0,
+        "sample": 1,
+        "overage": 1,
+        "event": 2,
+        "session_window": 0,
+    }
 
 
 def test_memory_store() -> None:
@@ -104,6 +110,7 @@ def test_v1_database_is_migrated_without_losing_rows(tmp_path) -> None:
     assert [r[0] for r in conn.execute("SELECT version FROM schema_version ORDER BY version")] == [
         1,
         2,
+        3,
     ]
     conn.close()
     store.close()
