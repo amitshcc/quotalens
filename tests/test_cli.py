@@ -159,3 +159,25 @@ def test_probe_masks_uuids_unless_no_redact(monkeypatch, capsys) -> None:
     assert "<uuid>" in out
     assert cli.main(["probe", "--no-redact"], secrets=MemorySecretStore(COOKIE)) == 0
     assert "123e4567-e89b-12d3-a456-426614174000" in capsys.readouterr().out
+
+
+def test_start_passes_data_dir_to_child(monkeypatch, tmp_path, capsys) -> None:
+    from quotalens import service
+
+    seen = {}
+
+    def fake_start(data_dir, serve_args, **kw):
+        seen["data_dir"], seen["args"] = data_dir, list(serve_args)
+        return service.StartResult(4242, data_dir / "q.log", data_dir / "q.pid")
+
+    monkeypatch.setattr(service, "start", fake_start)
+    assert (
+        cli.main(
+            ["--data-dir", str(tmp_path), "start", "--port", "8790"],
+            secrets=MemorySecretStore(COOKIE),
+        )
+        == 0
+    )
+    assert seen["data_dir"] == tmp_path
+    assert "8790" in seen["args"]
+    assert "http://127.0.0.1:8790/" in capsys.readouterr().out

@@ -164,8 +164,12 @@ def follow(path: Path, out: Callable[[str], None], poll_s: float = 0.5) -> None:
 # -- start / stop ---------------------------------------------------------------
 
 
-def serve_command(python: str = sys.executable, extra: Sequence[str] = ()) -> list[str]:
-    return [python, "-m", "quotalens", "serve", *extra]
+def serve_command(
+    python: str = sys.executable, extra: Sequence[str] = (), data_dir: Path | None = None
+) -> list[str]:
+    """The foreground command. ``--data-dir`` is global, so it goes before ``serve``."""
+    prefix = ["--data-dir", str(data_dir)] if data_dir is not None else []
+    return [python, "-m", "quotalens", *prefix, "serve", *extra]
 
 
 def _spawn_detached(cmd: Sequence[str], logfile: Path) -> int:
@@ -203,7 +207,7 @@ def start(
         raise ServiceError(
             f"already running (pid {existing}); use `quotalens restart` to replace it"
         )
-    cmd = serve_command(extra=[*serve_args, "--log-file", str(logfile)])
+    cmd = serve_command(extra=[*serve_args, "--log-file", str(logfile)], data_dir=data_dir)
     pid = spawner(cmd, logfile)
     pidfile.parent.mkdir(parents=True, exist_ok=True)
     pidfile.write_text(f"{pid}\n")
