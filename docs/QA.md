@@ -55,9 +55,13 @@ inference from source: write down what was on screen or in the DOM.
       none duplicated.
 - [ ] `start` again: refused, exit 1, names the pid.
 - [ ] Write a dead pid into the pid file: `status` cleans it; `start` proceeds.
-- [ ] Hold the port with a foreground `serve`, then `start`: refused with the
-      bind error in the log tail.
-- [ ] `stop`: exits 0; `status` exits 1 and says not running. `restart` works.
+- [ ] Hold the port with a foreground `serve`, then `start`: refused, naming
+      the pid (serve owns the pid file). Hold it with any other process:
+      refused with the bind error in the log tail.
+- [ ] `stop`: exits 0; `status` exits 1 and says not running. `restart` comes
+      back on the same port and interval without flags.
+- [ ] `status` with no `--port` reports the instance in that data directory,
+      never the default port's.
 
 ## Epistemic states, each rendered and distinguishable at a glance
 
@@ -77,7 +81,8 @@ inference from source: write down what was on screen or in the DOM.
 - [ ] Collection gap: hatched span, counted as "Not collected".
 - [ ] No session active: flat `--grid` span labelled "no session", counted as
       "No session". Must not look like the gap.
-- [ ] Future region (auto range): blank, no gridlines, a "now" marker, the
+- [ ] Future region (auto range): blank, no horizontal gridlines (the hourly
+      `--grid` separators of the window do continue), a "now" marker, the
       projection line. Must not look like either of the above.
 
 ## Data shapes
@@ -97,3 +102,7 @@ inference from source: write down what was on screen or in the DOM.
 - 2026-09-03: log lines written twice when a log file is set.
 - 2026-09-03: zombie children counted as alive by `pid_alive`.
 - 2026-09-03: an hour starting at exactly now rendered as no-data, not future.
+- 2026-09-03: `status` without `--port` printed the scratch pid, then port 8787's
+      health and session (the port comes from the flag default, not the pid file).
+- 2026-09-03: hero figure said 79.5% left while the verdict sentence said 80%
+      (the same number rounded twice, differently).

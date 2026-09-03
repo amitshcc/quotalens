@@ -130,8 +130,9 @@ def resolve_range(
     """
     data_span = max(0, now - oldest_ts) if oldest_ts is not None else 0
     if opts.range_key == AUTO and session is not None and session[1] > now:
+        collecting = oldest_ts is None or data_span < COLLECTING_UNDER_S
         return ResolvedRange(
-            session[0], session[1], "session", "this window", True, False, data_span
+            session[0], session[1], "session", "this window", True, collecting, data_span
         )
     if opts.range_key == "custom" and opts.custom:
         start, end = opts.custom

@@ -26,12 +26,13 @@ from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape as xml_escape
 
-from quotalens.config import APP_NAME, default_data_dir
+from quotalens.config import APP_NAME, DEFAULT_PORT, default_data_dir
 
 log = logging.getLogger(__name__)
 
 PID_FILE = f"{APP_NAME}.pid"
 LOG_FILE = f"{APP_NAME}.log"
+RUNTIME_FILE = f"{APP_NAME}.runtime.json"  # port and interval of the instance in this data dir
 LOG_MAX_BYTES = 2 * 1024 * 1024
 LOG_BACKUPS = 3
 STOP_TIMEOUT_S = 10.0
@@ -57,6 +58,32 @@ def pid_path(data_dir: Path | None = None) -> Path:
 
 def log_path(data_dir: Path | None = None) -> Path:
     return (data_dir or default_data_dir()) / LOG_FILE
+
+
+def runtime_path(data_dir: Path | None = None) -> Path:
+    return (data_dir or default_data_dir()) / RUNTIME_FILE
+
+
+def write_runtime(data_dir: Path, port: int, interval_s: int) -> None:
+    """Written by ``serve`` so ``status`` and ``restart`` address this instance, not a default."""
+    data_dir.mkdir(parents=True, exist_ok=True)
+    runtime_path(data_dir).write_text(
+        json.dumps({"pid": os.getpid(), "port": port, "interval_s": interval_s})
+    )
+
+
+def read_runtime(data_dir: Path) -> dict[str, Any] | None:
+    try:
+        data = json.loads(runtime_path(data_dir).read_text())
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def clear_runtime(data_dir: Path) -> None:
+    runtime = read_runtime(data_dir)
+    if runtime and runtime.get("pid") == os.getpid():
+        runtime_path(data_dir).unlink(missing_ok=True)
 
 
 def read_pid(path: Path) -> int | None:
@@ -257,11 +284,18 @@ STALLED_KINDS = {"stale", "auth", "unverified"}
 
 
 def status(
-    data_dir: Path, port: int, fetch: Callable[[str], Any] = fetch_json, now: float | None = None
+    data_dir: Path,
+    port: int | None,
+    fetch: Callable[[str], Any] = fetch_json,
+    now: float | None = None,
 ) -> StatusReport:
+    """``port`` None means: the port the instance in this data directory recorded."""
     now = now if now is not None else time.time()
     pidfile = pid_path(data_dir)
     pid = running_pid(pidfile)
+    runtime = read_runtime(data_dir) or {}
+    if port is None:
+        port = int(runtime.get("port") or DEFAULT_PORT)
     base = f"http://127.0.0.1:{port}"
     try:
         health = fetch(f"{base}/api/health")

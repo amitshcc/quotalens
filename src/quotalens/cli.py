@@ -238,6 +238,7 @@ def cmd_serve(args: argparse.Namespace, settings: Settings, secrets: SecretStore
     except service.ServiceError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+    service.write_runtime(args.data_dir, settings.port, settings.poll_interval_s)
     try:
         cookie = secrets.get_cookie()
     except SecretStoreError as exc:
@@ -266,6 +267,7 @@ def cmd_serve(args: argparse.Namespace, settings: Settings, secrets: SecretStore
         uvicorn.run(app, host=settings.host, port=settings.port, log_level="warning")
     finally:
         store.close()
+        service.clear_runtime(args.data_dir)
         service.release_pid_file(pidfile)
     return 0
 
@@ -311,13 +313,16 @@ def cmd_stop(args: argparse.Namespace, settings: Settings, secrets: SecretStore)
 
 
 def cmd_restart(args: argparse.Namespace, settings: Settings, secrets: SecretStore) -> int:
+    runtime = service.read_runtime(args.data_dir) or {}
+    args.port = args.port or runtime.get("port")  # keep what the instance was started with
+    args.interval = args.interval or runtime.get("interval_s")
     args.force = True
     cmd_stop(args, settings, secrets)
     return cmd_start(args, settings, secrets)
 
 
 def cmd_status(args: argparse.Namespace, settings: Settings, secrets: SecretStore) -> int:
-    report = service.status(args.data_dir, args.port or settings.port)
+    report = service.status(args.data_dir, args.port)  # None: the instance's recorded port
     print("\n".join(report.lines))
     for line in service.service_status(sys.platform, Path.home(), args.data_dir):
         print(line)

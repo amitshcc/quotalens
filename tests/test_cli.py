@@ -181,3 +181,20 @@ def test_start_passes_data_dir_to_child(monkeypatch, tmp_path, capsys) -> None:
     assert seen["data_dir"] == tmp_path
     assert "8790" in seen["args"]
     assert "http://127.0.0.1:8790/" in capsys.readouterr().out
+
+
+def test_restart_keeps_the_recorded_port_and_interval(monkeypatch, tmp_path) -> None:
+    from quotalens import service
+
+    service.write_runtime(tmp_path, 8790, 30)
+    seen = {}
+    monkeypatch.setattr(service, "stop", lambda data_dir, **kw: None)
+
+    def fake_start(data_dir, serve_args, **kw):
+        seen["args"] = list(serve_args)
+        return service.StartResult(1, data_dir / "q.log", data_dir / "q.pid")
+
+    monkeypatch.setattr(service, "start", fake_start)
+    rc = cli.main(["--data-dir", str(tmp_path), "restart"], secrets=MemorySecretStore(COOKIE))
+    assert rc == 0
+    assert seen["args"] == ["--interval", "30", "--port", "8790"]
