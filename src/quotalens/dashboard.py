@@ -389,7 +389,14 @@ def build_dashboard(
     )
     gap_threshold = STALE_AFTER_INTERVALS * settings.poll_interval_s
     labels = {r.window: r.label for r in latest}
-    chart = _chart_view(range_rows, slots, labels, rng, view, gap_threshold, now, withheld)
+    prior_ts = max(
+        (r.ts for rows in all_rows.values() for r in rows if r.ts < rng.start), default=None
+    )
+    if prior_ts is None and oldest is not None and oldest < rng.start:
+        prior_ts = rng.start  # history reaches back past the range: the left edge counts
+    chart = _chart_view(
+        range_rows, slots, labels, rng, view, gap_threshold, now, withheld, prior_ts
+    )
     _mark_sessions(chart, sessions_all, rng, now)
     _mark_runway(chart, burn.runway, session, rng, now, withheld)
     sort = view.sort_key or "recent"
@@ -629,16 +636,28 @@ def min_burn_span(lookback_s: int) -> int:
 
 
 def find_gaps(
-    timestamps: list[int], start: int, end: int, threshold_s: int
+    timestamps: list[int],
+    start: int,
+    end: int,
+    threshold_s: int,
+    prior_ts: int | None = None,
 ) -> list[tuple[int, int]]:
-    """Spans inside [start, end] longer than ``threshold_s`` with no sample. Trailing gaps count."""
-    ts = sorted(t for t in timestamps if start <= t <= end)
+    """Spans inside [start, end] longer than ``threshold_s`` with no sample.
+
+    ``prior_ts`` anchors the left edge: the newest sample before the range, or the
+    range start when history reaches back past it but no sample survives inside the
+    fetch window. Without it a gap that *began* before the range is invisible, and a
+    range that was two thirds uncollected reads as collected and flat — which is the
+    one thing this tool exists not to do. Leading and trailing gaps both count.
+    """
+    inside = sorted(t for t in timestamps if start <= t <= end)
+    marks = ([max(prior_ts, start)] if prior_ts is not None else []) + inside
     gaps: list[tuple[int, int]] = []
-    for a, b in pairwise(ts):
+    for a, b in pairwise(marks):
         if b - a > threshold_s:
             gaps.append((a, b))
-    if ts and end - ts[-1] > threshold_s:
-        gaps.append((ts[-1], end))
+    if marks and end - marks[-1] > threshold_s:
+        gaps.append((marks[-1], end))
     return gaps
 
 
@@ -661,6 +680,7 @@ def _chart_view(
     gap_threshold_s: int,
     now: int,
     withheld: bool,
+    prior_ts: int | None = None,
 ) -> ChartView:
     start, end = rng.start, rng.end
     span = max(1, end - start)
@@ -712,7 +732,8 @@ def _chart_view(
     series.sort(key=lambda s: -s.slot)  # draw the hero trace last, on top
 
     timestamps = sorted({r.ts for rows in visible.values() for r in rows})
-    gaps = find_gaps(timestamps, start, min(end, now), gap_threshold_s)  # the future is not a gap
+    # the future is not a gap; the left edge is, when we should have been collecting
+    gaps = find_gaps(timestamps, start, min(end, now), gap_threshold_s, prior_ts)
     gap_minutes = sum(b - a for a, b in gaps) // 60
     gap_x = [(x_of(a), x_of(b)) for a, b in gaps]
 

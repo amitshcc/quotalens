@@ -123,3 +123,24 @@ inference from source: write down what was on screen or in the DOM.
 - 2026-09-03: the "partial, N% observed" badge divides by the viewing instance's
       `--interval`, not the cadence the samples were collected at: a 60s database
       viewed at `--interval 30` showed every window as ~50% observed.
+- 2026-09-03: a collection gap that runs from the start of the selected range to
+      the first sample *inside* it is neither hatched nor counted: `find_gaps`
+      only pairs timestamps already inside `[start, end]`, so trailing gaps count
+      and leading ones vanish. Repro: an instance resumed after hours off, `?range=6h`
+      said "Not collected 0 min in range" while `?range=24h` on the same data said
+      548, and the hero hour strip hatched the same hours the chart drew as ordinary
+      background.
+- 2026-09-03: `prune --dry-run` reported "would remove 2068 raw samples; 2270 kept",
+      i.e. the pre-prune count, not the count that would remain (202). Its size line
+      also sums an uncheckpointed WAL, so a dry run printed "9.4 MB -> 9.4 MB" for a
+      4.9 MB file while the real run of the same command printed "4.9 MB -> 0.8 MB".
+- 2026-09-03: restarting the service re-fired `burn_alert` and re-POSTed the webhook
+      while the rate was still above the threshold; three restarts gave three events
+      and three POSTs. `alerts.py` says "a restart cannot re-fire an alert that
+      already fired", but the detector is in-memory and starts with `firing=False`.
+- 2026-09-03: the alert path and the display path disagree on how much data a burn
+      rate needs. On a cold database with the default 20 pts/hr threshold, a
+      `burn_alert` event and a webhook POST went out 61 seconds after start ("Burn
+      rate 180.0 pts/hr") while the hero read "Collecting: 1m of samples", the burn
+      figure was an em dash and the header showed no chip: `MIN_SPAN_S` is 60s for
+      the alert, `DISPLAY_MIN_BURN_SPAN_S` is 300s for the screen.
