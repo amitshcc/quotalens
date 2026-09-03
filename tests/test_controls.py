@@ -94,7 +94,9 @@ def test_page_reflects_query_without_javascript(settings, store, secrets) -> Non
     assert "lookback 1h" in html  # the hero sentence states the lookback
     # the hidden series keeps its label (struck through) but draws no path
     assert 'class="el off">Weekly all</text>' in html
-    assert html.count('stroke="var(--s2)"') == 1  # only the brand mark
+    # Nothing draws in the second series colour: the hidden series has no path, and
+    # the ring mark carries only the session-window colour.
+    assert html.count('stroke="var(--s2)"') == 0
     # links carry the other state along; toggling seven_day back removes the hide param
     link = re.search(r'<a href="([^"]+)" class="el-link" data-series="seven_day"', html).group(1)
     assert "hide=" not in link and "range=6h" in link and "lookback=1h" in link

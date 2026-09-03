@@ -8,6 +8,7 @@ from quotalens import __version__
 from quotalens.alerts import ALERT_KIND
 from quotalens.dashboard import (
     PLOT_RIGHT,
+    RATE_WINDOW,
     Control,
     Dashboard,
     SeriesView,
@@ -39,14 +40,99 @@ ICONS = (
     "</defs></svg>"
 )
 
-MARK = (
-    '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke-linecap="round" '
-    'aria-hidden="true"><path d="M11 2.9C13.5 8 13.5 16 11 21.1 8.5 16 8.5 8 11 2.9Z" '
-    'fill="var(--txt-dim)" fill-opacity=".2" stroke="var(--txt-dim)" stroke-width="1.8" '
-    'stroke-linejoin="round"/><path d="M1.6 12H8.85" stroke="var(--txt-dim)" stroke-width="1.8"/>'
-    '<path d="M13.15 11.3 22.4 5.4" stroke="var(--s1)" stroke-width="2.3"/>'
-    '<path d="M13.15 13 22.4 10.1" stroke="var(--s2)" stroke-width="1.9"/></svg>'
-)
+# The mark, per DESIGN.md §9: a faint full circle is the whole session window, and
+# a solid arc over it, clockwise from twelve, is the part of it you have used. Both
+# geometries are fixed by that section; the favicon is redrawn on a true 16 grid
+# rather than scaled, so its strokes land on whole pixels.
+MARK_GRID, MARK_R, MARK_STROKE, MARK_CIRC = 24, 9.0, 2.6, 56.55  # 2*pi*9
+MARK_SIZE = 22  # as rendered in the header
+FAVICON_GRID, FAVICON_R, FAVICON_STROKE, FAVICON_CIRC = 16, 5.5, 3.0, 34.56  # 2*pi*5.5
+UNKNOWN_DASH = "3 3"  # the empty track when there is no reading to draw
+
+# The arc follows the meters, not the brand: the same three states, the same tokens.
+ARC_COLOUR = {"elevated": "var(--st-elevated)", "critical": "var(--st-critical)"}
+
+
+def mark_reading(dash: Dashboard) -> tuple[float | None, str]:
+    """What the mark draws: the session window, as the 5-hour meter already has it.
+
+    Read off the built view rather than recomputed from the store, so the mark in
+    the header and the meter below it cannot disagree. ``None`` means there is no
+    trusted reading, which is drawn as an empty ring rather than as a stale arc.
+    """
+    window = next((w for w in dash.windows if w.key == RATE_WINDOW), None)
+    if window is None or window.withheld or window.pct is None:
+        return None, "normal"
+    return max(0.0, min(window.pct, 100.0)) / 100.0, window.state
+
+
+def ring(
+    fraction: float | None,
+    state: str,
+    grid: int,
+    size: int,
+    radius: float,
+    width: float,
+    circumference: float,
+    tail: str,
+) -> str:
+    """The mark at one size. Attributes only: an inline <style> would fail a strict CSP."""
+    centre = grid / 2
+    circle = (
+        f'<circle cx="{centre:g}" cy="{centre:g}" r="{radius:g}" fill="none" '
+        f'stroke-width="{width:g}"'
+    )
+    if fraction is None:
+        # Stale, auth-failed or unverified. A mark frozen at the last good reading
+        # is a lie in the tab strip, the same way a stale red number is one.
+        body = f'{circle} stroke="var(--txt-far)" stroke-dasharray="{UNKNOWN_DASH}"/>'
+    else:
+        used = circumference * fraction
+        body = (
+            f'{circle} stroke="var(--txt-far)"/>'
+            f'{circle} stroke="{ARC_COLOUR.get(state, "var(--s1)")}" '
+            f'stroke-dasharray="{used:.2f} {circumference:.2f}" '
+            f'transform="rotate(-90 {centre:g} {centre:g})"/>'
+        )
+    return f'<svg viewBox="0 0 {grid} {grid}" width="{size}" height="{size}" {tail}>{body}</svg>'
+
+
+def header_mark(dash: Dashboard) -> str:
+    """Hidden from screen readers: "QuotaLens" is beside it and the percentage is a meter."""
+    fraction, state = mark_reading(dash)
+    return ring(
+        fraction,
+        state,
+        MARK_GRID,
+        MARK_SIZE,
+        MARK_R,
+        MARK_STROKE,
+        MARK_CIRC,
+        'aria-hidden="true"',
+    )
+
+
+def favicon_svg(dash: Dashboard) -> str:
+    """The tab strip, where the mark is the only thing you can read from another tab."""
+    fraction, state = mark_reading(dash)
+    reading = (
+        "session window unknown"
+        if fraction is None
+        else f"{fraction * 100:.0f}% of the session window used"
+    )
+    label = f"QuotaLens \u2014 {reading}"
+    svg = ring(
+        fraction,
+        state,
+        FAVICON_GRID,
+        FAVICON_GRID,
+        FAVICON_R,
+        FAVICON_STROKE,
+        FAVICON_CIRC,
+        f'xmlns="http://www.w3.org/2000/svg" role="img" aria-label="{e(label)}"',
+    )
+    return svg.replace(">", f"><title>{e(label)}</title>", 1)
+
 
 _CHIP = {
     "elevated": ("elev", "i-rate"),
@@ -102,7 +188,7 @@ def _header(dash: Dashboard) -> str:
     )
     return (
         '<header><div class="wrap">'
-        f'<span class="brand">{MARK}QuotaLens</span><span class="spacer"></span>'
+        f'<span class="brand">{header_mark(dash)}QuotaLens</span><span class="spacer"></span>'
         f"{lost}{_alert_chip(dash)}{chip(dash.chip, dash.chip_text)}"
         f'<span class="lbl m" id="polled" data-ts="{ts}" data-fallback="{e(fallback)}">'
         f"{e(dash.polled_text)}</span>"

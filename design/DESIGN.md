@@ -27,6 +27,12 @@ Everything else in the chrome is achromatic. If a chrome element seems to need
 colour, it is either data (use a series colour) or a state (use a state
 treatment). It is never a brand accent.
 
+The mark is the fourth use and it agrees with the other three: its arc **is**
+the session window, drawn at whatever fraction the window is currently at. That
+is why the mark may carry amber while the header it sits in may not. A mark
+drawn amber for decoration would break the rule; a mark that is a reading does
+not.
+
 ## 2. Three tiers of emphasis
 
 | Tier | What it is | Treatment |
@@ -214,29 +220,59 @@ Five, hand-drawn, inline, defined once as `<symbol>` in a hidden sprite:
 16×16, 1.6px stroke, `currentColor`, round caps and joins. One slot is
 deliberately unspent.
 
-The lens mark is not one of the five; it is the brand.
+The ring mark is not one of the five; it is the brand.
 
 ## 9. The mark
 
-A ray diagram. A flat line comes in from the left — that is a level, which is
-what the Claude usage page gives you. It passes through a biconvex lens and
-leaves as two rising, diverging rays — a rate, and the separation of what is
-producing it. The lens is the thing that converts one into the other, which is
-the product in one drawing.
+A ring. A faint full circle is the whole session window; a solid arc drawn over
+it, clockwise from twelve o'clock, is the part of that window you have used. The
+mark is not a picture of the product — it is a reading taken from it.
 
-It is not an aperture. Refraction stayed in the mark; dispersion moved to the
-chart palette, where it does actual work.
+Three properties earned it over the ray diagram it replaced:
 
-- `mark.svg` — 24×24, holds down to about 24px.
-- `favicon.svg` — the mark simplified, not scaled: the incoming beam is dropped,
-  the lens becomes a solid fill, two rays remain, strokes thicken to 2.2–2.6.
+- **It is legible at 16px.** Two concentric strokes and nothing else. The lens
+  needed four paths and lost them all in a tab strip.
+- **It carries a value.** The arc length is `2πr × fraction`, so the same file
+  is the static mark and the live one — the poller updates one attribute. In the
+  app the favicon is the session window, readable from a background tab.
+- **The whole is visible.** The track behind the arc is what makes 68% read as
+  68% rather than as "most of a circle". Drop the track and the mark becomes a
+  loading spinner.
+
+Geometry, fixed:
+
+```
+grid 24 · centre 12,12 · r 9 · stroke 2.6 · circumference 56.55
+track   --txt-far, full circle
+arc     --s1, stroke-dasharray "<56.55 × pct> 56.55", rotate(-90 12 12)
+```
+
+**The arc shows what is used, and grows.** The moment that matters is 91%, and a
+nearly-full red circle is a stronger signal than a nearly-empty one. An arc that
+shrinks leaves the danger point almost invisible, which is backwards. It also
+matches every progress ring anyone has seen, so it needs no learning.
+
+**States follow the meters, not the brand.** Elevated and critical recolour the
+arc (`--st-elevated`, `--st-critical`). Stale, auth-failed and unverified show a
+**dashed empty track and no arc at all** — the same rule as everywhere else in
+this system: when the value is unknown it is removed, never guessed. A mark
+frozen at the last good reading is a lie in the tab strip.
+
+The canonical value for static contexts — the site header, the logo, the OG
+image — is **68%**. Do not vary it per surface; one number, so the mark is the
+same drawing everywhere it is not live.
+
+- `mark.svg` — 24×24, the two circles above.
+- `favicon.svg` — redrawn on a true 16 grid (centre 8,8, r 5.5, stroke 3), not
+  scaled, so the strokes land on whole pixels.
 - `logo.svg` — mark plus wordmark, 186×40.
 
 Each file carries an internal `<style>` defining fallbacks for both colour
 schemes, so a standalone `<img>` renders correctly on either background. **Inline
-the SVG wherever the app can**, because only then do `--txt-dim`, `--s1` and
-`--s2` resolve from `tokens.css` and follow a manual theme toggle; an `<img>`
-can only follow the OS.
+the SVG wherever the app can**, because only then do `--txt-far` and `--s1`
+resolve from `tokens.css` and follow a manual theme toggle; an `<img>` can only
+follow the OS. When inlining, strip the internal `<style>` and reference the
+tokens directly — a `<style>` block inside inlined SVG violates a strict CSP.
 
 The wordmark is set in `--font-ui` as live `<text>`, not outlines. That means it
 substitutes per platform — which is the honest consequence of a no-webfonts

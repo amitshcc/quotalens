@@ -134,11 +134,12 @@ footer{margin-top:var(--sp-5);padding-top:var(--sp-3);border-top:var(--hair) sol
 <header>
   <div class="wrap">
     <span class="brand">
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke-linecap="round" aria-hidden="true">
-        <path d="M11 2.9C13.5 8 13.5 16 11 21.1 8.5 16 8.5 8 11 2.9Z" fill="var(--txt-dim)" fill-opacity=".2" stroke="var(--txt-dim)" stroke-width="1.8" stroke-linejoin="round"/>
-        <path d="M1.6 12H8.85" stroke="var(--txt-dim)" stroke-width="1.8"/>
-        <path d="M13.15 11.3 22.4 5.4" stroke="var(--s1)" stroke-width="2.3"/>
-        <path d="M13.15 13 22.4 10.1" stroke="var(--s2)" stroke-width="1.9"/>
+      <!-- design/mark.svg inlined: the arc is the session window, 68% here to
+           match the meter below. Live in the app; static everywhere else. -->
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" stroke="var(--txt-far)" stroke-width="2.6"/>
+        <circle cx="12" cy="12" r="9" stroke="var(--s1)" stroke-width="2.6"
+                stroke-dasharray="38.45 56.55" transform="rotate(-90 12 12)"/>
       </svg>
       QuotaLens
     </span>
