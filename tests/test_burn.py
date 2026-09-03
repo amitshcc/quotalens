@@ -46,18 +46,26 @@ def test_reset_detected_by_sharp_drop_without_resets_at() -> None:
     assert result.segment_start_ts == T0 + 5 * 60
 
 
-def test_small_dip_is_not_a_reset() -> None:
-    # A one-point wobble (server-side rounding) must not split the series.
+def test_a_falling_percentage_never_decides_on_its_own() -> None:
+    # A wobble and a large correction are both non-events while resets_at holds.
     assert not is_reset(row(0, 50.0), row(1, 49.0))
-    assert is_reset(row(0, 50.0), row(1, 40.0))
+    assert not is_reset(row(0, 50.0), row(1, 40.0))
     assert is_reset(row(0, 50.0, R1), row(1, 50.0, R2))
-    assert not is_reset(row(0, 50.0, R1), row(1, 50.0, None))
+    assert not is_reset(row(0, 50.0, R1), row(1, 50.0, None))  # one missing: 0 pt drop
 
 
 def test_split_at_resets_segments() -> None:
+    # Only the expiry change at the end splits this series; the 20 -> 1 drop is
+    # a correction, because both samples claim the same expiry.
     rows = [row(0, 10), row(1, 20), row(2, 1), row(3, 2), row(4, 3, R2)]
     segments = split_at_resets(rows)
-    assert [[r.pct for r in s] for s in segments] == [[10, 20], [1, 2], [3]]
+    assert [[r.pct for r in s] for s in segments] == [[10, 20, 1, 2], [3]]
+
+
+def test_split_at_resets_segments_without_expiries() -> None:
+    # The same shape with no expiry at all: now the drop rule is all we have.
+    rows = [row(0, 10, None), row(1, 20, None), row(2, 1, None), row(3, 2, None)]
+    assert [[r.pct for r in s] for s in split_at_resets(rows)] == [[10, 20], [1, 2]]
 
 
 def test_reset_just_now_reports_insufficient_points() -> None:
@@ -102,4 +110,28 @@ def test_jittered_series_still_yields_a_rate() -> None:
     rows = [row(m, 70 + m, f"2026-09-02T12:40:00.{m:06d}+00:00") for m in range(0, 16)]
     result = burn_rate("five_hour", rows, 15 * 60, T0 + 15 * 60)
     assert result.rate_pct_per_hour == 60.0
+    assert result.points == 16
+
+
+# -- a server-side correction is not a window boundary ---------------------------
+
+
+def test_downward_correction_with_unchanged_reset_is_not_a_boundary() -> None:
+    """Anthropic has shipped percentage corrections; resets_at is the authority."""
+    assert not is_reset(row(0, 84.0), row(1, 13.0))  # the #12149 shape, inverted
+    assert not is_reset(row(0, 50.0), row(1, 44.0))  # just past RESET_DROP_PCT
+    # the drop rule still stands in where an expiry is missing
+    assert is_reset(row(0, 50.0, None), row(1, 40.0, None))
+    assert is_reset(row(0, 50.0, R1), row(1, 40.0, None))
+    assert not is_reset(row(0, 50.0, None), row(1, 49.0, None))
+    # and a moved expiry is still a boundary, however the percentage behaves
+    assert is_reset(row(0, 50.0, R1), row(1, 60.0, R2))
+
+
+def test_correction_does_not_split_the_burn_segment() -> None:
+    rows = [row(m, 80 + m) for m in range(0, 8)]  # climbing
+    rows += [row(m, 60 + m) for m in range(8, 16)]  # corrected down 20 points, same expiry
+    assert len(split_at_resets(rows)) == 1
+    result = burn_rate("five_hour", rows, 15 * 60, T0 + 15 * 60)
+    assert result.segment_start_ts == T0  # the whole series, not a fragment
     assert result.points == 16

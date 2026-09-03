@@ -4,15 +4,17 @@ The subtle part is the window reset. When a 5-hour window rolls over the
 percentage drops sharply; that is a discontinuity, not a negative rate. We cut
 the series into segments at every reset and only measure inside the newest one.
 
-A reset is detected between two consecutive samples when either:
+A reset is detected between two consecutive samples by ``resets_at`` when both
+samples carry one: the boundary is where it moves by more than
+:data:`RESET_TIME_TOLERANCE_S`. The tolerance exists because the live server
+recomputes ``resets_at`` on every call and only the microseconds jitter
+(``12:40:00.421772`` then ``12:40:00.656558``).
 
-* ``resets_at`` moved by more than :data:`RESET_TIME_TOLERANCE_S` (both values
-  present), or
-* the percentage fell by more than :data:`RESET_DROP_PCT` points.
-
-The second rule covers payloads where ``resets_at`` is absent or null. The
-tolerance exists because the live server recomputes ``resets_at`` on every call
-and the microseconds jitter (``12:40:00.421772`` then ``12:40:00.656558``).
+Only when a ``resets_at`` is missing does the percentage falling by more than
+:data:`RESET_DROP_PCT` stand in for it. The drop rule must never override an
+unchanged expiry: Anthropic has shipped downward corrections to a displayed
+percentage, and treating one as a window boundary splits a burn segment,
+truncates a session window and writes a bad ``session_window`` row.
 """
 
 from __future__ import annotations
@@ -75,9 +77,14 @@ class BurnResult:
 
 
 def is_reset(prev: QuotaRow, cur: QuotaRow) -> bool:
-    """True if a window boundary lies between ``prev`` and ``cur``."""
-    if prev.resets_at and cur.resets_at and resets_at_changed(prev.resets_at, cur.resets_at):
-        return True
+    """True if a window boundary lies between ``prev`` and ``cur``.
+
+    When both samples carry a ``resets_at`` that value decides, and a falling
+    percentage on its own decides nothing: a server-side correction is not a new
+    window. The drop rule applies only where an expiry is missing.
+    """
+    if prev.resets_at and cur.resets_at:
+        return resets_at_changed(prev.resets_at, cur.resets_at)
     return (prev.pct - cur.pct) > RESET_DROP_PCT
 
 

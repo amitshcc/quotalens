@@ -235,3 +235,23 @@ def test_thin_windows_render_far_and_idle_differs_from_gap(settings, store) -> N
     html = render_app(dash)
     assert 'class="idle"' in html and 'fill="url(#gap)"' in html and 'class="sess"' in html
     assert 'class="r-thin"' in html
+
+
+def test_a_server_side_correction_does_not_truncate_the_window(tmp_path) -> None:
+    """The three consequences of the old drop-rule bug, at the level they bit."""
+    e1 = T0 + SESSION_LENGTH_S
+    rows = [(T0 + i * 60, 80 + i, e1) for i in range(0, 10)]
+    rows += [(T0 + i * 60, 55 + i, e1) for i in range(10, 20)]  # corrected down 25 points
+    windows = derive_sessions({"five_hour": rate_rows(rows)}, now=T0 + 3600)
+    assert len(windows) == 1  # one window, not two
+    assert windows[0].samples == 20  # counting every row, not truncated at the correction
+    assert windows[0].started_at == T0 and windows[0].peak_pct == 89
+
+    store = Store(tmp_path / "c.db")
+    for ts, pct, ends in rows:
+        store.record_quota(ts, [QuotaReading("five_hour", "5-hour", pct, iso(ends))])
+    assert rebuild(store, now=T0 + 3600) == 1
+    assert rebuild(store, now=T0 + 3600) == 1  # and the bad row cannot come back
+    stored = store.sessions()
+    assert len(stored) == 1 and stored[0]["samples"] == 20
+    store.close()
