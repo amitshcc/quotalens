@@ -30,6 +30,18 @@ button:hover{background:var(--hover);color:var(--txt)}
 .ic{width:13px;height:13px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;
   stroke-linecap:round;stroke-linejoin:round}
 
+/* The theme button shows the theme a click would give you. These rules mirror the
+   ones in tokens.css: dark is the default, the OS may ask for light, the toggle wins. */
+.ic-moon{display:none}
+@media (prefers-color-scheme:light){
+  :root:not([data-theme=dark]) .ic-sun{display:none}
+  :root:not([data-theme=dark]) .ic-moon{display:inline-block}
+}
+[data-theme=light] .ic-sun{display:none}
+[data-theme=light] .ic-moon{display:inline-block}
+[data-theme=dark] .ic-sun{display:inline-block}
+[data-theme=dark] .ic-moon{display:none}
+
 /* chips */
 .chip{display:inline-flex;align-items:center;gap:5px;font-size:var(--fs-xs);
   padding:1px 6px;border-radius:var(--r-1);white-space:nowrap;vertical-align:1px}

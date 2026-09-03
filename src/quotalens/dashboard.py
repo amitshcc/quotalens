@@ -52,6 +52,7 @@ from quotalens.views import (
 HERO_HOURS = 5
 CHART_W, CHART_H = 1272, 216
 CHART_L, CHART_R, CHART_T, CHART_B = 44, 122, 14, 20
+PLOT_RIGHT = CHART_W - CHART_R  # the right edge of the plotting area, in chart units
 HERO_W, HERO_H = 1272, 108
 LABEL_GAP = 13.0
 MAX_POINTS_PER_SERIES = 600  # longer ranges are bucketed, keeping the last sample per bucket
