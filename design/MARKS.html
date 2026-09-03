@@ -1,0 +1,367 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{box-sizing:border-box}body{margin:0}</style>
+<title>Twelve QuotaLens Marks</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+</head><body>
+<style>
+:root{
+  --pg:#F2F3F1; --pg-2:#E9EBE8; --ink:#15191A; --dim:#5B6462; --far:#8B9391;
+  --hair:#D6DAD6; --hair-2:#C2C7C2; --lift:#FCFDFB; --track:#C9CEC9;
+  --sig:#A81E26; --ok:#1F5F52;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --cond:"IBM Plex Sans Condensed","IBM Plex Sans",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --pg:#111415; --pg-2:#181C1D; --ink:#E0E5E3; --dim:#98A19E; --far:#6E7775;
+    --hair:#242A2B; --hair-2:#333A3B; --lift:#0C0F10; --track:#39413F;
+    --sig:#F0575C; --ok:#4FC0A0;
+  }
+}
+:root[data-theme="dark"]{
+  --pg:#111415; --pg-2:#181C1D; --ink:#E0E5E3; --dim:#98A19E; --far:#6E7775;
+  --hair:#242A2B; --hair-2:#333A3B; --lift:#0C0F10; --track:#39413F;
+  --sig:#F0575C; --ok:#4FC0A0;
+}
+:root[data-theme="light"]{
+  --pg:#F2F3F1; --pg-2:#E9EBE8; --ink:#15191A; --dim:#5B6462; --far:#8B9391;
+  --hair:#D6DAD6; --hair-2:#C2C7C2; --lift:#FCFDFB; --track:#C9CEC9;
+  --sig:#A81E26; --ok:#1F5F52;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--pg);color:var(--ink);font-family:var(--sans);
+  font-size:16px;line-height:1.55;-webkit-font-smoothing:antialiased;
+  font-variant-numeric:tabular-nums}
+.wrap{max-width:1120px;margin:0 auto;padding:0 28px 88px}
+p{margin:0 0 14px}
+.eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--far);margin:0 0 10px}
+header.top{border-bottom:1px solid var(--hair-2);padding:52px 0 26px}
+h1{font-family:var(--cond);font-weight:600;font-size:clamp(32px,4.6vw,48px);
+  line-height:1.05;letter-spacing:-.015em;margin:0 0 14px;text-wrap:balance}
+.sub{font-size:17px;color:var(--dim);max-width:60ch;margin:0}
+h2{font-family:var(--cond);font-weight:600;font-size:24px;letter-spacing:-.01em;margin:0 0 6px}
+h3{font-size:14px;font-weight:600;margin:0 0 6px}
+section{padding-top:46px}
+.lede{max-width:64ch;color:var(--dim);font-size:15px}
+.rule{height:1px;background:var(--hair-2);margin:46px 0 0}
+
+.strip{border:1px solid var(--hair-2);background:var(--lift);margin-top:24px;
+  padding:22px 22px 16px;overflow-x:auto}
+.strip-row{display:flex;align-items:center;gap:30px;min-width:620px}
+.strip-row .cell{display:flex;flex-direction:column;align-items:center;gap:9px;color:var(--ink)}
+.strip-row .cell span{font-family:var(--mono);font-size:10px;color:var(--far)}
+.strip-note{font-family:var(--mono);font-size:11px;color:var(--far);
+  margin:18px 0 0;letter-spacing:.03em}
+
+.fam{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-top:44px;
+  padding-bottom:10px;border-bottom:1px solid var(--hair-2)}
+.fam h2{margin:0}
+.fam p{margin:0;font-size:14.5px;color:var(--dim)}
+
+.grid{display:grid;grid-template-columns:repeat(3,1fr);border-left:1px solid var(--hair)}
+@media (max-width:860px){.grid{grid-template-columns:1fr}}
+.card{border-right:1px solid var(--hair);border-bottom:1px solid var(--hair);
+  display:flex;flex-direction:column}
+.plate{background:var(--lift);border-bottom:1px solid var(--hair);height:152px;
+  display:flex;align-items:center;justify-content:center;color:var(--ink);position:relative}
+.plate .no{position:absolute;top:10px;left:12px;font-family:var(--mono);
+  font-size:11px;color:var(--far)}
+.body{padding:16px 20px 20px;display:flex;flex-direction:column;flex:1}
+.nm{font-family:var(--cond);font-weight:600;font-size:19px;margin:0 0 4px;letter-spacing:-.005em}
+.says{font-size:14px;color:var(--dim);margin:0 0 16px}
+.sizes{display:flex;align-items:flex-end;gap:18px;padding:14px 0 0;
+  border-top:1px solid var(--hair);color:var(--ink);margin-top:auto}
+.sizes .s{display:flex;flex-direction:column;align-items:center;gap:7px}
+.sizes .s b{font-family:var(--mono);font-size:9.5px;font-weight:400;color:var(--far)}
+.tab{display:flex;align-items:center;gap:7px;background:var(--pg-2);
+  border:1px solid var(--hair);border-bottom:none;border-radius:6px 6px 0 0;
+  padding:6px 12px 6px 9px;font-size:11.5px;color:var(--dim);margin-left:auto;
+  white-space:nowrap;align-self:flex-end}
+.tab b{color:var(--ink);font-weight:500}
+.verdict{font-family:var(--mono);font-size:11px;color:var(--far);margin:14px 0 0;letter-spacing:.02em}
+.verdict.good{color:var(--ok)}
+.verdict.warn{color:var(--sig)}
+
+.live{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
+  border:1px solid var(--hair-2);margin-top:24px;background:var(--lift)}
+.live .st{padding:22px 20px;border-right:1px solid var(--hair);text-align:center;color:var(--ink)}
+.live .st:last-child{border-right:none}
+.live .lbl{font-family:var(--mono);font-size:11px;color:var(--far);margin-top:14px;display:block}
+.live .pc{font-family:var(--mono);font-size:13px;margin-top:2px;display:block}
+.live .st.crit .pc{color:var(--sig)}
+
+table.cmp{width:100%;border-collapse:collapse;font-size:14px;margin-top:18px}
+table.cmp th,table.cmp td{text-align:left;padding:11px 16px 11px 0;
+  border-bottom:1px solid var(--hair);vertical-align:middle}
+table.cmp th{font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--far);font-weight:400;white-space:nowrap}
+table.cmp td{color:var(--dim)}
+table.cmp td:first-child{width:34px;color:var(--ink);line-height:0;padding-right:12px}
+table.cmp td:nth-child(2){font-weight:500;color:var(--ink);white-space:nowrap}
+ul.tight{margin:0;padding-left:18px;font-size:15px;color:var(--dim);max-width:64ch}
+ul.tight li{margin-bottom:8px}
+ul.tight b{color:var(--ink);font-weight:600}
+.foot{margin-top:52px;padding-top:20px;border-top:1px solid var(--hair-2);
+  font-family:var(--mono);font-size:11.5px;color:var(--far);max-width:72ch;line-height:1.7}
+</style>
+
+<div class="wrap">
+
+<header class="top">
+  <p class="eyebrow">QuotaLens · marks · round two</p>
+  <h1>Twelve marks, shown at the size they live at</h1>
+  <p class="sub">Every one is a single icon on a 24-unit grid: square, two paths or fewer, no texture and no
+  scene. Each is drawn large enough to actually see, then repeated at 24px, at 16px, and inside a browser
+  tab — which is where it has to work.</p>
+</header>
+
+<section style="padding-top:34px">
+  <h2>The only test that matters</h2>
+  <p class="lede">All twelve at 16px, favicon size, in one row. If a mark disappears here it is out, however
+  good it looks blown up.</p>
+  <div class="strip">
+    <div class="strip-row">
+      <div class="cell"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-dasharray="38.4 56.6" transform="rotate(-90 12 12)"/></svg><span>01</span></div>
+      <div class="cell"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><rect x="6.6" y="9.8" width="10.8" height="7.6" rx="1" fill="currentColor"/></svg><span>02</span></div>
+      <div class="cell"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="8" width="20" height="8" rx="4" fill="none" stroke="currentColor" stroke-width="2"/><rect x="4.7" y="10.4" width="9.8" height="3.2" rx="1.6" fill="currentColor"/></svg><span>03</span></div>
+      <div class="cell"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17.5H10.5L21 6.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>04</span></div>
+      <div class="cell"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><g fill="currentColor"><rect x="3.5" y="15" width="4.4" height="6.5" rx="1"/><rect x="9.8" y="10.5" width="4.4" height="11" rx="1"/><rect x="16.1" y="4.5" width="4.4" height="17" rx="1"/></g></svg><span>05</span></div>
+      <div class="cell"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.8 11.3A8.5 8.5 0 1 1 20.2 11.3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M12 13.5 16.2 7.6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><circle cx="12" cy="13.5" r="1.9" fill="currentColor"/></svg><span>06</span></div>
+      <div class="cell"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 12V3A9 9 0 0 1 19.8 16.5Z" fill="currentColor"/></svg><span>07</span></div>
+      <div class="cell"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 3H18.5L12.6 12L18.5 21H5.5L11.4 12Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8.4 18.4H15.6L12 12.9Z" fill="currentColor"/></svg><span>08</span></div>
+      <div class="cell"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 4H5V20H9"/><path d="M15 4H19V20H15"/></g></svg><span>09</span></div>
+      <div class="cell"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M15.6 15.6 21 21" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"/></svg><span>10</span></div>
+      <div class="cell"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="6" height="18" rx="1.4" fill="currentColor"/><rect x="14" y="3" width="6" height="18" rx="1.4" fill="none" stroke="currentColor" stroke-width="2"/><rect x="16" y="12" width="2" height="7" rx="1" fill="currentColor"/></svg><span>11</span></div>
+      <div class="cell"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="7.5" width="17" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="20.2" y="10.2" width="2.4" height="3.6" rx="1" fill="currentColor"/><rect x="4.4" y="9.9" width="8.2" height="4.2" rx=".8" fill="currentColor"/></svg><span>12</span></div>
+    </div>
+    <p class="strip-note">16 × 16 px, actual size · same numbering as the sheet below</p>
+  </div>
+</section>
+
+<div class="fam"><h2>Level</h2><p>How much is left. The reading is in the shape, so the mark moves as you burn.</p></div>
+<div class="grid">
+  <div class="card">
+    <div class="plate"><span class="no">01</span><svg width="92" height="92" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-dasharray="38.4 56.6" transform="rotate(-90 12 12)"/></svg></div>
+    <div class="body">
+      <p class="nm">Ring</p>
+      <p class="says">A circle drawn 68% of the way round. The most legible way there is to show a fraction inside a square, and nobody needs it explained.</p>
+      <div class="sizes">
+        <div class="s"><svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-dasharray="38.4 56.6" transform="rotate(-90 12 12)"/></svg><b>24</b></div>
+        <div class="s"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-dasharray="38.4 56.6" transform="rotate(-90 12 12)"/></svg><b>16</b></div>
+        <div class="tab"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-dasharray="38.4 56.6" transform="rotate(-90 12 12)"/></svg><b>QuotaLens</b> 68%</div>
+      </div>
+      <p class="verdict good">holds at 16 · live-updatable · nothing else looks like it in a tab strip</p>
+    </div>
+  </div>
+  <div class="card">
+    <div class="plate"><span class="no">02</span><svg width="92" height="92" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><rect x="6.6" y="9.8" width="10.8" height="7.6" rx="1" fill="currentColor"/></svg></div>
+    <div class="body">
+      <p class="nm">Tank</p>
+      <p class="says">A square filling from the bottom, the way a level sits in a vessel. Blunt, very solid small, and it uses the whole icon slot.</p>
+      <div class="sizes">
+        <div class="s"><svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><rect x="6.6" y="9.8" width="10.8" height="7.6" rx="1" fill="currentColor"/></svg><b>24</b></div>
+        <div class="s"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><rect x="6.6" y="9.8" width="10.8" height="7.6" rx="1" fill="currentColor"/></svg><b>16</b></div>
+        <div class="tab"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><rect x="6.6" y="9.8" width="10.8" height="7.6" rx="1" fill="currentColor"/></svg><b>QuotaLens</b> 68%</div>
+      </div>
+      <p class="verdict good">heaviest silhouette of the twelve · live-updatable</p>
+    </div>
+  </div>
+  <div class="card">
+    <div class="plate"><span class="no">03</span><svg width="92" height="92" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="8" width="20" height="8" rx="4" fill="none" stroke="currentColor" stroke-width="2"/><rect x="4.7" y="10.4" width="9.8" height="3.2" rx="1.6" fill="currentColor"/></svg></div>
+    <div class="body">
+      <p class="nm">Bar</p>
+      <p class="says">A progress pill filled to the same 68%. Wider than it is tall, which is the one thing here that fights a square slot.</p>
+      <div class="sizes">
+        <div class="s"><svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="8" width="20" height="8" rx="4" fill="none" stroke="currentColor" stroke-width="2"/><rect x="4.7" y="10.4" width="9.8" height="3.2" rx="1.6" fill="currentColor"/></svg><b>24</b></div>
+        <div class="s"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="8" width="20" height="8" rx="4" fill="none" stroke="currentColor" stroke-width="2"/><rect x="4.7" y="10.4" width="9.8" height="3.2" rx="1.6" fill="currentColor"/></svg><b>16</b></div>
+        <div class="tab"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="8" width="20" height="8" rx="4" fill="none" stroke="currentColor" stroke-width="2"/><rect x="4.7" y="10.4" width="9.8" height="3.2" rx="1.6" fill="currentColor"/></svg><b>QuotaLens</b> 68%</div>
+      </div>
+      <p class="verdict warn">the inner fill thins out at 16 · reads as a generic loading bar</p>
+    </div>
+  </div>
+</div>
+
+<div class="fam"><h2>Rate</h2><p>How fast it is going — the thing the Claude usage page will not tell you.</p></div>
+<div class="grid">
+  <div class="card">
+    <div class="plate"><span class="no">04</span><svg width="92" height="92" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17.5H10.5L21 6.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+    <div class="body">
+      <p class="nm">Break</p>
+      <p class="says">Flat, then the climb. One path, two segments — the exact moment the tool exists to catch, with nothing else in the frame.</p>
+      <div class="sizes">
+        <div class="s"><svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17.5H10.5L21 6.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><b>24</b></div>
+        <div class="s"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17.5H10.5L21 6.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><b>16</b></div>
+        <div class="tab"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17.5H10.5L21 6.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><b>QuotaLens</b> 68%</div>
+      </div>
+      <p class="verdict good">cleanest line of the set · says rate, not amount</p>
+    </div>
+  </div>
+  <div class="card">
+    <div class="plate"><span class="no">05</span><svg width="92" height="92" viewBox="0 0 24 24" aria-hidden="true"><g fill="currentColor"><rect x="3.5" y="15" width="4.4" height="6.5" rx="1"/><rect x="9.8" y="10.5" width="4.4" height="11" rx="1"/><rect x="16.1" y="4.5" width="4.4" height="17" rx="1"/></g></svg></div>
+    <div class="body">
+      <p class="nm">Columns</p>
+      <p class="says">Three bars climbing. The most obvious “usage over time” glyph there is, which is both the appeal and the objection.</p>
+      <div class="sizes">
+        <div class="s"><svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><g fill="currentColor"><rect x="3.5" y="15" width="4.4" height="6.5" rx="1"/><rect x="9.8" y="10.5" width="4.4" height="11" rx="1"/><rect x="16.1" y="4.5" width="4.4" height="17" rx="1"/></g></svg><b>24</b></div>
+        <div class="s"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><g fill="currentColor"><rect x="3.5" y="15" width="4.4" height="6.5" rx="1"/><rect x="9.8" y="10.5" width="4.4" height="11" rx="1"/><rect x="16.1" y="4.5" width="4.4" height="17" rx="1"/></g></svg><b>16</b></div>
+        <div class="tab"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><g fill="currentColor"><rect x="3.5" y="15" width="4.4" height="6.5" rx="1"/><rect x="9.8" y="10.5" width="4.4" height="11" rx="1"/><rect x="16.1" y="4.5" width="4.4" height="17" rx="1"/></g></svg><b>QuotaLens</b> 68%</div>
+      </div>
+      <p class="verdict warn">bulletproof at 16 · shared with every analytics tool ever made</p>
+    </div>
+  </div>
+  <div class="card">
+    <div class="plate"><span class="no">06</span><svg width="92" height="92" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.8 11.3A8.5 8.5 0 1 1 20.2 11.3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M12 13.5 16.2 7.6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><circle cx="12" cy="13.5" r="1.9" fill="currentColor"/></svg></div>
+    <div class="body">
+      <p class="nm">Gauge</p>
+      <p class="says">A dial and a needle. Says “instrument” faster than anything else here, and the needle can track the actual burn rate.</p>
+      <div class="sizes">
+        <div class="s"><svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.8 11.3A8.5 8.5 0 1 1 20.2 11.3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M12 13.5 16.2 7.6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><circle cx="12" cy="13.5" r="1.9" fill="currentColor"/></svg><b>24</b></div>
+        <div class="s"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.8 11.3A8.5 8.5 0 1 1 20.2 11.3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M12 13.5 16.2 7.6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><circle cx="12" cy="13.5" r="1.9" fill="currentColor"/></svg><b>16</b></div>
+        <div class="tab"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.8 11.3A8.5 8.5 0 1 1 20.2 11.3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M12 13.5 16.2 7.6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><circle cx="12" cy="13.5" r="1.9" fill="currentColor"/></svg><b>QuotaLens</b> 68%</div>
+      </div>
+      <p class="verdict warn">three elements in one small square · busiest of the four I would ship</p>
+    </div>
+  </div>
+</div>
+
+<div class="fam"><h2>Window</h2><p>The five-hour and seven-day windows, the unit everything in the product is measured in.</p></div>
+<div class="grid">
+  <div class="card">
+    <div class="plate"><span class="no">07</span><svg width="92" height="92" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 12V3A9 9 0 0 1 19.8 16.5Z" fill="currentColor"/></svg></div>
+    <div class="body">
+      <p class="nm">Dial</p>
+      <p class="says">A clock face with the used part of the window filled in. Level and time in one shape, which is exactly what a five-hour window is.</p>
+      <div class="sizes">
+        <div class="s"><svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 12V3A9 9 0 0 1 19.8 16.5Z" fill="currentColor"/></svg><b>24</b></div>
+        <div class="s"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 12V3A9 9 0 0 1 19.8 16.5Z" fill="currentColor"/></svg><b>16</b></div>
+        <div class="tab"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 12V3A9 9 0 0 1 19.8 16.5Z" fill="currentColor"/></svg><b>QuotaLens</b> 68%</div>
+      </div>
+      <p class="verdict good">very solid at 16 · live-updatable · reads as time, not just quantity</p>
+    </div>
+  </div>
+  <div class="card">
+    <div class="plate"><span class="no">08</span><svg width="92" height="92" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 3H18.5L12.6 12L18.5 21H5.5L11.4 12Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8.4 18.4H15.6L12 12.9Z" fill="currentColor"/></svg></div>
+    <div class="body">
+      <p class="nm">Glass</p>
+      <p class="says">An hourglass, part run through. Warmer than the rest, and the only one that implies a deadline rather than a quantity.</p>
+      <div class="sizes">
+        <div class="s"><svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 3H18.5L12.6 12L18.5 21H5.5L11.4 12Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8.4 18.4H15.6L12 12.9Z" fill="currentColor"/></svg><b>24</b></div>
+        <div class="s"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 3H18.5L12.6 12L18.5 21H5.5L11.4 12Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8.4 18.4H15.6L12 12.9Z" fill="currentColor"/></svg><b>16</b></div>
+        <div class="tab"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 3H18.5L12.6 12L18.5 21H5.5L11.4 12Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8.4 18.4H15.6L12 12.9Z" fill="currentColor"/></svg><b>QuotaLens</b> 68%</div>
+      </div>
+      <p class="verdict warn">the waist closes up at 16 · most decorative of the twelve</p>
+    </div>
+  </div>
+  <div class="card">
+    <div class="plate"><span class="no">09</span><svg width="92" height="92" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 4H5V20H9"/><path d="M15 4H19V20H15"/></g></svg></div>
+    <div class="body">
+      <p class="nm">Brackets</p>
+      <p class="says">A window with nothing in it. The most abstract of the twelve and the only one that can never be made wrong by a change to the product.</p>
+      <div class="sizes">
+        <div class="s"><svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 4H5V20H9"/><path d="M15 4H19V20H15"/></g></svg><b>24</b></div>
+        <div class="s"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 4H5V20H9"/><path d="M15 4H19V20H15"/></g></svg><b>16</b></div>
+        <div class="tab"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 4H5V20H9"/><path d="M15 4H19V20H15"/></g></svg><b>QuotaLens</b> 68%</div>
+      </div>
+      <p class="verdict warn">holds fine · but it says “code”, not “quota”</p>
+    </div>
+  </div>
+</div>
+
+<div class="fam"><h2>Long shots</h2><p>Worth seeing, and I would not ship any of the three.</p></div>
+<div class="grid">
+  <div class="card">
+    <div class="plate"><span class="no">10</span><svg width="92" height="92" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M15.6 15.6 21 21" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"/></svg></div>
+    <div class="body">
+      <p class="nm">Q</p>
+      <p class="says">A ring and a tail: the initial, and read the other way a lens on a handle. The only mark here that carries the name.</p>
+      <div class="sizes">
+        <div class="s"><svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M15.6 15.6 21 21" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"/></svg><b>24</b></div>
+        <div class="s"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M15.6 15.6 21 21" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"/></svg><b>16</b></div>
+        <div class="tab"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M15.6 15.6 21 21" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"/></svg><b>QuotaLens</b> 68%</div>
+      </div>
+      <p class="verdict warn">reads as a search magnifier before it reads as a Q</p>
+    </div>
+  </div>
+  <div class="card">
+    <div class="plate"><span class="no">11</span><svg width="92" height="92" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="6" height="18" rx="1.4" fill="currentColor"/><rect x="14" y="3" width="6" height="18" rx="1.4" fill="none" stroke="currentColor" stroke-width="2"/><rect x="16" y="12" width="2" height="7" rx="1" fill="currentColor"/></svg></div>
+    <div class="body">
+      <p class="nm">Pair</p>
+      <p class="says">Two upright meters side by side — the five-hour window full, the seven-day window low. Both readings in one square.</p>
+      <div class="sizes">
+        <div class="s"><svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="6" height="18" rx="1.4" fill="currentColor"/><rect x="14" y="3" width="6" height="18" rx="1.4" fill="none" stroke="currentColor" stroke-width="2"/><rect x="16" y="12" width="2" height="7" rx="1" fill="currentColor"/></svg><b>24</b></div>
+        <div class="s"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="6" height="18" rx="1.4" fill="currentColor"/><rect x="14" y="3" width="6" height="18" rx="1.4" fill="none" stroke="currentColor" stroke-width="2"/><rect x="16" y="12" width="2" height="7" rx="1" fill="currentColor"/></svg><b>16</b></div>
+        <div class="tab"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="6" height="18" rx="1.4" fill="currentColor"/><rect x="14" y="3" width="6" height="18" rx="1.4" fill="none" stroke="currentColor" stroke-width="2"/><rect x="16" y="12" width="2" height="7" rx="1" fill="currentColor"/></svg><b>QuotaLens</b> 68%</div>
+      </div>
+      <p class="verdict warn">the small inner fill is lost at 16 · too much information for an icon</p>
+    </div>
+  </div>
+  <div class="card">
+    <div class="plate"><span class="no">12</span><svg width="92" height="92" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="7.5" width="17" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="20.2" y="10.2" width="2.4" height="3.6" rx="1" fill="currentColor"/><rect x="4.4" y="9.9" width="8.2" height="4.2" rx=".8" fill="currentColor"/></svg></div>
+    <div class="body">
+      <p class="nm">Battery</p>
+      <p class="says">The one shape everybody already reads as “how much is left”. That is its whole case, and also the problem.</p>
+      <div class="sizes">
+        <div class="s"><svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="7.5" width="17" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="20.2" y="10.2" width="2.4" height="3.6" rx="1" fill="currentColor"/><rect x="4.4" y="9.9" width="8.2" height="4.2" rx=".8" fill="currentColor"/></svg><b>24</b></div>
+        <div class="s"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="7.5" width="17" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="20.2" y="10.2" width="2.4" height="3.6" rx="1" fill="currentColor"/><rect x="4.4" y="9.9" width="8.2" height="4.2" rx=".8" fill="currentColor"/></svg><b>16</b></div>
+        <div class="tab"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="7.5" width="17" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="20.2" y="10.2" width="2.4" height="3.6" rx="1" fill="currentColor"/><rect x="4.4" y="9.9" width="8.2" height="4.2" rx=".8" fill="currentColor"/></svg><b>QuotaLens</b> 68%</div>
+      </div>
+      <p class="verdict warn">instantly understood · instantly a battery indicator, not a product</p>
+    </div>
+  </div>
+</div>
+
+<section>
+  <p class="eyebrow">What four of them can also do</p>
+  <h2>A mark that is also the reading</h2>
+  <p class="lede">Ring, Tank, Dial and Bar each hold a value, so the favicon in your tab strip can be the
+  live session window — you would know you were at 91% without opening the tab. Colour appears only at
+  the threshold; the rest of the time the mark is plain ink. When the collector goes stale the mark loses
+  its value rather than showing a wrong one, which is the same rule the dashboard already follows.</p>
+  <div class="live">
+    <div class="st">
+      <svg width="46" height="46" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-dasharray="12.4 56.6" transform="rotate(-90 12 12)"/></svg>
+      <span class="lbl">early in the window</span><span class="pc">22%</span></div>
+    <div class="st">
+      <svg width="46" height="46" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-dasharray="38.4 56.6" transform="rotate(-90 12 12)"/></svg>
+      <span class="lbl">two thirds gone</span><span class="pc">68%</span></div>
+    <div class="st crit">
+      <svg width="46" height="46" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6"/><circle cx="12" cy="12" r="9" fill="none" stroke="var(--sig)" stroke-width="2.6" stroke-dasharray="51.5 56.6" transform="rotate(-90 12 12)"/></svg>
+      <span class="lbl">at the threshold</span><span class="pc">91%</span></div>
+    <div class="st">
+      <svg width="46" height="46" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6" stroke-dasharray="3 3"/></svg>
+      <span class="lbl">stale, value unknown</span><span class="pc" style="color:var(--far)">—</span></div>
+  </div>
+</section>
+
+<div class="rule"></div>
+
+<section>
+  <p class="eyebrow">Shortlist</p>
+  <h2>The four I would actually ship</h2>
+  <table class="cmp">
+    <tr><th></th><th>Mark</th><th>Why it survives</th><th>The catch</th></tr>
+    <tr><td><svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-dasharray="38.4 56.6" transform="rotate(-90 12 12)"/></svg></td><td>01 · Ring</td><td>A fraction in a square, understood by everyone, and it can show the real number.</td><td>Rings are common. Yours is distinguished by moving, not by shape.</td></tr>
+    <tr><td><svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><rect x="6.6" y="9.8" width="10.8" height="7.6" rx="1" fill="currentColor"/></svg></td><td>02 · Tank</td><td>Heaviest silhouette at 16px. Fills a square icon slot with no wasted margin.</td><td>Blunt. Says level, says nothing about time or rate.</td></tr>
+    <tr><td><svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 12V3A9 9 0 0 1 19.8 16.5Z" fill="currentColor"/></svg></td><td>07 · Dial</td><td>The only one that says level <em>and</em> time — which is what a window is.</td><td>Half a beat slower to read than the ring at 16px.</td></tr>
+    <tr><td><svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17.5H10.5L21 6.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></td><td>04 · Break</td><td>Simplest drawing here, and the only one about rate rather than amount.</td><td>Static. It cannot carry a reading, so there is no live favicon.</td></tr>
+  </table>
+
+  <h3 style="margin-top:34px">If you want one answer</h3>
+  <ul class="tight">
+    <li><b>01 · Ring.</b> Clearest of the twelve at 16px, perfectly square, about twenty lines of SVG,
+    and the favicon can carry your real session window — the one genuinely useful thing a tab-strip icon
+    could do for this tool. Nothing about it needs explaining.</li>
+    <li><b>02 · Tank</b> if you want it heavier and less common; <b>04 · Break</b> if you would
+    rather the mark say <em>rate</em> and stay a fixed drawing.</li>
+    <li>Whichever you pick, ship it as two files the way you do now: the mark on the 24 grid, and a favicon
+    redrawn on a true 16 grid with thicker strokes so the edges land on whole pixels.</li>
+  </ul>
+
+  <p class="foot">All twelve are drawn on a 24-unit grid with 2–2.6 unit strokes, inherit currentColor,
+  and use no gradients, no texture and no more than two paths. The 16px renders on this page are the real
+  thing at real size, not scaled screenshots.</p>
+</section>
+
+</div>
+</body></html>
