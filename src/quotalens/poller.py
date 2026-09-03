@@ -33,6 +33,7 @@ AUTH_RETRY_S = 10 * 60  # an expired cookie will not fix itself; check gently
 RATE_LIMIT_MIN_S = 5 * 60
 RATE_LIMIT_MAX_S = 30 * 60
 BACKOFF_FACTOR = 2.0
+FORCE_MIN_INTERVAL_S = 10  # one forced poll per this many seconds
 
 ClientFactory = Callable[[str], ClaudeClient]
 
@@ -160,6 +161,8 @@ class Poller:
         self.status = PollerStatus()
         self._stop = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
+        self._lock: asyncio.Lock | None = None  # created lazily on the running loop
+        self._last_forced_ts: float | None = None
 
     def _default_factory(self, cookie: str) -> ClaudeClient:
         return ClaudeClient(
@@ -186,6 +189,27 @@ class Poller:
         if self._client is not None:
             await self._client.close()
             self._client = None
+
+    async def force_poll(self) -> tuple[bool, int]:
+        """Poll now, at most once per FORCE_MIN_INTERVAL_S. Returns (accepted, retry_in_s)."""
+        now = self._clock()
+        if self._last_forced_ts is not None and now - self._last_forced_ts < FORCE_MIN_INTERVAL_S:
+            retry_in = int(FORCE_MIN_INTERVAL_S - (now - self._last_forced_ts)) + 1
+            self.status.extra["force_note"] = {
+                "ts": int(now),
+                "text": f"Forced poll suppressed: one per {FORCE_MIN_INTERVAL_S}s, "
+                f"try again in {retry_in}s.",
+            }
+            return False, retry_in
+        self._last_forced_ts = now
+        self.status.extra.pop("force_note", None)
+        await self.poll_once()
+        return True, 0
+
+    def _poll_lock(self) -> asyncio.Lock:
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
 
     async def run(self) -> None:
         while not self._stop.is_set():
@@ -225,7 +249,14 @@ class Poller:
         log.warning("poll failed (%s): %s", kind, safe)
 
     async def poll_once(self) -> float:
-        """Fetch, parse, store. Returns seconds until the next attempt. Never raises."""
+        """Fetch, parse, store. Returns seconds until the next attempt. Never raises.
+
+        Serialised: the loop and a forced poll never overlap.
+        """
+        async with self._poll_lock():
+            return await self._poll_once_unlocked()
+
+    async def _poll_once_unlocked(self) -> float:
         now = int(self._clock())
         self.status.last_attempt_ts = now
         try:

@@ -11,7 +11,7 @@ from importlib import resources
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from quotalens import __version__
 from quotalens.burn import burn_rate
@@ -22,6 +22,7 @@ from quotalens.render import render_app, render_page
 from quotalens.secrets import Redactor, SecretStore, global_redactor
 from quotalens.state import collector_state
 from quotalens.store import Store
+from quotalens.views import ViewOptions, parse_view
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ STATIC_FILES = {
     "tokens.css": "text/css; charset=utf-8",
     "app.css": "text/css; charset=utf-8",
     "app.js": "text/javascript; charset=utf-8",
+    "chart.js": "text/javascript; charset=utf-8",
     "favicon.svg": "image/svg+xml",
 }
 
@@ -83,27 +85,51 @@ def create_app(
         log.error("unhandled error on %s: %s", request.url.path, redactor.redact(str(exc)))
         return JSONResponse(status_code=500, content={"error": "internal error; see server log"})
 
-    def _dashboard():
+    def _view(request: Request) -> ViewOptions:
+        return parse_view(dict(request.query_params), int(time.time()))
+
+    def _dashboard(view: ViewOptions):
         return build_dashboard(
             settings,
             state.store,
             state.poller.status,
             int(time.time()),
             settings.burn_alert_pts_per_hour,
+            view,
         )
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-    def index() -> HTMLResponse:
-        return HTMLResponse(render_page(_dashboard()), headers={"Cache-Control": "no-store"})
+    def index(request: Request) -> HTMLResponse:
+        page = render_page(_dashboard(_view(request)))
+        return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
     @app.get("/api/dashboard/fragment", response_class=HTMLResponse)
-    def dashboard_fragment() -> HTMLResponse:
+    def dashboard_fragment(request: Request) -> HTMLResponse:
         """The header and main content, re-rendered; the page swaps it in place."""
-        return HTMLResponse(render_app(_dashboard()), headers={"Cache-Control": "no-store"})
+        fragment = render_app(_dashboard(_view(request)))
+        return HTMLResponse(fragment, headers={"Cache-Control": "no-store"})
 
     @app.get("/api/dashboard")
-    def dashboard_json() -> dict[str, Any]:
-        return as_json(_dashboard())
+    def dashboard_json(request: Request) -> dict[str, Any]:
+        return as_json(_dashboard(_view(request)))
+
+    @app.post("/api/poll")
+    async def force_poll() -> dict[str, Any]:
+        """Poll claude.ai now (rate limited to one forced poll per 10 seconds)."""
+        accepted, retry_in = await state.poller.force_poll()
+        return {
+            "accepted": accepted,
+            "retry_in_s": retry_in,
+            "state": state.poller.status.state,
+            "last_success_ts": state.poller.status.last_success_ts,
+        }
+
+    @app.post("/poll", include_in_schema=False)
+    async def force_poll_form(request: Request) -> RedirectResponse:
+        """No-JavaScript path: force a poll, then return to the same view."""
+        await state.poller.force_poll()
+        query = request.url.query
+        return RedirectResponse(url=f"/?{query}" if query else "/", status_code=303)
 
     @app.get("/static/{name}", include_in_schema=False)
     def static(name: str) -> Response:

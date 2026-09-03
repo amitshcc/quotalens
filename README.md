@@ -14,10 +14,31 @@ local Claude Code logs (M3), alerts and export (M4) are next.
 pipx install quotalens      # or: uv tool install quotalens
 quotalens auth              # paste your claude.ai session cookie once (stored in the OS keychain)
 quotalens probe             # one fetch, prints raw + parsed output for debugging
-quotalens serve             # binds 127.0.0.1:8787, polls every 60s
+quotalens start             # background: pid file + rotating log in the data directory
 open http://127.0.0.1:8787   # the dashboard
+quotalens status            # exit 0 healthy, 1 not running, 2 stalled
+quotalens logs -f
+quotalens stop
 curl 'http://127.0.0.1:8787/api/quota/current'
 ```
+
+## Running it as a service
+
+```sh
+quotalens service install   # macOS LaunchAgent (RunAtLoad, KeepAlive) or systemd user unit
+quotalens service status
+quotalens service uninstall
+```
+
+Every file written and command run is printed so it can be undone by hand. On
+Linux the unit only runs while you are logged in unless you enable lingering;
+the installer prints the exact `loginctl enable-linger` command. Windows gets a
+Task Scheduler XML and instructions rather than a pretend install. `serve` stays
+the foreground command the service manager execs.
+
+A background agent reading the OS keychain may prompt on first run or be
+refused; `quotalens status` then says "keyring" specifically rather than "no
+data".
 
 ## The dashboard
 
@@ -32,6 +53,12 @@ poll intervals, the cookie was rejected, or the response could not be parsed,
 every value is replaced by an em dash and the frame changes, so a stale page
 never looks like a healthy one showing low usage. If the browser loses the
 server, the same treatment applies from CSS alone.
+
+The dashboard is interrogable and every view is a URL: range presets from 15
+minutes to all, drag on the chart to zoom to any window (double-click resets),
+click a series' end label to hide it, pick the burn-rate lookback, set
+auto-refresh, and force a poll (one per 10 seconds). All of it works with
+JavaScript disabled as plain links and forms.
 
 Renamed from `quotawatch`: on first start an existing database and keyring
 entry under the old name are moved across automatically.
