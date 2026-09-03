@@ -73,7 +73,10 @@ class Schedule:
 class PollerStatus:
     """What ``/api/health`` reports. Every string here has passed the redactor."""
 
-    state: str = "starting"  # starting|ok|error|auth_expired|blocked|rate_limited|no_cookie
+    state: str = (
+        "starting"  # starting|ok|error|auth_expired|blocked|rate_limited|no_cookie|keyring_error
+    )
+    started_ts: int = field(default_factory=lambda: int(time.time()))
     last_attempt_ts: int | None = None
     last_success_ts: int | None = None
     last_error: str | None = None
@@ -103,6 +106,7 @@ class PollerStatus:
             "polls_failed": self.polls_failed,
             "org_resolved": self.org_resolved,
             "overage_available": self.overage_available,
+            "started_ts": self.started_ts,
         }
 
     def diagnostics(self) -> dict[str, Any]:
@@ -233,8 +237,8 @@ class Poller:
                 return self.schedule.on_auth_error()
             return await self._collect(client, now)
         except SecretStoreError as exc:
-            self._fail("error", "keyring_error", str(exc), now)
-            return self.schedule.on_failure()
+            self._fail("keyring_error", "keyring_error", str(exc), now)
+            return self.schedule.on_auth_error()  # it will not fix itself; check gently
         except AuthError as exc:
             self._fail("auth_expired", "auth_expired", str(exc), now)
             return self.schedule.on_auth_error()

@@ -14,12 +14,13 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import IO, Any
 
-from quotalens import __version__
+from quotalens import __version__, service
 from quotalens.client import ClaudeClient, ClientError, has_session_key
 from quotalens.config import (
     MIN_POLL_INTERVAL_S,
     Settings,
     SettingsError,
+    default_data_dir,
     settings_from_env,
     validate,
 )
@@ -50,11 +51,16 @@ def mask_uuids(text: str) -> str:
     return _UUID_RE.sub("<uuid>", text)
 
 
-def _setup_logging(verbose: bool) -> None:
-    logging.basicConfig(
-        level=logging.DEBUG if verbose else logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+def _setup_logging(verbose: bool, log_file: Path | None = None) -> None:
+    level = logging.DEBUG if verbose else logging.INFO
+    fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+    if log_file is None:
+        logging.basicConfig(level=level, format=fmt)
+    else:
+        # Detached: stderr is redirected into the same file, so the file handler is the
+        # only handler; otherwise every line would appear twice.
+        logging.basicConfig(level=level, format=fmt, handlers=[])
+        service.configure_file_logging(log_file)
     install_log_redaction()
 
 
@@ -226,10 +232,25 @@ def cmd_serve(args: argparse.Namespace, settings: Settings, secrets: SecretStore
     from quotalens.api import create_app
     from quotalens.store import Store
 
-    cookie = secrets.get_cookie()
+    pidfile = service.pid_path(args.data_dir)
+    try:
+        service.acquire_pid_file(pidfile)
+    except service.ServiceError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    try:
+        cookie = secrets.get_cookie()
+    except SecretStoreError as exc:
+        cookie = None
+        log.error(
+            "CANNOT READ THE KEYRING: %s. The poller will report keyring_error until this is "
+            "fixed. If this runs as a background service, run `quotalens auth` from a terminal "
+            "and grant keychain access to python.",
+            exc,
+        )
     if cookie:
         global_redactor().add(cookie)
-    else:
+    elif cookie is None and not isinstance(secrets, KeyringSecretStore):
         log.warning("no session cookie stored; the poller will idle until you run `quotalens auth`")
     store = Store(settings.db_path)
     app = create_app(settings, store, secrets)
@@ -245,6 +266,101 @@ def cmd_serve(args: argparse.Namespace, settings: Settings, secrets: SecretStore
         uvicorn.run(app, host=settings.host, port=settings.port, log_level="warning")
     finally:
         store.close()
+        service.release_pid_file(pidfile)
+    return 0
+
+
+# -- background service ---------------------------------------------------------
+
+
+def _serve_args(args: argparse.Namespace) -> list[str]:
+    out: list[str] = []
+    if getattr(args, "interval", None):
+        out += ["--interval", str(args.interval)]
+    if getattr(args, "port", None):
+        out += ["--port", str(args.port)]
+    return out
+
+
+def cmd_start(args: argparse.Namespace, settings: Settings, secrets: SecretStore) -> int:
+    try:
+        result = service.start(args.data_dir, _serve_args(args))
+    except service.ServiceError as exc:
+        print(f"not started: {exc}", file=sys.stderr)
+        return 1
+    print(f"started pid {result.pid}")
+    print(f"pid file: {result.pidfile}")
+    print(f"log:      {result.log}")
+    print(f"dashboard: http://{settings.host}:{settings.port}/")
+    return 0
+
+
+def cmd_stop(args: argparse.Namespace, settings: Settings, secrets: SecretStore) -> int:
+    installed = service.service_installed(sys.platform, Path.home(), args.data_dir)
+    if installed is not None and sys.platform == "darwin" and not args.force:
+        print(
+            f"managed by launchd ({installed}), which restarts it on exit. Use "
+            "`quotalens service uninstall`, or --force to stop it anyway.",
+            file=sys.stderr,
+        )
+        return 1
+    pid = service.stop(args.data_dir)
+    print(f"stopped pid {pid}" if pid else "not running")
+    return 0
+
+
+def cmd_restart(args: argparse.Namespace, settings: Settings, secrets: SecretStore) -> int:
+    args.force = True
+    cmd_stop(args, settings, secrets)
+    return cmd_start(args, settings, secrets)
+
+
+def cmd_status(args: argparse.Namespace, settings: Settings, secrets: SecretStore) -> int:
+    report = service.status(args.data_dir, settings.port)
+    print("\n".join(report.lines))
+    for line in service.service_status(sys.platform, Path.home(), args.data_dir):
+        print(line)
+    return report.exit_code
+
+
+def cmd_logs(args: argparse.Namespace, settings: Settings, secrets: SecretStore) -> int:
+    path = service.log_path(args.data_dir)
+    if not path.exists():
+        print(f"no log yet at {path}", file=sys.stderr)
+        return 1
+    for line in service.tail(path, args.lines):
+        print(line)
+    if args.follow:
+        try:
+            service.follow(path, print)
+        except KeyboardInterrupt:
+            return 0
+    return 0
+
+
+def cmd_service(args: argparse.Namespace, settings: Settings, secrets: SecretStore) -> int:
+    home = Path.home()
+    try:
+        if args.action == "install":
+            interval = args.interval or settings.poll_interval_s
+            actions = service.install_service(sys.platform, home, args.data_dir, interval)
+        elif args.action == "uninstall":
+            actions = service.uninstall_service(sys.platform, home, args.data_dir)
+        else:
+            for line in service.service_status(sys.platform, home, args.data_dir):
+                print(line)
+            return 0
+    except service.ServiceError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    for path in actions.written:
+        print(f"wrote:   {path}")
+    for path in actions.removed:
+        print(f"removed: {path}")
+    for cmd in actions.commands:
+        print(f"ran:     {cmd}")
+    for note in actions.notes:
+        print(f"note:    {note}")
     return 0
 
 
@@ -254,6 +370,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=f"QuotaLens {__version__}")
     parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
+    parser.add_argument(
+        "--data-dir", type=Path, default=None, help="where the pid file and log live"
+    )
     parser.add_argument(
         "--user-agent",
         help="override the User-Agent (default: the impersonated browser's; "
@@ -281,13 +400,32 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument(
         "--burn-alert", type=float, help="burn rate (pts/hr) at which the 5-hour window is elevated"
     )
+    serve.add_argument("--log-file", type=Path, help="also log to this file, rotated by size")
+
+    start = sub.add_parser("start", help="start the server in the background")
+    start.add_argument("--port", type=int)
+    start.add_argument("--interval", type=int)
+    stop = sub.add_parser("stop", help="stop the background server")
+    stop.add_argument("--force", action="store_true", help="stop even if launchd manages it")
+    restart = sub.add_parser("restart", help="stop, then start")
+    restart.add_argument("--port", type=int)
+    restart.add_argument("--interval", type=int)
+    sub.add_parser("status", help="running? exit 0 healthy, 1 not running, 2 stalled")
+    logs = sub.add_parser("logs", help="show the log")
+    logs.add_argument("-f", "--follow", action="store_true")
+    logs.add_argument("-n", "--lines", type=int, default=50)
+    svc = sub.add_parser("service", help="install as a login service")
+    svc.add_argument("action", choices=["install", "uninstall", "status"])
+    svc.add_argument("--interval", type=int, help="poll interval for the installed service")
     return parser
 
 
 def main(argv: Sequence[str] | None = None, secrets: SecretStore | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    _setup_logging(args.verbose)
+    if args.data_dir is None:
+        args.data_dir = default_data_dir()
+    _setup_logging(args.verbose, getattr(args, "log_file", None))
     try:
         settings = settings_from_env().with_overrides(user_agent=args.user_agent)
         if args.command == "serve":
@@ -310,7 +448,17 @@ def main(argv: Sequence[str] | None = None, secrets: SecretStore | None = None) 
         migrate_legacy(
             settings.db_path, secrets, KeyringSecretStore(service=LEGACY_KEYRING_SERVICE)
         )
-    handlers = {"auth": cmd_auth, "probe": cmd_probe, "serve": cmd_serve}
+    handlers = {
+        "auth": cmd_auth,
+        "probe": cmd_probe,
+        "serve": cmd_serve,
+        "start": cmd_start,
+        "stop": cmd_stop,
+        "restart": cmd_restart,
+        "status": cmd_status,
+        "logs": cmd_logs,
+        "service": cmd_service,
+    }
     try:
         return handlers[args.command](args, settings, secrets)
     except SecretStoreError as exc:
