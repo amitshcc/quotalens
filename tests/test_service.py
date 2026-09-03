@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import threading
+import time
 import urllib.error
 from pathlib import Path
 
@@ -53,13 +55,13 @@ def dead_spawner(cmd, logfile: Path) -> int:
 
 
 def test_start_stop_lifecycle_and_double_start(tmp_path) -> None:
-    result = start(tmp_path, ["--interval", "30"], spawner=sleeper, grace_s=0.1)
+    result = start(tmp_path, ["--interval", "30"], spawner=sleeper, timeout_s=0.1)
     try:
         assert pid_alive(result.pid)
         assert service.read_pid(result.pidfile) == result.pid
         assert "--log-file" in result.log.read_text()
         with pytest.raises(ServiceError, match="already running"):
-            start(tmp_path, spawner=sleeper, grace_s=0.1)
+            start(tmp_path, spawner=sleeper, timeout_s=0.1)
     finally:
         stopped = stop(tmp_path, timeout_s=5)
     assert stopped == result.pid
@@ -75,7 +77,7 @@ def test_stale_pid_file_is_cleaned_and_start_proceeds(tmp_path) -> None:
     assert running_pid(pidfile) is None
     assert not pidfile.exists()
     pidfile.write_text("99999999\n")
-    result = start(tmp_path, spawner=sleeper, grace_s=0.1)
+    result = start(tmp_path, spawner=sleeper, timeout_s=0.1)
     try:
         assert result.pid != 99999999 and pid_alive(result.pid)
     finally:
@@ -84,8 +86,61 @@ def test_stale_pid_file_is_cleaned_and_start_proceeds(tmp_path) -> None:
 
 def test_start_reports_immediate_exit_with_log_tail(tmp_path) -> None:
     with pytest.raises(ServiceError, match="config error"):
-        start(tmp_path, spawner=dead_spawner, grace_s=0.1)
+        start(tmp_path, spawner=dead_spawner, timeout_s=0.1)
     assert not service.pid_path(tmp_path).exists()
+
+
+def silent_sleeper(cmd, logfile: Path) -> int:
+    """A child that starts but never says anything. It must not count as ready."""
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    logfile.parent.mkdir(parents=True, exist_ok=True)
+    logfile.touch()
+    return proc.pid
+
+
+def test_start_returns_as_soon_as_the_child_logs(tmp_path) -> None:
+    """The wait is a poll, not a fixed sleep: a slow child is waited for, a fast one is not."""
+
+    def late_talker(cmd, logfile: Path) -> int:
+        pid = silent_sleeper(cmd, logfile)
+        threading.Timer(0.4, lambda: logfile.write_text("ready\n")).start()
+        return pid
+
+    began = time.monotonic()
+    result = start(tmp_path, spawner=late_talker, timeout_s=20.0)
+    elapsed = time.monotonic() - began
+    try:
+        assert result.ready
+        assert 0.3 < elapsed < 10.0, elapsed  # it waited for the line, and did not wait the timeout
+    finally:
+        stop(tmp_path, timeout_s=5)
+
+
+def test_start_says_so_when_the_child_stays_silent(tmp_path) -> None:
+    result = start(tmp_path, spawner=silent_sleeper, timeout_s=0.2)
+    try:
+        assert pid_alive(result.pid)  # alive, so not an error
+        assert not result.ready  # but nothing to show for it
+    finally:
+        stop(tmp_path, timeout_s=5)
+
+
+def test_readiness_ignores_log_lines_from_an_earlier_run(tmp_path) -> None:
+    """The log is append-only across runs, so readiness is new bytes, not any bytes."""
+    logfile = service.log_path(tmp_path)
+    logfile.parent.mkdir(parents=True, exist_ok=True)
+    logfile.write_text("2026-01-01 INFO quotalens: from last week\n")
+    result = start(tmp_path, spawner=silent_sleeper, timeout_s=0.2)
+    try:
+        assert not result.ready
+    finally:
+        stop(tmp_path, timeout_s=5)
 
 
 def test_acquire_pid_file_refuses_second_instance(tmp_path) -> None:
@@ -93,7 +148,7 @@ def test_acquire_pid_file_refuses_second_instance(tmp_path) -> None:
     service.acquire_pid_file(pidfile)
     assert service.read_pid(pidfile) == os.getpid()
     service.acquire_pid_file(pidfile)  # our own pid is fine
-    start(tmp_path, spawner=sleeper, grace_s=0.1)
+    start(tmp_path, spawner=sleeper, timeout_s=0.1)
     try:
         with pytest.raises(ServiceError, match="already running"):
             service.acquire_pid_file(service.pid_path(tmp_path))
@@ -151,7 +206,7 @@ def test_status_exit_codes(tmp_path) -> None:
 
 
 def test_status_with_live_pid_but_dead_http(tmp_path) -> None:
-    result = start(tmp_path, spawner=sleeper, grace_s=0.1)
+    result = start(tmp_path, spawner=sleeper, timeout_s=0.1)
     try:
         report = status(tmp_path, 8787, fetch=_fetcher(urllib.error.URLError("nope")))
         assert report.exit_code == 1
@@ -260,7 +315,7 @@ def test_start_child_receives_data_dir(tmp_path) -> None:
         seen.append(list(cmd))
         return sleeper(cmd, logfile)
 
-    start(tmp_path, spawner=spy, grace_s=0.1)
+    start(tmp_path, spawner=spy, timeout_s=0.1)
     try:
         assert seen[0][3:5] == ["--data-dir", str(tmp_path)]
     finally:

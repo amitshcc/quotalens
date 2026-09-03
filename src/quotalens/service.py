@@ -45,7 +45,8 @@ WINDOWS_GUIDANCE = (
     "trigger 'At log on' and the action `quotalens start`, or put a shortcut to it "
     "in shell:startup. start/stop/status/logs work the same way on Windows."
 )
-START_GRACE_S = 1.5
+START_TIMEOUT_S = 10.0  # how long `start` waits for the child to announce itself
+START_POLL_S = 0.05
 LAUNCHD_LABEL = "com.quotalens.agent"
 SYSTEMD_UNIT = "quotalens.service"
 
@@ -235,15 +236,37 @@ class StartResult:
     pid: int
     log: Path
     pidfile: Path
+    ready: bool = True
+    """True once the child has written its own first log line.
+
+    A live pid only proves the process exists. This proves it got far enough to
+    configure logging and say so, which is the difference between "started" and
+    "spawned something that may still be importing".
+    """
+
+
+def _log_size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
 
 
 def start(
     data_dir: Path,
     serve_args: Sequence[str] = (),
     spawner: Spawner = _spawn_detached,
-    grace_s: float = START_GRACE_S,
+    timeout_s: float = START_TIMEOUT_S,
     profile: str = "",
 ) -> StartResult:
+    """Spawn the server and wait until it is alive and has logged its own banner.
+
+    The wait is a poll, not a fixed sleep: a fixed sleep is simultaneously too
+    long on a fast machine and too short on a slow one, and a process that dies
+    just after the sleep gets reported as started. Here a death is caught
+    whenever it happens inside the window, and success returns as soon as the
+    child speaks.
+    """
     pidfile, logfile = pid_path(data_dir, profile), log_path(data_dir, profile)
     existing = running_pid(pidfile)
     if existing is not None:
@@ -253,15 +276,25 @@ def start(
     cmd = serve_command(
         extra=[*serve_args, "--log-file", str(logfile)], data_dir=data_dir, profile=profile
     )
+    # The log is append-only across runs, so readiness is new bytes, not any bytes.
+    before = _log_size(logfile)
     pid = spawner(cmd, logfile)
     pidfile.parent.mkdir(parents=True, exist_ok=True)
     pidfile.write_text(f"{pid}\n")
-    time.sleep(grace_s)
-    if not pid_alive(pid):
-        pidfile.unlink(missing_ok=True)
-        recent = "\n".join(tail(logfile, 8))
-        raise ServiceError(f"the server exited immediately. Last log lines:\n{recent}")
-    return StartResult(pid, logfile, pidfile)
+    deadline = time.monotonic() + timeout_s
+    ready = False
+    while True:
+        if not pid_alive(pid):
+            pidfile.unlink(missing_ok=True)
+            recent = "\n".join(tail(logfile, 8))
+            raise ServiceError(f"the server exited immediately. Last log lines:\n{recent}")
+        if _log_size(logfile) > before:
+            ready = True
+            break
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(START_POLL_S)
+    return StartResult(pid, logfile, pidfile, ready)
 
 
 def stop(data_dir: Path, timeout_s: float = STOP_TIMEOUT_S, profile: str = "") -> int | None:
