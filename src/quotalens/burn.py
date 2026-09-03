@@ -33,6 +33,18 @@ from quotalens.store import QuotaRow
 RESET_DROP_PCT = 5.0
 RESET_TIME_TOLERANCE_S = 60.0  # resets_at jitter below this is noise, not a new window
 MIN_SPAN_S = 60  # two samples closer than this give a meaningless rate
+MIN_TRUSTED_SPAN_S = 300  # and under five minutes a rate is noise, whoever is asking
+
+
+def min_trusted_span(lookback_s: int) -> int:
+    """Five minutes, or 80% of a shorter lookback: at 60s polling a 5m lookback spans 4m.
+
+    Both the dashboard and the alert use this. They disagreed once: the alert
+    fired on 60 seconds of data at 180 pts/hr while the hero said "Collecting"
+    and showed an em dash, so a webhook receiver was paged with a number the
+    product refused to display.
+    """
+    return int(min(MIN_TRUSTED_SPAN_S, lookback_s * 0.8))
 
 
 def _parse_iso(value: str) -> datetime | None:

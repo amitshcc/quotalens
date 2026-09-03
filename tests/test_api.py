@@ -59,7 +59,9 @@ def test_burn_endpoint(settings, store, secrets) -> None:
     assert rates["five_hour"] == 60.0
     assert rates["seven_day"] == 0.0
     assert body["lookback_minutes"] == settings.burn_lookback_min
-    assert single["burn"][0]["points"] == 16
+    # 16 samples span exactly the lookback, so the oldest sits on the cutoff and
+    # drops out if the request lands a second later than the seed.
+    assert single["burn"][0]["points"] in (15, 16)
     assert missing.status_code == 404
 
 
