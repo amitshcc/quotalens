@@ -127,6 +127,9 @@ th a[aria-sort]{color:var(--txt)}
 th a:hover{color:var(--txt)}
 tbody th a:hover{text-decoration:underline}
 .r-thin th,.r-thin td{color:var(--txt-far)}
+.sc{width:72px;padding-right:0}
+.sp{display:block;overflow:visible}
+.r-thin .sp{opacity:.4}
 .r-on{background:var(--select)}
 .rt{color:var(--txt)}
 .xh{stroke:var(--txt-far);stroke-width:1;stroke-dasharray:2 3}

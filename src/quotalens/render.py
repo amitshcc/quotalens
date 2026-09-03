@@ -470,12 +470,14 @@ def _history(dash: Dashboard) -> str:
         f'<th rowspan="2"><a href="{e(h.sort_links["recent"])}" data-sort="recent"'
         f"{sort_recent}>Window</a></th>"
         f'<th class="n" rowspan="2"><a href="{e(h.sort_links["consumed"])}" data-sort="consumed"'
-        f"{sort_consumed}>Consumed</a></th>" + group + '<th class="n" rowspan="2">Coverage</th>'
+        f"{sort_consumed}>Consumed</a></th>"
+        + group
+        + '<th class="n" rowspan="2">Coverage</th><th rowspan="2" class="sc"></th>'
     )
     head2 = "".join(f'<th class="n">{e(x)}</th>' for x in h.headers)
     if not h.rows:
         body = (
-            f'<tr><td colspan="{3 + weekly}" class="empty">'
+            f'<tr><td colspan="{4 + weekly}" class="empty">'
             "No 5-hour windows yet. They appear once the first session has samples.</td></tr>"
         )
     else:
@@ -484,12 +486,12 @@ def _history(dash: Dashboard) -> str:
     foot = ""
     if h.show_all_href:
         foot = (
-            f'<tfoot><tr><td colspan="{3 + weekly}"><a href="{e(h.show_all_href)}" class="sess">'
+            f'<tfoot><tr><td colspan="{4 + weekly}"><a href="{e(h.show_all_href)}" class="sess">'
             f"show all {h.total} windows</a></td></tr></tfoot>"
         )
     elif h.show_less_href:
         foot = (
-            f'<tfoot><tr><td colspan="{3 + weekly}"><a href="{e(h.show_less_href)}" class="sess">'
+            f'<tfoot><tr><td colspan="{4 + weekly}"><a href="{e(h.show_less_href)}" class="sess">'
             "show the first 20</a></td></tr></tfoot>"
         )
     return (
@@ -509,7 +511,17 @@ def _history_row(r: SessionRowView) -> str:
         f'<tr class="{cls}"{title}><th scope="row"><a href="{e(r.href)}" class="sess" '
         f'data-session="{r.started_at}">{e(r.window_text)}</a>{current}</th>'
         f'<td class="m n rt">{e(r.peak_text)}</td>{cells}'
-        f'<td class="m n">{e(r.coverage_text)}</td></tr>'
+        f'<td class="m n">{e(r.coverage_text)}</td><td class="sc">{_spark(r)}</td></tr>'
+    )
+
+
+def _spark(r: SessionRowView) -> str:
+    if not r.spark:
+        return ""
+    return (
+        '<svg class="sp" viewBox="0 0 60 18" width="60" height="18" aria-hidden="true">'
+        f'<polyline points="{r.spark}" fill="none" stroke="var(--s1)" '
+        'stroke-width="var(--trace-ghost)"/></svg>'
     )
 
 

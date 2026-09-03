@@ -101,5 +101,24 @@ def test_median_comparison_appears_after_five_complete_windows(settings, store, 
     with TestClient(app) as tc:
         body = tc.get("/api/dashboard").json()
     assert "your median window (40%)" in body["burn"]["why"]
-    store2 = store
-    del store2
+
+
+def test_sparkline_per_history_row(settings, store, secrets) -> None:
+    from quotalens.dashboard import sparkline
+    from quotalens.store import QuotaRow
+
+    now = int(time.time())
+    _seed_windows(store, now, 2)
+    rebuild(store, now)
+    app = create_app(settings, store, secrets)
+    app.state.qw.poller.status.state = "ok"
+    app.state.qw.poller.status.last_success_ts = now
+    with TestClient(app) as tc:
+        html = tc.get("/").text
+    assert html.count('<svg class="sp"') == 3
+    assert 'stroke-width="var(--trace-ghost)"' in html
+    rows = [QuotaRow(1000 + i * 450, "five_hour", "5-hour", i * 2.5, "r") for i in range(41)]
+    points = sparkline(rows, 1000)
+    assert points.startswith("2.0,17.0") and points.endswith("58.0,1.0")
+    assert len(points.split()) <= 42
+    assert sparkline(rows[:1], 1000) == ""
