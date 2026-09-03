@@ -166,6 +166,15 @@ def create_app(
     def favicon() -> Response:
         return Response(_static_bytes("favicon.svg"), media_type="image/svg+xml")
 
+    @app.get("/api/events")
+    def events(
+        limit: int = Query(50, ge=1, le=500),
+        kind: str | None = Query(None, max_length=40),
+    ) -> dict[str, Any]:
+        """Anomalies, threshold crossings and poll failures, newest first."""
+        rows = state.store.recent_events(limit=limit, kind=kind)
+        return {"events": [e.as_dict() for e in rows], "now_ts": int(time.time())}
+
     @app.get("/api/export.csv", include_in_schema=True)
     def export_csv(
         table: str = Query("quota", max_length=32),

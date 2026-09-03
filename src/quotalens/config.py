@@ -27,6 +27,8 @@ DEFAULT_BURN_ALERT_PTS_PER_HOUR = 20.0  # elevated when the session window burns
 # distinct payload shape is kept forever regardless.
 DEFAULT_SAMPLE_KEEP = 20_000
 PRUNE_EVERY_S = 6 * 3600
+# Opt-in only. One POST per threshold crossing, no account identifier in the body.
+DEFAULT_WEBHOOK_URL: str | None = None
 DEFAULT_BASE_URL = "https://claude.ai"
 DEFAULT_HTTP_TIMEOUT_S = 20.0
 # claude.ai sits behind Cloudflare bot protection that fingerprints the TLS
@@ -94,6 +96,7 @@ class Settings:
     burn_lookback_min: int = DEFAULT_BURN_LOOKBACK_MIN
     burn_alert_pts_per_hour: float = DEFAULT_BURN_ALERT_PTS_PER_HOUR
     sample_keep: int = DEFAULT_SAMPLE_KEEP
+    webhook_url: str | None = DEFAULT_WEBHOOK_URL
     db_path: Path = field(default_factory=default_db_path)
     base_url: str = DEFAULT_BASE_URL
     http_timeout_s: float = DEFAULT_HTTP_TIMEOUT_S
@@ -147,6 +150,7 @@ def settings_from_env(profile: str | None = None) -> Settings:
         burn_lookback_min=_env_int("LOOKBACK_MINUTES", DEFAULT_BURN_LOOKBACK_MIN),
         burn_alert_pts_per_hour=_env_float("BURN_ALERT", DEFAULT_BURN_ALERT_PTS_PER_HOUR),
         sample_keep=_env_int("SAMPLE_KEEP", DEFAULT_SAMPLE_KEEP),
+        webhook_url=os.environ.get(ENV_PREFIX + "WEBHOOK_URL") or DEFAULT_WEBHOOK_URL,
         db_path=Path(db_raw).expanduser() if db_raw else default_db_path(profile),
         base_url=os.environ.get(ENV_PREFIX + "BASE_URL", DEFAULT_BASE_URL),
         user_agent=os.environ.get(ENV_PREFIX + "USER_AGENT") or DEFAULT_USER_AGENT,
@@ -170,4 +174,6 @@ def validate(settings: Settings) -> Settings:
         raise SettingsError("burn alert threshold must be positive")
     if settings.sample_keep < 100:
         raise SettingsError("sample retention must keep at least 100 samples")
+    if settings.webhook_url and not settings.webhook_url.startswith(("http://", "https://")):
+        raise SettingsError("the webhook URL must be http:// or https://")
     return settings

@@ -14,6 +14,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from quotalens.alerts import ThresholdDetector, describe, payload, post_webhook
+from quotalens.burn import burn_rate as compute_burn_rate
 from quotalens.client import (
     AuthError,
     BlockedError,
@@ -24,6 +26,7 @@ from quotalens.client import (
 from quotalens.config import PRUNE_EVERY_S, Settings
 from quotalens.parse import ParseError, SpendReading, UsageParse, parse_spend, parse_usage
 from quotalens.secrets import Redactor, SecretStore, SecretStoreError
+from quotalens.sessions import RATE_WINDOW
 from quotalens.sessions import rebuild_recent as rebuild_recent_sessions
 from quotalens.store import Store
 
@@ -79,6 +82,7 @@ class PollerStatus:
         "starting"  # starting|ok|error|auth_expired|blocked|rate_limited|no_cookie|keyring_error
     )
     started_ts: int = field(default_factory=lambda: int(time.time()))
+    burn_rate: float | None = None  # points per hour at the last poll
     last_attempt_ts: int | None = None
     last_success_ts: int | None = None
     last_error: str | None = None
@@ -161,6 +165,8 @@ class Poller:
         self._overage_fetched = False
         self._last_ignored: frozenset[str] = frozenset()
         self._last_prune_ts: float | None = None
+        self._detector = ThresholdDetector(settings.burn_alert_pts_per_hour)
+        self._webhooks: set[asyncio.Task[bool]] = set()
         self.schedule = Schedule(interval_s=float(settings.poll_interval_s))
         self.status = PollerStatus()
         self._stop = asyncio.Event()
@@ -317,6 +323,7 @@ class Poller:
             self._store.record_event("session_rebuild_failed", detail, ts=now)
             log.warning("session rebuild failed: %s", self._redactor.redact(str(exc)))
 
+        self._check_threshold(now, parsed)
         self._maybe_prune(now)
 
         self.status.state = "ok"
@@ -325,6 +332,37 @@ class Poller:
         self.status.polls_ok += 1
         log.info("poll ok: %d readings", len(parsed.readings))
         return self.schedule.on_success()
+
+    def _check_threshold(self, now: int, parsed: UsageParse) -> None:
+        """One event per crossing, not one per poll while over the line."""
+        lookback_s = self._settings.burn_lookback_min * 60
+        rows = self._store.quota_series(now - lookback_s * 4, window=RATE_WINDOW)
+        rate = compute_burn_rate(RATE_WINDOW, rows, lookback_s, now).rate_pct_per_hour
+        self.status.burn_rate = rate
+        kind = self._detector.update(rate)
+        if kind is None or rate is None:
+            return
+        current = next((r for r in parsed.readings if r.window == RATE_WINDOW), None)
+        headroom = None if current is None else max(0.0, 100.0 - current.pct)
+        threshold = self._settings.burn_alert_pts_per_hour
+        detail = describe(kind, rate, threshold, headroom)
+        self._store.record_event(kind, detail, ts=now)
+        log.info("%s: %s", kind, detail)
+        url = self._settings.webhook_url
+        if not url:
+            return
+        body = payload(
+            kind,
+            now,
+            rate,
+            threshold,
+            headroom,
+            current.resets_at if current else None,
+            f"http://{self._settings.host}:{self._settings.port}/",
+        )
+        task = asyncio.create_task(post_webhook(url, body))
+        self._webhooks.add(task)
+        task.add_done_callback(self._webhooks.discard)
 
     def _maybe_prune(self, now: int) -> None:
         """Bound the sample table on a schedule; a default nobody runs is not a default."""

@@ -161,6 +161,8 @@ td.empty{white-space:normal;height:auto;padding:var(--sp-4) var(--sp-3);color:va
 .side dt{color:var(--txt-dim)}
 .side dd{margin:0;text-align:right;font-family:var(--font-num)}
 .side p{margin:6px 0 0;font-size:var(--fs-xs)}
+.side .ev{color:var(--txt-dim)}
+.side .ev-alert{color:var(--st-elevated)}
 .spend-pct{font-size:var(--fs-sub);letter-spacing:var(--tr-readout);margin:var(--sp-2) 0}
 .rule{height:var(--hair);background:var(--hairline);margin:var(--sp-3) 0}
 footer{margin-top:var(--sp-5);padding-top:var(--sp-3);border-top:var(--hair) solid var(--hairline);
