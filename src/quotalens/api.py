@@ -208,13 +208,14 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         since = int(time.time() - hours * 3600) if hours else None
         stream = csv_stream if fmt == "csv" else json_stream
+        unmasked = bool(raw)
         media = "text/csv; charset=utf-8" if fmt == "csv" else "application/json"
         name = filename(spec, fmt, settings.profile)
         headers = {"Content-Disposition": f'attachment; filename="{name}"'}
-        if spec.raw:
+        if spec.raw or (spec.mask and unmasked):
             headers["X-QuotaLens-Warning"] = RAW_WARNING
         return StreamingResponse(
-            stream(state.store, spec, since), media_type=media, headers=headers
+            stream(state.store, spec, since, unmasked), media_type=media, headers=headers
         )
 
     @app.get("/api/health")

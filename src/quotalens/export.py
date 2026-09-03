@@ -16,6 +16,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -27,6 +28,12 @@ RAW_WARNING = (
     "do carry organisation identifiers and reset timestamps: redact before sharing."
 )
 PAGE = 500
+_UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
+
+def mask_uuids(text: str) -> str:
+    """Organisation ids ride along in error messages; an export is a file people attach."""
+    return _UUID.sub("<uuid>", text)
 
 
 @dataclass(frozen=True)
@@ -35,13 +42,14 @@ class ExportSpec:
     columns: tuple[str, ...]
     ts_column: str | None = "ts"
     raw: bool = False  # needs an explicit flag and carries the warning
+    mask: tuple[str, ...] = ()  # columns whose UUIDs are masked unless raw is asked for
 
 
 EXPORTS: dict[str, ExportSpec] = {
     "quota": ExportSpec(
         "quota", ("ts", "window", "label", "pct", "resets_at", "severity", "is_active")
     ),
-    "events": ExportSpec("event", ("ts", "kind", "detail")),
+    "events": ExportSpec("event", ("ts", "kind", "detail"), mask=("detail",)),
     "overage": ExportSpec("overage", ("ts", "spent_minor", "cap_minor", "currency", "exponent")),
     "sessions": ExportSpec(
         "session_window",
@@ -78,7 +86,9 @@ def resolve(table: str, raw_allowed: bool) -> ExportSpec:
     return spec
 
 
-def rows(store: Store, spec: ExportSpec, since_ts: int | None) -> Iterator[dict[str, object]]:
+def rows(
+    store: Store, spec: ExportSpec, since_ts: int | None, unmasked: bool = False
+) -> Iterator[dict[str, object]]:
     """Every row, oldest first, a page at a time so nothing is buffered."""
     last_rowid = 0
     columns = ", ".join(spec.columns)
@@ -98,15 +108,22 @@ def rows(store: Store, spec: ExportSpec, since_ts: int | None) -> Iterator[dict[
             return
         for row in page:
             last_rowid = row["_rid"]
-            yield {k: row[k] for k in spec.columns}
+            out = {k: row[k] for k in spec.columns}
+            if not unmasked:
+                for column in spec.mask:
+                    if isinstance(out.get(column), str):
+                        out[column] = mask_uuids(out[column])
+            yield out
 
 
-def csv_stream(store: Store, spec: ExportSpec, since_ts: int | None) -> Iterator[str]:
+def csv_stream(
+    store: Store, spec: ExportSpec, since_ts: int | None, unmasked: bool = False
+) -> Iterator[str]:
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=list(spec.columns), lineterminator="\n")
     writer.writeheader()
     yield _drain(buffer)
-    for row in rows(store, spec, since_ts):
+    for row in rows(store, spec, since_ts, unmasked):
         writer.writerow(row)
         yield _drain(buffer)
 
@@ -118,19 +135,21 @@ def _drain(buffer: io.StringIO) -> str:
     return text
 
 
-def json_stream(store: Store, spec: ExportSpec, since_ts: int | None) -> Iterator[str]:
+def json_stream(
+    store: Store, spec: ExportSpec, since_ts: int | None, unmasked: bool = False
+) -> Iterator[str]:
     head = {
         "table": spec.table,
         "generated_ts": int(time.time()),
         "since_ts": since_ts,
         "columns": list(spec.columns),
     }
-    if spec.raw:
+    if spec.raw or (spec.mask and unmasked):
         head["warning"] = RAW_WARNING
     prefix = json.dumps(head)[:-1]  # drop the closing brace; the rows follow
     yield f'{prefix}, "rows": ['
     first = True
-    for row in rows(store, spec, since_ts):
+    for row in rows(store, spec, since_ts, unmasked):
         yield ("" if first else ",") + json.dumps(row, default=str)
         first = False
     yield "]}"
