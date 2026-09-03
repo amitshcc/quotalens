@@ -430,3 +430,18 @@ def test_meter_change_is_over_the_selected_range(settings, store) -> None:
         ViewOptions(range_key="1h"),
     )
     assert dash.windows[0].delta_text == "+15 pts over 1h"
+
+
+def test_five_minute_lookback_can_actually_display(settings, store) -> None:
+    now = int(time.time())
+    _seed(store, now, minutes=5, base=10)  # samples at now-4m .. now: a 4-minute span
+    dash = build_dashboard(
+        settings,
+        store,
+        _status(state="ok", last_success_ts=now),
+        now,
+        20.0,
+        ViewOptions(lookback_key="5m"),
+    )
+    assert not dash.burn.withheld and dash.burn.rate_text == "60.00"
+    assert "lookback 5m" in dash.burn.why

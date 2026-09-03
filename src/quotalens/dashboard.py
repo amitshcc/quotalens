@@ -271,7 +271,7 @@ def build_dashboard(
         rate_burn
         and rate_burn.rate_pct_per_hour is not None
         and rate_burn.rate_pct_per_hour >= burn_alert
-        and rate_burn.span_s >= max(lookback_s / 2, DISPLAY_MIN_BURN_SPAN_S)
+        and rate_burn.span_s >= min_burn_span(lookback_s)
     )
 
     windows = [
@@ -473,11 +473,12 @@ def _burn_view(
         )
         return BurnView("—", "pts/hr", why, True, False, trace, ticks, alert_y)
     rate = burn.rate_pct_per_hour
-    if rate is None or burn.span_s < DISPLAY_MIN_BURN_SPAN_S:
+    need_s = min_burn_span(lookback_s)
+    if rate is None or burn.span_s < need_s:
         have = duration(burn.span_s) if burn.span_s else "0m"
         why = (
             f"Collecting: {have} of samples since the last reset. The {lookback_label} rate "
-            f"needs at least {DISPLAY_MIN_BURN_SPAN_S // 60} minutes."
+            f"needs at least {need_s // 60} minutes."
         )
         return BurnView("—", "pts/hr", why, True, False, trace, ticks, alert_y)
     text = f"{rate:.2f}" if abs(rate) < 100 else f"{rate:.0f}"
@@ -507,6 +508,11 @@ def _burn_view(
     return BurnView(text, "pts/hr", why, False, elevated, trace, ticks, alert_y)
 
 
+def min_burn_span(lookback_s: int) -> int:
+    """5 minutes, or 80% of a shorter lookback: at 60s polling a 5m lookback spans 4m."""
+    return int(min(DISPLAY_MIN_BURN_SPAN_S, lookback_s * 0.8))
+
+
 def _hero_trace(
     rows: list[QuotaRow], lookback_s: int, alert: float, now: int
 ) -> tuple[str, list[tuple[float, str]], float | None]:
@@ -518,7 +524,7 @@ def _hero_trace(
         if row.ts < start:
             continue
         result = burn_rate(row.window, recent[: i + 1], lookback_s, row.ts)
-        rate = result.rate_pct_per_hour if result.span_s >= DISPLAY_MIN_BURN_SPAN_S else None
+        rate = result.rate_pct_per_hour if result.span_s >= min_burn_span(lookback_s) else None
         points.append((row.ts, rate))
     ticks = [(HERO_W * (h / HERO_HOURS), clock(start + h * 3600)) for h in range(0, HERO_HOURS + 1)]
     rates = [p[1] for p in points if p[1] is not None]
