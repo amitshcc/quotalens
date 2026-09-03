@@ -5,7 +5,8 @@
   escalates after a timeout; ``status`` reads ``/api/health`` and exits
   non-zero when not running or when the collector has stalled.
 * ``service install`` writes a LaunchAgent (macOS) or a systemd user unit
-  (Linux). Windows gets a Task Scheduler XML and instructions, not a pretence.
+  (Linux). Windows has no user-level service manager we can install into; the
+  command says so and points at the README.
 """
 
 from __future__ import annotations
@@ -36,10 +37,15 @@ RUNTIME_FILE = f"{APP_NAME}.runtime.json"  # port and interval of the instance i
 LOG_MAX_BYTES = 2 * 1024 * 1024
 LOG_BACKUPS = 3
 STOP_TIMEOUT_S = 10.0
+WINDOWS_GUIDANCE = (
+    "Windows has no user-level service manager this command can install into. Run "
+    "`quotalens start` at logon instead: create a Task Scheduler task with the "
+    "trigger 'At log on' and the action `quotalens start`, or put a shortcut to it "
+    "in shell:startup. start/stop/status/logs work the same way on Windows."
+)
 START_GRACE_S = 1.5
 LAUNCHD_LABEL = "com.quotalens.agent"
 SYSTEMD_UNIT = "quotalens.service"
-WINDOWS_TASK = "QuotaLens"
 
 Runner = Callable[[Sequence[str]], tuple[int, str]]
 Spawner = Callable[[Sequence[str], Path], int]
@@ -422,21 +428,6 @@ def systemd_unit(cmd: Sequence[str], workdir: Path) -> str:
     )
 
 
-def windows_task_xml(cmd: Sequence[str], workdir: Path) -> str:
-    exe, *rest = cmd
-    return (
-        '<?xml version="1.0" encoding="UTF-16"?>\n'
-        '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">\n'
-        "  <Triggers><LogonTrigger><Enabled>true</Enabled></LogonTrigger></Triggers>\n"
-        "  <Settings><RestartOnFailure><Interval>PT1M</Interval><Count>10</Count>"
-        "</RestartOnFailure><ExecutionTimeLimit>PT0S</ExecutionTimeLimit></Settings>\n"
-        f"  <Actions><Exec><Command>{xml_escape(exe)}</Command>"
-        f"<Arguments>{xml_escape(' '.join(rest))}</Arguments>"
-        f"<WorkingDirectory>{xml_escape(str(workdir))}</WorkingDirectory></Exec></Actions>\n"
-        "</Task>\n"
-    )
-
-
 def _sh_quote(arg: str) -> str:
     return (
         arg
@@ -493,14 +484,7 @@ def install_service(
             f"it collecting after logout or a reboot, run: loginctl enable-linger {user}"
         )
     elif platform.startswith("win"):
-        xml = data_dir / "quotalens-task.xml"
-        xml.write_text(windows_task_xml(cmd, data_dir), encoding="utf-16")
-        actions.written.append(xml)
-        actions.notes.append(
-            "Windows has no equivalent of a user launch agent here. Register the generated "
-            f'task yourself: schtasks /Create /TN {WINDOWS_TASK} /XML "{xml}". '
-            "`quotalens start/stop/status` work without it via the pid file."
-        )
+        raise ServiceError(WINDOWS_GUIDANCE)
     else:
         raise ServiceError(f"no service manager support for platform {platform!r}")
     return actions
@@ -522,13 +506,7 @@ def uninstall_service(platform: str, home: Path, data_dir: Path, runner: Runner 
             actions.removed.append(unit)
         actions.run(runner, ["systemctl", "--user", "daemon-reload"])
     elif platform.startswith("win"):
-        xml = data_dir / "quotalens-task.xml"
-        if xml.exists():
-            xml.unlink()
-            actions.removed.append(xml)
-        actions.notes.append(
-            f"If you registered the task, remove it: schtasks /Delete /TN {WINDOWS_TASK} /F"
-        )
+        raise ServiceError(WINDOWS_GUIDANCE)
     else:
         raise ServiceError(f"no service manager support for platform {platform!r}")
     return actions
@@ -540,7 +518,7 @@ def service_installed(platform: str, home: Path, data_dir: Path) -> Path | None:
     elif platform.startswith("linux"):
         p = home / ".config" / "systemd" / "user" / SYSTEMD_UNIT
     elif platform.startswith("win"):
-        p = data_dir / "quotalens-task.xml"
+        return None
     else:
         return None
     return p if p.exists() else None
@@ -559,8 +537,4 @@ def service_status(platform: str, home: Path, data_dir: Path, runner: Runner = _
     elif platform.startswith("linux"):
         rc, out = runner(["systemctl", "--user", "is-active", SYSTEMD_UNIT])
         lines.append(f"systemd: {out or ('active' if rc == 0 else 'inactive')}")
-    elif platform.startswith("win"):
-        lines.append(
-            "task scheduler: registration is manual; check `schtasks /Query /TN QuotaLens`"
-        )
     return lines

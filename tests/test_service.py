@@ -205,14 +205,17 @@ def test_install_linux_writes_unit_and_mentions_linger(tmp_path) -> None:
     assert not unit.exists()
 
 
-def test_install_windows_generates_xml_only(tmp_path) -> None:
+def test_install_windows_refuses_and_points_at_the_alternative(tmp_path) -> None:
+    """Documentation shaped like code was worse than documentation."""
     home, data = tmp_path / "home", tmp_path / "data"
     calls, run = recorder()
-    actions = install_service("win32", home, data, 60, runner=run, python="C:\\py\\python.exe")
-    xml = data / "quotalens-task.xml"
-    assert actions.written == [xml] and calls == []
-    assert "schtasks /Create" in actions.notes[0]
-    assert "python.exe" in xml.read_text(encoding="utf-16")
+    with pytest.raises(ServiceError, match="Task Scheduler"):
+        install_service("win32", home, data, 60, runner=run, python="C:\\py\\python.exe")
+    with pytest.raises(ServiceError):
+        uninstall_service("win32", home, data, runner=run)
+    assert calls == [] and not list(data.glob("*")) if data.exists() else True
+    assert service_installed("win32", home, data) is None
+    assert service_status("win32", home, data, runner=run) == ["service: not installed"]
 
 
 def test_install_failure_surfaces_command_output(tmp_path) -> None:
