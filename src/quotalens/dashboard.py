@@ -58,26 +58,46 @@ FORCE_NOTE_TTL_S = 15
 HISTORY_ROWS = 20
 SPARK_POINTS = 40
 THIN_COVERAGE_PCT = 25.0  # under this coverage a window is a guess
+PARTIAL_COVERAGE_PCT = 80.0  # under this the row says how much was observed
 PEAK_FINAL_NOTE_PTS = 2.0  # peak and close differ by more than this: worth a note
 
 RATE_WINDOW = "five_hour"
+# Storage keys never change (bookmarks and stored rows depend on them); only names do.
 DISPLAY_LABELS = {
-    "five_hour": "5-hour",
-    "seven_day": "7-day",
-    "seven_day_sonnet": "7-day Sonnet",
-    "seven_day_opus": "7-day Opus",
+    "five_hour": "Session",
+    "seven_day": "Weekly — all models",
+    "seven_day_sonnet": "Weekly — Sonnet",
+    "seven_day_opus": "Weekly — Opus",
+    "seven_day_oauth_apps": "Weekly — OAuth apps",
 }
+SHORT_LABELS = {"five_hour": "Session", "seven_day": "Weekly all"}
+
+
+def _model_name(window: str, stored_label: str | None) -> str:
+    """The model behind a ``limit:`` key: the stored display name, else the slug."""
+    if stored_label and not stored_label.startswith("Weekly"):
+        return stored_label
+    return humanize(window[6:]).title()
 
 
 def display_label(window: str, stored_label: str | None) -> str:
-    """A user never sees a raw key like ``limit:fable`` where "Fable" belongs."""
+    """The full name: a user never sees a raw key like ``limit:fable``."""
     if window in DISPLAY_LABELS:
         return DISPLAY_LABELS[window]
     if window.startswith("limit:"):
-        return stored_label or humanize(window[6:]).title()
+        return "Weekly — " + _model_name(window, stored_label)
     if window.startswith("unknown:"):
         return "Unlabelled " + humanize(window[8:])
     return stored_label or humanize(window)
+
+
+def short_label(window: str, stored_label: str | None) -> str:
+    """The compact name for chart end labels and table headers."""
+    if window in SHORT_LABELS:
+        return SHORT_LABELS[window]
+    if window.startswith("limit:"):
+        return "Weekly " + _model_name(window, stored_label)
+    return display_label(window, stored_label)
 
 
 def assign_slots(windows: list[str]) -> dict[str, int]:
@@ -223,11 +243,11 @@ class SessionRowView:
     href: str
     peak_text: str
     note: str  # row title: peak versus close when they genuinely differ
-    columns: list[str]  # one per weekly limit, in header order
+    columns: list[tuple[str, str, bool]]  # per weekly limit: (delta, end, reset)
     samples: int
     coverage_pct: float
-    coverage_text: str
-    spark: str  # polyline points of the 5-hour trace inside the window, 60x18 box
+    badge: str  # "partial, 43% observed" when coverage is poor, else ""
+    spark: str  # polyline points of the session trace inside the window, 60x18 box
     thin: bool  # too few samples to trust
     is_current: bool
     selected: bool  # the chart range is exactly this window
@@ -654,7 +674,7 @@ def _chart_view(
         series.append(
             SeriesView(
                 window,
-                display_label(window, labels.get(window)),
+                short_label(window, labels.get(window)),
                 slots[window],
                 [] if hidden else paths,
                 x_of(last.ts),
@@ -667,7 +687,7 @@ def _chart_view(
         if not hidden:
             data.append(
                 {"key": window, "label": series[-1].label, "slot": slots[window], "pts": pts_out}
-            )
+            )  # the hover readout uses the same short name as the end label
     _spread_labels(series)
     series.sort(key=lambda s: -s.slot)  # draw the hero trace last, on top
 
@@ -781,12 +801,13 @@ def _window_text(w: SessionWindow, now: int) -> str:
     return f"{day}{start.strftime('%H:%M')}–{end.strftime('%H:%M')}"
 
 
-def _delta_text(w: SessionWindow, key: str) -> str:
+def delta_cell(w: SessionWindow, key: str) -> tuple[str, str, bool]:
+    """(delta, end, reset): how much the limit moved in the window, and where it ended."""
     d = w.deltas.get(key)
     if d is None:
-        return "—"
-    text = f"{fmt_pct(d.start)}% → {fmt_pct(d.end)}%"
-    return text + " (reset)" if d.reset else text
+        return ("—", "", False)
+    delta = d.end - d.start
+    return (f"{delta:+.0f}", f"{fmt_pct(d.end)}%", d.reset)
 
 
 def sparkline(rows: list[QuotaRow], started_at: int) -> str:
@@ -817,7 +838,7 @@ def _history_view(
         key=lambda k: (slots.get(k, 99), k),
     )
     columns = ["seven_day", *keys]
-    headers = ["All models", *(display_label(k, labels.get(k)) for k in keys)]
+    headers = ["Weekly all", *(short_label(k, labels.get(k)) for k in keys)]
     rows = []
     for w in windows:
         end = min(w.ends_at, now)
@@ -838,10 +859,12 @@ def _history_view(
                 href=view.href(range_key="custom", custom=(w.started_at, end)),
                 peak_text=f"{fmt_pct(w.peak_pct)}%",
                 note=note,
-                columns=[_delta_text(w, k) for k in columns],
+                columns=[delta_cell(w, k) for k in columns],
                 samples=w.samples,
                 coverage_pct=coverage,
-                coverage_text=f"{coverage:.0f}%",
+                badge=(
+                    f"partial, {coverage:.0f}% observed" if coverage < PARTIAL_COVERAGE_PCT else ""
+                ),
                 spark=spark,
                 thin=coverage < THIN_COVERAGE_PCT,
                 is_current=w.is_current,
@@ -984,9 +1007,10 @@ def as_json(dash: Dashboard) -> dict[str, Any]:
                 "ends_at": r.ends_at,
                 "peak": r.peak_text,
                 "note": r.note,
-                "columns": r.columns,
+                "columns": [{"delta": d, "end": end, "reset": rs} for d, end, rs in r.columns],
                 "samples": r.samples,
                 "coverage_pct": r.coverage_pct,
+                "badge": r.badge,
                 "thin": r.thin,
                 "is_current": r.is_current,
             }

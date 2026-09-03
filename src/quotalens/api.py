@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from quotalens import __version__
 from quotalens.burn import burn_rate
 from quotalens.config import Settings
-from quotalens.dashboard import as_json, build_dashboard
+from quotalens.dashboard import as_json, build_dashboard, display_label
 from quotalens.poller import ClientFactory, Poller, spend_as_dict
 from quotalens.render import render_app, render_page
 from quotalens.secrets import Redactor, SecretStore, global_redactor
@@ -187,7 +187,9 @@ def create_app(
     def quota_current() -> dict[str, Any]:
         rows = state.store.latest_quota()
         return {
-            "readings": [r.as_dict() for r in rows],
+            "readings": [
+                {**r.as_dict(), "display": display_label(r.window, r.label)} for r in rows
+            ],
             "overage": state.store.latest_overage(),
             "spend": spend_as_dict(state.poller.status.spend),
             "last_success_ts": state.poller.status.last_success_ts,

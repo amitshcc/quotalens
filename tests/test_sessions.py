@@ -174,17 +174,16 @@ def test_history_table_sorted_and_row_links_select_the_window(settings, store, s
         by_use = tc.get("/?sort=consumed").text
         selected = tc.get(f"/?range={start2}-{end2}&sort=consumed").text
         json_view = tc.get("/api/dashboard?sort=consumed").json()
-    assert "History — 5-hour session windows, most recent first" in recent
-    assert '<th class="n">All models</th>' in recent and '<th class="n">Fable</th>' in recent
-    assert '<th class="n grp" colspan="2" scope="colgroup">weekly limits</th>' in recent
-    assert ">Final<" not in recent and '<th class="n" rowspan="2">Coverage</th>' in recent
+    assert "History — session windows, most recent first" in recent
+    assert '<th class="n">Weekly all</th>' in recent and '<th class="n">Weekly Fable</th>' in recent
+    assert ">Coverage<" not in recent and ">Final<" not in recent
     assert 'title="Peak ' not in recent  # peak and close agree within 2 points
     assert "limit:fable" not in recent.split('id="chart-data"')[0]
     assert json_view["sessions"][0]["peak"] == "80%"  # the expensive window first
     assert f'href="/?range={start2}-{end2}&amp;sort=consumed"' in by_use
     assert "r-on" in selected and "r-on" not in by_use  # the chosen window is highlighted
     assert "current</span>" in recent
-    assert "% → " in recent  # weekly start -> end figures
+    assert '<span class="rt">+' in recent and '<span class="dim">→ ' in recent  # delta, then level
 
 
 def test_thin_windows_render_far_and_idle_differs_from_gap(settings, store) -> None:
@@ -202,7 +201,8 @@ def test_thin_windows_render_far_and_idle_differs_from_gap(settings, store) -> N
     dash = build_dashboard(settings, store, status, now, 20.0, ViewOptions(range_key="24h"))
     thin = [r for r in dash.history.rows if r.samples == 3]
     assert thin and thin[0].thin and not dash.history.rows[0].thin
-    assert thin[0].coverage_text == "1%" and dash.history.rows[0].coverage_text == "50%"
+    assert thin[0].badge == "partial, 1% observed"
+    assert dash.history.rows[0].badge == "partial, 50% observed"
     assert dash.chart.idle_minutes > 0 and dash.chart.gap_minutes > 0
     assert len(dash.chart.session_x) == 2
     html = render_app(dash)

@@ -152,7 +152,8 @@ th,td{padding:0 var(--sp-3);height:var(--row-h);border-bottom:var(--hair) solid 
   text-align:left;font-weight:var(--w-reg);white-space:nowrap}
 thead th{color:var(--txt-far);font-size:var(--fs-xs);height:22px;border-bottom:var(--hair) solid var(--hair-firm)}
 thead th.n,td.n{text-align:right}
-thead th.grp{text-align:center;border-bottom:var(--hair) solid var(--hairline)}
+.dim{color:var(--txt-dim)}
+tbody th .chip{margin-left:var(--sp-1)}
 tbody tr:last-child td{border-bottom:0}
 td.empty{white-space:normal;height:auto;padding:var(--sp-4) var(--sp-3);color:var(--txt-far)}
 .side{padding:var(--sp-2) 0 0 var(--sp-4);border-left:var(--hair) solid var(--hairline)}

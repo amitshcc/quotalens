@@ -26,7 +26,7 @@ def test_documented_shape_yields_windows_and_scoped_limit() -> None:
     parsed = parse_usage(USAGE_DOCUMENTED)
     by_window = {r.window: r for r in parsed.readings}
     assert by_window["five_hour"] == QuotaReading(
-        "five_hour", "5-hour", 42.0, "2026-09-02T18:00:00+00:00"
+        "five_hour", "Session", 42.0, "2026-09-02T18:00:00+00:00"
     )
     assert by_window["seven_day"].pct == 17.5
     assert by_window["limit:opus"] == QuotaReading(

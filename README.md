@@ -42,8 +42,7 @@ data".
 
 ## The dashboard
 
-The number it leads with is the burn rate in percentage points per hour over
-the 5-hour window. Below it: one meter per quota window with the API's own
+The figure it leads with is how much of the session window is left. Below it: one meter per quota window with the API's own
 severity, a 24-hour chart of every window with resets drawn as gaps, and the
 extra-usage spend computed from minor units with the payload's exponent, never
 clamped at 100%.
@@ -61,7 +60,7 @@ auto-refresh, and force a poll (one per 10 seconds). All of it works with
 JavaScript disabled as plain links and forms.
 
 The top of the page answers the one question the dashboard exists for: will
-the 5-hour window run out before it resets? Beside the burn rate sit a ticking
+the session window run out before it resets? Beside the burn rate sit a ticking
 countdown to the reset, the headroom left, and the sustainable rate, the points
 per hour you could burn from now to the reset without exhausting it. The
 verdict sentence changes with the situation: "Exhausted at 21:04, 2h 09m before
@@ -72,7 +71,7 @@ consumed in each hour of the window. The chart's default range is the current
 window from start to reset, with now inside it, hourly separators, and a dashed
 projection at the current rate that turns critical where it crosses 100%.
 
-Below the chart, the history table lists your 5-hour session windows, derived
+Below the chart, the history table lists your session windows, derived
 from the API's own `resets_at` values: when it jumps forward a new session
 started, and its start is that value minus five hours. Each row shows the peak
 utilisation reached in the window, how far each weekly limit moved during it,

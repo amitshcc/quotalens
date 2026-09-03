@@ -293,7 +293,8 @@ def status(
     try:
         current = fetch(f"{base}/api/quota/current")
         for reading in current.get("readings", []):
-            lines.append(f"  {reading['label']:<14} {reading['pct']:6.1f}%")
+            name = reading.get("display") or reading["label"]
+            lines.append(f"  {name:<22} {reading['pct']:6.1f}%")
     except (urllib.error.URLError, OSError, ValueError, KeyError):
         lines.append("  (windows unavailable)")
     lines.append(f"log: {log_path(data_dir)}")
