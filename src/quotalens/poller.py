@@ -191,11 +191,18 @@ class Poller:
             await self._client.close()
             self._client = None
 
+    def cooldown_remaining(self) -> int:
+        """Seconds until another forced poll is allowed; 0 when allowed now."""
+        if self._last_forced_ts is None:
+            return 0
+        remaining = FORCE_MIN_INTERVAL_S - (self._clock() - self._last_forced_ts)
+        return max(0, int(remaining) + (1 if remaining % 1 else 0))
+
     async def force_poll(self) -> tuple[bool, int]:
         """Poll now, at most once per FORCE_MIN_INTERVAL_S. Returns (accepted, retry_in_s)."""
         now = self._clock()
-        if self._last_forced_ts is not None and now - self._last_forced_ts < FORCE_MIN_INTERVAL_S:
-            retry_in = int(FORCE_MIN_INTERVAL_S - (now - self._last_forced_ts)) + 1
+        retry_in = self.cooldown_remaining()
+        if retry_in > 0:
             self.status.extra["force_note"] = {
                 "ts": int(now),
                 "text": f"Forced poll suppressed: one per {FORCE_MIN_INTERVAL_S}s, "

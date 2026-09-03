@@ -88,9 +88,7 @@ def test_page_reflects_query_without_javascript(settings, store, secrets) -> Non
     with TestClient(app) as tc:
         html = tc.get("/?range=6h&lookback=1h&hide=seven_day&refresh=off").text
     # range and lookback controls are links with the active one marked
-    assert re.search(
-        r'<a class="rb on" href="[^"]*range=6h[^"]*" data-range="6h" aria-current="true"', html
-    )
+    assert '<option value="6h" selected>6h</option>' in html
     assert 'data-lookback="1h" aria-current="true"' in html
     assert 'data-refresh="off" aria-current="true"' in html
     assert "lookback 1h" in html  # the hero sentence states the lookback
@@ -126,7 +124,7 @@ def test_custom_range_from_drag_is_bookmarkable(settings, store, secrets) -> Non
         html = tc.get(f"/?range={now - 1200}-{now - 600}").text
     assert view["range"]["key"] == "custom"
     assert view["range"]["start"] == now - 1200 and view["range"]["end"] == now - 600
-    assert 'id="custom-range"' in html
+    assert re.search(r'<option value="\d+-\d+" selected>custom: ', html)
 
 
 def test_controls_are_keyboard_operable_links_with_focus_style() -> None:
@@ -142,3 +140,68 @@ def test_scripts_stay_within_budget_and_have_no_external_requests() -> None:
         total += len(text.splitlines())
         assert "http://" not in text and "https://" not in text
     assert total < 600
+
+
+# -- Job C: forced poll is a real upstream request, with a visible cooldown --------
+
+
+def test_force_poll_issues_upstream_request_and_reports_sample_ts(settings, store, secrets) -> None:
+    from conftest import FakeRequest
+
+    seen: list[FakeRequest] = []
+    handler = make_handler(seen=seen)
+    app = create_app(settings, store, secrets, client_factory=lambda c: make_client(handler, c))
+    with TestClient(app) as tc:
+        assert seen == []  # polling is disabled in tests: nothing until forced
+        body = tc.post("/api/poll").json()
+        assert [r.url.path for r in seen if r.url.path.endswith("/usage")]  # a real fetch happened
+        assert body["accepted"] is True and body["sample_ts"] == body["last_success_ts"]
+        assert body["sample_ts"] is not None and body["cooldown_s"] == 10
+        page = tc.get("/").text
+        assert re.search(r'id="poll" title="Force a poll now" data-cooldown="(9|10)"', page)
+        assert "<button" in page and "disabled" not in page.split('id="poll"')[1].split(">")[0]
+        again = tc.post("/api/poll").json()
+        assert again["accepted"] is False and again["sample_ts"] is None
+        assert len([r for r in seen if r.url.path.endswith("/usage")]) == 1  # suppressed: no fetch
+
+
+def test_cooldown_counts_down_to_zero(settings, store, secrets) -> None:
+    clock = {"t": 1_000_000.0}
+    poller = Poller(
+        settings,
+        store,
+        secrets,
+        Redactor(),
+        client_factory=lambda c: make_client(make_handler(), c),
+        clock=lambda: clock["t"],
+    )
+    assert poller.cooldown_remaining() == 0
+    asyncio.run(poller.force_poll())
+    assert poller.cooldown_remaining() == 10
+    clock["t"] += 4.5
+    assert poller.cooldown_remaining() == 6
+    clock["t"] += 5.5
+    assert poller.cooldown_remaining() == 0
+    assert asyncio.run(poller.force_poll())[0] is True
+
+
+# -- Job D: range select ----------------------------------------------------------
+
+
+def test_range_select_form_works_without_javascript(settings, store, secrets) -> None:
+    app = _live_app(settings, store, secrets)
+    now = int(time.time())
+    with TestClient(app) as tc:
+        html = tc.get("/?range=6h&hide=seven_day&lookback=1h").text
+        custom = tc.get(f"/?range={now - 1200}-{now - 600}").text
+        submitted = tc.get("/?range=24h&hide=seven_day&lookback=1h")  # what the form sends
+    assert '<form method="get" action="/" class="ctl" id="range-form">' in html
+    assert '<option value="6h" selected>6h</option>' in html
+    assert '<option value="auto">auto</option>' in html
+    assert '<input type="hidden" name="hide" value="seven_day">' in html
+    assert '<input type="hidden" name="lookback" value="1h">' in html
+    assert '<button type="submit" class="go">go</button>' in html
+    assert re.search(r'<option value="\d+-\d+" selected>custom: ', custom)
+    assert submitted.status_code == 200
+    assert 'data-lookback="1h" aria-current="true"' in submitted.text
+    assert 'label class="lbl" for="range"' in html  # keyboard: a labelled native select

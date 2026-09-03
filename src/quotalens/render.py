@@ -6,6 +6,7 @@ from html import escape as e
 
 from quotalens import __version__
 from quotalens.dashboard import Control, Dashboard, SeriesView, SessionRowView, WindowView
+from quotalens.views import AUTO, RANGE_KEYS
 
 ICONS = (
     '<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>'
@@ -219,22 +220,49 @@ def _controls(name: str, controls: list[Control], legend: str) -> str:
     )
 
 
+def _range_form(dash: Dashboard) -> str:
+    """A GET form: works without script; script submits it on change."""
+    view = dash.view
+    current = view.range_param() or AUTO
+    options = [(AUTO, "auto")] + [(k, k) for k in RANGE_KEYS]
+    if view.range_key == "custom" and view.range_param():
+        options.append((view.range_param() or "", f"custom: {dash.rng.label}"))
+    opts = "".join(
+        f'<option value="{e(v)}"{" selected" if v == current else ""}>{e(t)}</option>'
+        for v, t in options
+    )
+    hidden = "".join(
+        f'<input type="hidden" name="{n}" value="{e(v)}">'
+        for n, v in (
+            ("hide", ",".join(sorted(view.hidden))),
+            ("lookback", view.lookback_key or ""),
+            ("refresh", view.refresh_key or ""),
+            ("sort", view.sort_key or ""),
+        )
+        if v
+    )
+    return (
+        '<form method="get" action="/" class="ctl" id="range-form">'
+        '<label class="lbl" for="range">range</label>'
+        f'<select name="range" id="range">{opts}</select>{hidden}'
+        '<button type="submit" class="go">go</button></form>'
+    )
+
+
 def _toolbar(dash: Dashboard) -> str:
     q = dash.view.query()
     action = "/poll" + (f"?{q}" if q else "")
-    custom = ""
-    if dash.rng.key == "custom":
-        custom = f'<span class="lbl m" id="custom-range">{e(dash.rng.label)}</span>'
     return (
         '<nav class="toolbar" aria-label="Chart controls">'
-        + _controls("range", dash.range_controls, "range")
-        + custom
+        + _range_form(dash)
         + _controls("lookback", dash.lookback_controls, "lookback")
         + '<span class="spacer"></span>'
         + _controls("refresh", dash.refresh_controls, "auto")
         + f'<form method="post" action="{e(action)}" class="ctl" id="poll-form">'
-        '<button type="submit" id="poll" title="Force a poll now">'
-        '<svg class="ic" aria-hidden="true"><use href="#i-rate"/></svg>poll now</button></form>'
+        '<button type="submit" id="poll" title="Force a poll now" '
+        f'data-cooldown="{dash.cooldown_s}">'
+        '<svg class="ic" aria-hidden="true"><use href="#i-rate"/></svg>'
+        '<span id="poll-label">poll now</span></button></form>'
         "</nav>"
     )
 

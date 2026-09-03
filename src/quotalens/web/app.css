@@ -86,6 +86,9 @@ button:hover{background:var(--hover);color:var(--txt)}
 .rb:hover{background:var(--hover);color:var(--txt)}
 .rb.on{color:var(--txt);border-color:var(--hair-firm);background:var(--chrome)}
 button:disabled{opacity:.5;cursor:default}
+select{font:inherit;font-family:var(--font-num);font-size:var(--fs-xs);color:var(--txt);background:var(--chrome);
+  border:var(--hair) solid var(--hair-firm);border-radius:var(--r-1);padding:2px var(--sp-2)}
+[data-js] .go{display:none}
 
 /* chart */
 .chart{margin-top:var(--sp-3);padding:var(--sp-3) var(--sp-4) var(--sp-2)}
