@@ -21,7 +21,7 @@ from quotalens.client import (
     ClientError,
     RateLimitedError,
 )
-from quotalens.config import Settings
+from quotalens.config import PRUNE_EVERY_S, Settings
 from quotalens.parse import ParseError, SpendReading, UsageParse, parse_spend, parse_usage
 from quotalens.secrets import Redactor, SecretStore, SecretStoreError
 from quotalens.sessions import rebuild_recent as rebuild_recent_sessions
@@ -158,6 +158,7 @@ class Poller:
         self._client: ClaudeClient | None = None
         self._overage_failed_once = False
         self._last_ignored: frozenset[str] = frozenset()
+        self._last_prune_ts: float | None = None
         self.schedule = Schedule(interval_s=float(settings.poll_interval_s))
         self.status = PollerStatus()
         self._stop = asyncio.Event()
@@ -314,12 +315,34 @@ class Poller:
             self._store.record_event("session_rebuild_failed", detail, ts=now)
             log.warning("session rebuild failed: %s", self._redactor.redact(str(exc)))
 
+        self._maybe_prune(now)
+
         self.status.state = "ok"
         self.status.last_success_ts = now
         self.status.consecutive_failures = 0
         self.status.polls_ok += 1
         log.info("poll ok: %d readings", len(parsed.readings))
         return self.schedule.on_success()
+
+    def _maybe_prune(self, now: int) -> None:
+        """Bound the sample table on a schedule; a default nobody runs is not a default."""
+        if self._last_prune_ts is not None and now - self._last_prune_ts < PRUNE_EVERY_S:
+            return
+        self._last_prune_ts = now
+        try:
+            result = self._store.prune_samples(self._settings.sample_keep)
+        except Exception as exc:  # pruning must never cost a reading
+            detail = self._redactor.redact(f"{type(exc).__name__}: {exc}")
+            self._store.record_event("prune_failed", detail, ts=now)
+            return
+        if result.deleted:
+            log.info("pruned %d samples, %d kept", result.deleted, result.kept)
+            self._store.record_event(
+                "samples_pruned",
+                f"removed {result.deleted} raw samples, kept {result.kept} "
+                f"and {result.signatures} payload shapes",
+                ts=now,
+            )
 
     def _note_diagnostics(self, parsed: UsageParse, now: int) -> None:
         self.status.generic_fallback = parsed.fallback_used

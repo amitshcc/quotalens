@@ -112,6 +112,7 @@ def test_v1_database_is_migrated_without_losing_rows(tmp_path) -> None:
         2,
         3,
         4,
+        5,
     ]
     conn.close()
     store.close()

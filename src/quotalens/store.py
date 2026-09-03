@@ -18,7 +18,7 @@ from typing import Any
 
 from quotalens.parse import QuotaReading, SpendReading
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # Statements that bring an older database up to each version, in order.
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
@@ -29,6 +29,7 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
     ),
     3: (),  # session_window is created by the CREATE statements; rebuilt from samples
     4: ("ALTER TABLE session_window ADD COLUMN covered_s INTEGER NOT NULL DEFAULT 0",),
+    5: ("ALTER TABLE sample ADD COLUMN keysig TEXT",),  # backfilled below
 }
 
 _SCHEMA = """
@@ -40,7 +41,8 @@ CREATE TABLE IF NOT EXISTS schema_version (
 CREATE TABLE IF NOT EXISTS sample (
     ts INTEGER NOT NULL,
     source TEXT NOT NULL,
-    payload TEXT NOT NULL
+    payload TEXT NOT NULL,
+    keysig TEXT
 );
 CREATE INDEX IF NOT EXISTS sample_ts ON sample (ts);
 -- one row per window per poll
@@ -165,6 +167,50 @@ def _session_row(w: Any) -> tuple[Any, ...]:
     )
 
 
+def _backfill_keysig(cur: sqlite3.Cursor) -> None:
+    """Give existing rows a signature, once, when the column arrives."""
+    rows = cur.execute("SELECT rowid, payload FROM sample WHERE keysig IS NULL").fetchall()
+    updates = []
+    for row in rows:
+        try:
+            payload = json.loads(row["payload"])
+        except (ValueError, TypeError):
+            payload = None
+        updates.append((key_signature(payload), row["rowid"]))
+    cur.executemany("UPDATE sample SET keysig = ? WHERE rowid = ?", updates)
+
+
+def key_signature(payload: Any) -> str:
+    """The payload's top-level shape: what changes when the endpoint drifts.
+
+    Retention keeps the first sample of every signature forever, so this is the
+    drift record and it has to survive pruning.
+    """
+    if isinstance(payload, dict):
+        return ",".join(sorted(str(k) for k in payload))
+    return f"<{type(payload).__name__}>"
+
+
+@dataclass(frozen=True)
+class PruneResult:
+    candidates: int  # rows the retention rule selects; what a dry run would remove
+    deleted: int  # rows actually removed: zero on a dry run
+    kept: int
+    signatures: int
+    bytes_before: int | None = None
+    bytes_after: int | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "candidates": self.candidates,
+            "deleted": self.deleted,
+            "kept": self.kept,
+            "signatures": self.signatures,
+            "bytes_before": self.bytes_before,
+            "bytes_after": self.bytes_after,
+        }
+
+
 def now_ts() -> int:
     return int(time.time())
 
@@ -225,6 +271,8 @@ class Store:
                     except sqlite3.OperationalError as exc:
                         if "duplicate column" not in str(exc):
                             raise  # the CREATE statements already carry the column
+                if version == 5:
+                    _backfill_keysig(cur)
                 cur.execute(
                     "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
                     (version, now_ts()),
@@ -237,10 +285,11 @@ class Store:
     # -- writes ---------------------------------------------------------------
 
     def record_sample(self, ts: int, source: str, payload: Any) -> None:
+        body = json.dumps(payload, separators=(",", ":"), default=str)
         with self._tx() as cur:
             cur.execute(
-                "INSERT INTO sample (ts, source, payload) VALUES (?, ?, ?)",
-                (ts, source, json.dumps(payload, separators=(",", ":"), default=str)),
+                "INSERT INTO sample (ts, source, payload, keysig) VALUES (?, ?, ?, ?)",
+                (ts, source, body, key_signature(payload)),
             )
 
     def record_quota(self, ts: int, readings: Iterable[QuotaReading]) -> int:
@@ -382,6 +431,60 @@ class Store:
             if candidate.exists():
                 total += candidate.stat().st_size
         return total
+
+    def prune_samples(self, keep_last: int, dry_run: bool = False) -> PruneResult:
+        """Keep the newest ``keep_last`` samples plus the first of every key signature.
+
+        Unbounded ``sample`` growth is the bug in "leave it running": at 2-4 KB a
+        payload and a minute a poll it is gigabytes a year. The signature rule is
+        what lets the table be bounded without losing the endpoint-drift record.
+        """
+        keep_last = max(0, keep_last)
+        before = self.db_size_bytes()
+        with self._tx() as cur:
+            signatures = cur.execute(
+                "SELECT COUNT(DISTINCT source || '\x1f' || COALESCE(keysig, '')) FROM sample"
+            ).fetchone()[0]
+            doomed = cur.execute(
+                "SELECT COUNT(*) FROM sample WHERE rowid NOT IN "
+                "(SELECT rowid FROM sample ORDER BY ts DESC, rowid DESC LIMIT ?) "
+                "AND rowid NOT IN "
+                "(SELECT MIN(rowid) FROM sample GROUP BY source, COALESCE(keysig, ''))",
+                (keep_last,),
+            ).fetchone()[0]
+            if not dry_run and doomed:
+                cur.execute(
+                    "DELETE FROM sample WHERE rowid NOT IN "
+                    "(SELECT rowid FROM sample ORDER BY ts DESC, rowid DESC LIMIT ?) "
+                    "AND rowid NOT IN "
+                    "(SELECT MIN(rowid) FROM sample GROUP BY source, COALESCE(keysig, ''))",
+                    (keep_last,),
+                )
+            kept = cur.execute("SELECT COUNT(*) FROM sample").fetchone()[0]
+        if not dry_run and doomed:
+            self.vacuum()
+        return PruneResult(
+            candidates=doomed,
+            deleted=0 if dry_run else doomed,
+            kept=kept,
+            signatures=signatures,
+            bytes_before=before,
+            bytes_after=self.db_size_bytes(),
+        )
+
+    def vacuum(self) -> None:
+        """Reclaim the freed pages, then fold the WAL back into the file.
+
+        Without the checkpoint the reclaimed space sits in the write-ahead log and
+        the reported file size goes *up* after a prune, which reads as a bug.
+        """
+        with self._lock:
+            self._conn.isolation_level = None
+            try:
+                self._conn.execute("VACUUM")
+                self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            finally:
+                self._conn.isolation_level = ""
 
     def counts(self) -> dict[str, int]:
         with self._tx() as cur:

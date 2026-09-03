@@ -19,7 +19,12 @@ DEFAULT_PORT = 8787
 DEFAULT_POLL_INTERVAL_S = 60
 MIN_POLL_INTERVAL_S = 30  # floor: below this we would be rate-limiting ourselves
 DEFAULT_BURN_LOOKBACK_MIN = 15
-DEFAULT_BURN_ALERT_PTS_PER_HOUR = 20.0  # elevated when the 5-hour window burns faster
+DEFAULT_BURN_ALERT_PTS_PER_HOUR = 20.0  # elevated when the session window burns faster
+# Raw payloads are the endpoint-drift record and also the one table that grows without
+# bound. Keep roughly a week of them at a minute a poll; the first sample of every
+# distinct payload shape is kept forever regardless.
+DEFAULT_SAMPLE_KEEP = 20_000
+PRUNE_EVERY_S = 6 * 3600
 DEFAULT_BASE_URL = "https://claude.ai"
 DEFAULT_HTTP_TIMEOUT_S = 20.0
 # claude.ai sits behind Cloudflare bot protection that fingerprints the TLS
@@ -52,6 +57,7 @@ class Settings:
     poll_interval_s: int = DEFAULT_POLL_INTERVAL_S
     burn_lookback_min: int = DEFAULT_BURN_LOOKBACK_MIN
     burn_alert_pts_per_hour: float = DEFAULT_BURN_ALERT_PTS_PER_HOUR
+    sample_keep: int = DEFAULT_SAMPLE_KEEP
     db_path: Path = field(default_factory=default_db_path)
     base_url: str = DEFAULT_BASE_URL
     http_timeout_s: float = DEFAULT_HTTP_TIMEOUT_S
@@ -96,6 +102,7 @@ def settings_from_env() -> Settings:
         poll_interval_s=_env_int("INTERVAL", DEFAULT_POLL_INTERVAL_S),
         burn_lookback_min=_env_int("LOOKBACK_MINUTES", DEFAULT_BURN_LOOKBACK_MIN),
         burn_alert_pts_per_hour=_env_float("BURN_ALERT", DEFAULT_BURN_ALERT_PTS_PER_HOUR),
+        sample_keep=_env_int("SAMPLE_KEEP", DEFAULT_SAMPLE_KEEP),
         db_path=Path(db_raw).expanduser() if db_raw else default_db_path(),
         base_url=os.environ.get(ENV_PREFIX + "BASE_URL", DEFAULT_BASE_URL),
         user_agent=os.environ.get(ENV_PREFIX + "USER_AGENT") or DEFAULT_USER_AGENT,
@@ -117,4 +124,6 @@ def validate(settings: Settings) -> Settings:
         raise SettingsError("burn lookback must be at least 1 minute")
     if settings.burn_alert_pts_per_hour <= 0:
         raise SettingsError("burn alert threshold must be positive")
+    if settings.sample_keep < 100:
+        raise SettingsError("sample retention must keep at least 100 samples")
     return settings
