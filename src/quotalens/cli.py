@@ -17,6 +17,7 @@ from typing import IO, Any
 from quotalens import __version__, service
 from quotalens.client import ClaudeClient, ClientError, has_session_key
 from quotalens.config import (
+    DEFAULT_SAMPLE_KEEP,
     MIN_POLL_INTERVAL_S,
     Settings,
     SettingsError,
@@ -226,6 +227,28 @@ def cmd_probe(args: argparse.Namespace, settings: Settings, secrets: SecretStore
     return 0
 
 
+def cmd_prune(args: argparse.Namespace, settings: Settings, secrets: SecretStore) -> int:
+    from quotalens.store import Store
+
+    keep = args.keep or settings.sample_keep
+    store = Store(settings.db_path)
+    try:
+        result = store.prune_samples(keep, dry_run=args.dry_run)
+    finally:
+        store.close()
+    count = result.candidates if args.dry_run else result.deleted
+    verb = "would remove" if args.dry_run else "removed"
+    print(f"{settings.db_path}")
+    print(f"{verb} {count} raw samples; {result.kept} kept (limit {keep})")
+    print(f"payload shapes preserved: {result.signatures}")
+    if result.bytes_before is not None and result.bytes_after is not None:
+        print(
+            f"file: {result.bytes_before / 1_048_576:.1f} MB -> "
+            f"{result.bytes_after / 1_048_576:.1f} MB"
+        )
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace, settings: Settings, secrets: SecretStore) -> int:
     import uvicorn
 
@@ -418,6 +441,10 @@ def build_parser() -> argparse.ArgumentParser:
     restart.add_argument("--interval", type=int)
     st = sub.add_parser("status", help="running? exit 0 healthy, 1 not running, 2 stalled")
     st.add_argument("--port", type=int)
+    prune = sub.add_parser("prune", help="bound the raw sample table")
+    prune.add_argument("--keep", type=int, help=f"samples to keep (default {DEFAULT_SAMPLE_KEEP})")
+    prune.add_argument("--dry-run", action="store_true", help="report without deleting")
+    prune.add_argument("--db", type=Path, help="SQLite file path")
     logs = sub.add_parser("logs", help="show the log")
     logs.add_argument("-f", "--follow", action="store_true")
     logs.add_argument("-n", "--lines", type=int, default=50)
@@ -439,6 +466,8 @@ def main(argv: Sequence[str] | None = None, secrets: SecretStore | None = None) 
         if scratch_dir and not os.environ.get("QUOTALENS_DB") and not getattr(args, "db", None):
             # A scratch data directory must never write to the real database by default.
             settings = settings.with_overrides(db_path=args.data_dir / "quotalens.db")
+        if args.command in ("serve", "prune"):
+            settings = settings.with_overrides(db_path=getattr(args, "db", None))
         if args.command == "serve":
             settings = validate(
                 settings.with_overrides(
@@ -463,6 +492,7 @@ def main(argv: Sequence[str] | None = None, secrets: SecretStore | None = None) 
         "auth": cmd_auth,
         "probe": cmd_probe,
         "serve": cmd_serve,
+        "prune": cmd_prune,
         "start": cmd_start,
         "stop": cmd_stop,
         "restart": cmd_restart,
