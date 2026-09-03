@@ -144,3 +144,29 @@ inference from source: write down what was on screen or in the DOM.
       rate 180.0 pts/hr") while the hero read "Collecting: 1m of samples", the burn
       figure was an em dash and the header showed no chip: `MIN_SPAN_S` is 60s for
       the alert, `DISPLAY_MIN_BURN_SPAN_S` is 300s for the screen.
+- 2026-09-04: the Weekly — Fable meter read 100% with a critical chip, and drove the
+      header's account-level chip to critical too. Fable models may use up to 50% of
+      the weekly limits, so 100% of that meter is half the weekly pool spent, not an
+      exhausted account. The account was at 12% session and 40% weekly at the time.
+- 2026-09-04: on a range extending into the future (the default session range), the
+      horizontal gridlines stopped at the vertical "now" line, so the chart looked
+      cropped roughly two thirds across while the pointer still read values out of
+      the empty region to its right. Repro: open the dashboard at 12:50 with a window
+      resetting at 01:20 and hover right of "now".
+- 2026-09-04: `--db` was read only by `serve` and `prune`. Any other command took the
+      default database however the flag was set, which for a command that deletes
+      rows means deleting them from the wrong file.
+- 2026-09-04: four `%-d` date formats crashed the dashboard on Windows with
+      `ValueError: Invalid format string`. `%-d` is a glibc and BSD extension, `%#d`
+      is the Windows spelling, and the wrong one raises at the moment a date is
+      rendered rather than degrading. Found by the CI matrix, not by a person.
+- 2026-09-04: `start` slept a fixed 1.5s and then checked the pid was alive, so on a
+      slow machine it reported "started pid N" before the server had written a line,
+      and `logs` immediately after came back empty. A server that died at 1.6s was
+      reported as started.
+- 2026-09-04: `service install` never put `--data-dir` in the unit it wrote, on any
+      platform. Installing from a shell with a custom data directory produced a
+      service that collected into the default one.
+- 2026-09-04: `pid_alive` on Windows treated "OpenProcess succeeded" as "still
+      running". A process that has exited still opens while any handle to it is held,
+      so a dead child read as alive.
