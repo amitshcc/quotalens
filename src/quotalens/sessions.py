@@ -6,8 +6,10 @@ the running window, so a jump forward means a new session started, and the start
 is that value minus five hours. Samples taken after the expiry that still carry
 the old value belong to no window: the account was idle.
 
-Derivation is pure and idempotent; :func:`rebuild` replaces the table from all
-stored samples, so a re-run never duplicates rows.
+Derivation is pure and idempotent. :func:`rebuild` replaces the table from all
+stored samples and runs at startup; :func:`rebuild_recent` runs on every poll and
+touches only the current and previous windows, because re-deriving all of history
+once a minute gets slowest for exactly the user this product is for.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ SESSION_LENGTH_S = 5 * 3600
 RATE_WINDOW = "five_hour"
 RESET_TOLERANCE_S = 60  # resets_at jitters by a second or so between polls
 GAP_THRESHOLD_S = 180  # a longer silence than this counts as not observed
+INCREMENTAL_MARGIN_S = 600  # read a little before the previous window, for clock skew
 
 
 @dataclass(frozen=True)
@@ -185,14 +188,39 @@ def idle_spans(windows: list[SessionWindow], now: int) -> list[tuple[int, int]]:
     return spans
 
 
-def rebuild(store: Store, now: int) -> int:
-    """Recompute the whole table from every stored sample. Returns the row count."""
+def _rows_by_window(store: Store, since: int) -> dict[str, list[QuotaRow]]:
     rows_by_window: dict[str, list[QuotaRow]] = {}
-    for row in store.quota_series(0):
+    for row in store.quota_series(since):
         rows_by_window.setdefault(row.window, []).append(row)
-    windows = derive_sessions(rows_by_window, now)
+    return rows_by_window
+
+
+def rebuild(store: Store, now: int) -> int:
+    """Recompute the whole table from every stored sample. Returns the row count.
+
+    Startup and post-migration only: it reads every quota row.
+    """
+    windows = derive_sessions(_rows_by_window(store, 0), now)
     store.replace_sessions(windows)
     return len(windows)
+
+
+def rebuild_recent(store: Store, now: int) -> int:
+    """Update the current and previous windows from a tail of the samples.
+
+    Equivalent to :func:`rebuild` over the same data, and tested to be, with one
+    known limit: the tail cannot see an expiry that appears only before it. If
+    ``resets_at`` ever moved *backwards* past the previous window, this pass would
+    open a new group where the full pass extends an old one. The startup rebuild
+    corrects that, and the reset-model watchdog is what would report it.
+    """
+    known = store.sessions(limit=2, order="recent")
+    if len(known) < 2:
+        return rebuild(store, now)  # nothing to be incremental about yet
+    prev_start = int(known[1]["started_at"])
+    tail = _rows_by_window(store, prev_start - INCREMENTAL_MARGIN_S)
+    windows = [w for w in derive_sessions(tail, now) if w.started_at >= prev_start]
+    return store.upsert_sessions(windows, demote_before=prev_start)
 
 
 def window_from_row(row: dict[str, Any]) -> SessionWindow:

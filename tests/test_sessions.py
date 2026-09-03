@@ -18,6 +18,7 @@ from quotalens.sessions import (
     derive_sessions,
     idle_spans,
     rebuild,
+    rebuild_recent,
 )
 from quotalens.store import QuotaRow, Store
 from quotalens.views import ViewOptions
@@ -255,3 +256,99 @@ def test_a_server_side_correction_does_not_truncate_the_window(tmp_path) -> None
     stored = store.sessions()
     assert len(stored) == 1 and stored[0]["samples"] == 20
     store.close()
+
+
+# -- the incremental rebuild must agree with the full one ------------------------
+
+
+def _generated_series() -> tuple[list[tuple[int, float, int]], list[tuple[int, float, str]], int]:
+    """Three windows with a gap, an idle span, and a weekly reset inside window two."""
+    step = 120
+    e1 = T0 + SESSION_LENGTH_S
+    e2 = e1 + 30 * 60 + SESSION_LENGTH_S  # half an hour idle, then a new window
+    e3 = e2 + SESSION_LENGTH_S
+    rate: list[tuple[int, float, int]] = []
+    for i, ts in enumerate(range(T0, e1, step)):
+        if e1 - 40 * 60 < ts < e1 - 20 * 60:
+            continue  # a collection gap inside the first window
+        rate.append((ts, min(90.0, i * 0.6), e1))
+    for i, ts in enumerate(range(e2 - SESSION_LENGTH_S, e2, step)):
+        rate.append((ts, min(70.0, i * 0.5), e2))
+    now = e2 + 2 * 3600
+    for i, ts in enumerate(range(e2, now + 1, step)):
+        rate.append((ts, min(40.0, i * 0.4), e3))
+
+    weekly: list[tuple[int, float, str]] = []
+    for i, ts in enumerate(range(T0, now + 1, step)):
+        if ts < e2 - 3600:
+            weekly.append((ts, min(99.0, 40 + i * 0.05), "wk-1"))
+        else:
+            weekly.append((ts, min(30.0, i * 0.02), "wk-2"))  # the weekly limit resets
+    return rate, weekly, now
+
+
+def test_incremental_rebuild_matches_a_full_rebuild_row_for_row(tmp_path) -> None:
+    rate, weekly, now = _generated_series()
+    readings: dict[int, list[QuotaReading]] = {}
+    for ts, pct, ends in rate:
+        readings.setdefault(ts, []).append(QuotaReading("five_hour", "5-hour", pct, iso(ends)))
+    for ts, pct, reset in weekly:
+        readings.setdefault(ts, []).append(QuotaReading("seven_day", "7-day", pct, reset))
+
+    incremental = Store(tmp_path / "inc.db")
+    full = Store(tmp_path / "full.db")
+    for ts in sorted(readings):
+        incremental.record_quota(ts, readings[ts])
+        full.record_quota(ts, readings[ts])
+        rebuild_recent(incremental, now)  # what the poller does, every sample
+    rebuild(full, now)  # what startup does, once
+
+    got = incremental.sessions(limit=100)
+    want = full.sessions(limit=100)
+    assert len(want) == 3  # the series really does contain three windows
+    assert [w["samples"] for w in want] == [w["samples"] for w in got]
+    assert got == want  # every column of every row
+    assert sum(w["is_current"] for w in got) == 1
+    incremental.close()
+    full.close()
+
+
+def _history(store: Store, windows: int, now: int) -> None:
+    """``windows`` back-to-back session windows at a two-minute cadence."""
+    for w in range(windows):
+        ends = now - (windows - 1 - w) * SESSION_LENGTH_S
+        for i, ts in enumerate(range(ends - SESSION_LENGTH_S, ends, 120)):
+            store.record_quota(ts, [QuotaReading("five_hour", "5-hour", i * 0.5, iso(ends))])
+
+
+def _reads_for_one_incremental_pass(store: Store, now: int) -> int:
+    reads: list[int] = []
+    original = store.quota_series
+
+    def counting(since_ts: int, **kwargs: object):
+        rows = original(since_ts, **kwargs)
+        reads.append(len(rows))
+        return rows
+
+    store.quota_series = counting  # type: ignore[method-assign]
+    rebuild_recent(store, now)
+    store.quota_series = original  # type: ignore[method-assign]
+    return sum(reads)
+
+
+def test_incremental_rebuild_cost_does_not_grow_with_history(tmp_path) -> None:
+    """The point of the exercise: the poll stops getting slower every day."""
+    now = T0 + 20 * SESSION_LENGTH_S
+    small, large = Store(tmp_path / "small.db"), Store(tmp_path / "large.db")
+    _history(small, 3, now)
+    _history(large, 12, now)
+    rebuild(small, now)
+    rebuild(large, now)
+    assert large.counts()["quota"] > 3 * small.counts()["quota"]
+
+    small_reads = _reads_for_one_incremental_pass(small, now)
+    large_reads = _reads_for_one_incremental_pass(large, now)
+    assert small_reads == large_reads  # a two-window tail either way
+    assert large_reads < large.counts()["quota"] / 3
+    small.close()
+    large.close()

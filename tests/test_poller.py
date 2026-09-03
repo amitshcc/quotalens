@@ -276,7 +276,7 @@ def test_session_rebuild_failure_does_not_fail_the_poll(
     def boom(store, now):
         raise RuntimeError("UNIQUE constraint failed: session_window.started_at")
 
-    monkeypatch.setattr(poller_module, "rebuild_sessions", boom)
+    monkeypatch.setattr(poller_module, "rebuild_recent_sessions", boom)
     poller = _poller(settings, store, secrets, make_handler())
     assert asyncio.run(poller.poll_once()) == 60
     assert poller.status.state == "ok" and store.counts()["quota"] == 3
