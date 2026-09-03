@@ -134,6 +134,8 @@ def derive_sessions(rows_by_window: dict[str, list[QuotaRow]], now: int) -> list
         if w != RATE_WINDOW
     }
     windows: list[SessionWindow] = []
+    # The running window is the one with the newest sample, not the last group to appear.
+    newest = max(range(len(groups)), key=lambda i: max(r.ts for r, _ in groups[i]), default=-1)
     for index, group in enumerate(groups):
         ends_at = group[0][1]
         rows = sorted((r for r, _ in group), key=lambda r: r.ts)
@@ -151,7 +153,7 @@ def derive_sessions(rows_by_window: dict[str, list[QuotaRow]], now: int) -> list
             SessionWindow(
                 started_at=started_at,
                 ends_at=ends_at,
-                is_current=index == len(groups) - 1 and now < ends_at,
+                is_current=index == newest and now < ends_at,
                 peak_pct=max(r.pct for r in rows),
                 final_pct=rows[-1].pct,
                 samples=len(rows),
