@@ -17,6 +17,12 @@ from typing import Protocol
 KEYRING_SERVICE = "quotalens"
 KEYRING_USERNAME = "claude.ai-session-cookie"
 
+
+def keyring_username(profile: str = "") -> str:
+    """One keyring entry per profile, so two accounts never share a cookie."""
+    return f"{KEYRING_USERNAME}:{profile}" if profile else KEYRING_USERNAME
+
+
 REDACTED = "[REDACTED]"
 # Cookie pairs whose value is an identifier, not a credential; redacting them would
 # hide the org id from every error message and make endpoint drift undebuggable.
@@ -48,9 +54,14 @@ class SecretStoreError(RuntimeError):
 class KeyringSecretStore:
     """Cookie storage backed by the OS keychain via ``keyring``."""
 
-    def __init__(self, service: str = KEYRING_SERVICE, username: str = KEYRING_USERNAME) -> None:
+    def __init__(
+        self,
+        service: str = KEYRING_SERVICE,
+        username: str | None = None,
+        profile: str = "",
+    ) -> None:
         self._service = service
-        self._username = username
+        self._username = username or keyring_username(profile)
 
     def _backend(self):  # type: ignore[no-untyped-def]
         import keyring  # imported lazily so tests never touch the real keychain

@@ -8,7 +8,9 @@ numbers that fit on a command line.
 from __future__ import annotations
 
 import os
+import re
 import sys
+import zlib
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -33,6 +35,39 @@ DEFAULT_HTTP_TIMEOUT_S = 20.0
 DEFAULT_IMPERSONATE = "chrome"
 DEFAULT_USER_AGENT: str | None = None  # None: let the impersonated browser profile decide
 APP_NAME = "quotalens"
+# A profile is a second account: its own keyring entry, database, port and pid file.
+# Two accounts is two processes and two bookmarks, not account switching in one process.
+PROFILE_PORT_BASE = 8788
+PROFILE_PORT_SPAN = 100
+_PROFILE_CLEAN = re.compile(r"[^a-z0-9_-]+")
+
+
+def normalise_profile(name: str | None) -> str:
+    """Lower-cased and safe for a filename, a port derivation and a keyring entry."""
+    if not name:
+        return ""
+    cleaned = _PROFILE_CLEAN.sub("-", name.strip().lower()).strip("-")
+    if not cleaned:
+        raise SettingsError(f"profile name {name!r} has no usable characters")
+    if len(cleaned) > 40:
+        raise SettingsError("profile name must be 40 characters or fewer")
+    return cleaned
+
+
+def profile_suffix(profile: str) -> str:
+    return f"-{profile}" if profile else ""
+
+
+def default_port(profile: str = "") -> int:
+    """8787 for the default profile; a stable derived port for a named one.
+
+    Derived with crc32 rather than ``hash`` so it is the same port on every run.
+    Two profiles can still collide, and then the bind error says so and ``--port``
+    settles it.
+    """
+    if not profile:
+        return DEFAULT_PORT
+    return PROFILE_PORT_BASE + zlib.crc32(profile.encode()) % PROFILE_PORT_SPAN
 
 
 def default_data_dir(app_name: str = APP_NAME) -> Path:
@@ -46,12 +81,13 @@ def default_data_dir(app_name: str = APP_NAME) -> Path:
     return (Path(xdg) if xdg else Path.home() / ".local" / "share") / app_name
 
 
-def default_db_path() -> Path:
-    return default_data_dir() / f"{APP_NAME}.db"
+def default_db_path(profile: str = "") -> Path:
+    return default_data_dir() / f"{APP_NAME}{profile_suffix(profile)}.db"
 
 
 @dataclass(frozen=True)
 class Settings:
+    profile: str = ""  # "" is the default profile
     host: str = DEFAULT_HOST
     port: int = DEFAULT_PORT
     poll_interval_s: int = DEFAULT_POLL_INTERVAL_S
@@ -94,16 +130,24 @@ def _env_float(name: str, default: float) -> float:
         raise SettingsError(f"{ENV_PREFIX}{name} must be a number, got {raw!r}") from exc
 
 
-def settings_from_env() -> Settings:
-    """Build settings from the environment, falling back to the defaults above."""
+def settings_from_env(profile: str | None = None) -> Settings:
+    """Build settings from the environment, falling back to the defaults above.
+
+    The profile moves three defaults: the database filename, the port and (via
+    :mod:`quotalens.secrets`) the keyring entry.
+    """
+    if profile is None:
+        profile = os.environ.get(ENV_PREFIX + "PROFILE", "")
+    profile = normalise_profile(profile)
     db_raw = os.environ.get(ENV_PREFIX + "DB")
     settings = Settings(
-        port=_env_int("PORT", DEFAULT_PORT),
+        profile=profile,
+        port=_env_int("PORT", default_port(profile)),
         poll_interval_s=_env_int("INTERVAL", DEFAULT_POLL_INTERVAL_S),
         burn_lookback_min=_env_int("LOOKBACK_MINUTES", DEFAULT_BURN_LOOKBACK_MIN),
         burn_alert_pts_per_hour=_env_float("BURN_ALERT", DEFAULT_BURN_ALERT_PTS_PER_HOUR),
         sample_keep=_env_int("SAMPLE_KEEP", DEFAULT_SAMPLE_KEEP),
-        db_path=Path(db_raw).expanduser() if db_raw else default_db_path(),
+        db_path=Path(db_raw).expanduser() if db_raw else default_db_path(profile),
         base_url=os.environ.get(ENV_PREFIX + "BASE_URL", DEFAULT_BASE_URL),
         user_agent=os.environ.get(ENV_PREFIX + "USER_AGENT") or DEFAULT_USER_AGENT,
         impersonate=os.environ.get(ENV_PREFIX + "IMPERSONATE") or DEFAULT_IMPERSONATE,

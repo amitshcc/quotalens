@@ -22,6 +22,7 @@ from quotalens.config import (
     Settings,
     SettingsError,
     default_data_dir,
+    default_db_path,
     settings_from_env,
     validate,
 )
@@ -254,13 +255,13 @@ def cmd_serve(args: argparse.Namespace, settings: Settings, secrets: SecretStore
     from quotalens.api import create_app
     from quotalens.store import Store
 
-    pidfile = service.pid_path(args.data_dir)
+    pidfile = service.pid_path(args.data_dir, settings.profile)
     try:
         service.acquire_pid_file(pidfile)
     except service.ServiceError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    service.write_runtime(args.data_dir, settings.port, settings.poll_interval_s)
+    service.write_runtime(args.data_dir, settings.port, settings.poll_interval_s, settings.profile)
     try:
         cookie = secrets.get_cookie()
     except SecretStoreError as exc:
@@ -289,7 +290,7 @@ def cmd_serve(args: argparse.Namespace, settings: Settings, secrets: SecretStore
         uvicorn.run(app, host=settings.host, port=settings.port, log_level="warning")
     finally:
         store.close()
-        service.clear_runtime(args.data_dir)
+        service.clear_runtime(args.data_dir, settings.profile)
         service.release_pid_file(pidfile)
     return 0
 
@@ -308,7 +309,7 @@ def _serve_args(args: argparse.Namespace) -> list[str]:
 
 def cmd_start(args: argparse.Namespace, settings: Settings, secrets: SecretStore) -> int:
     try:
-        result = service.start(args.data_dir, _serve_args(args))
+        result = service.start(args.data_dir, _serve_args(args), profile=settings.profile)
     except service.ServiceError as exc:
         print(f"not started: {exc}", file=sys.stderr)
         return 1
@@ -329,13 +330,13 @@ def cmd_stop(args: argparse.Namespace, settings: Settings, secrets: SecretStore)
             file=sys.stderr,
         )
         return 1
-    pid = service.stop(args.data_dir)
+    pid = service.stop(args.data_dir, profile=settings.profile)
     print(f"stopped pid {pid}" if pid else "not running")
     return 0
 
 
 def cmd_restart(args: argparse.Namespace, settings: Settings, secrets: SecretStore) -> int:
-    runtime = service.read_runtime(args.data_dir) or {}
+    runtime = service.read_runtime(args.data_dir, settings.profile) or {}
     args.port = args.port or runtime.get("port")  # keep what the instance was started with
     args.interval = args.interval or runtime.get("interval_s")
     args.force = True
@@ -344,7 +345,9 @@ def cmd_restart(args: argparse.Namespace, settings: Settings, secrets: SecretSto
 
 
 def cmd_status(args: argparse.Namespace, settings: Settings, secrets: SecretStore) -> int:
-    report = service.status(args.data_dir, args.port)  # None: the instance's recorded port
+    report = service.status(
+        args.data_dir, args.port, profile=settings.profile
+    )  # None: the instance's recorded port
     print("\n".join(report.lines))
     for line in service.service_status(sys.platform, Path.home(), args.data_dir):
         print(line)
@@ -352,7 +355,7 @@ def cmd_status(args: argparse.Namespace, settings: Settings, secrets: SecretStor
 
 
 def cmd_logs(args: argparse.Namespace, settings: Settings, secrets: SecretStore) -> int:
-    path = service.log_path(args.data_dir)
+    path = service.log_path(args.data_dir, settings.profile)
     if not path.exists():
         print(f"no log yet at {path}", file=sys.stderr)
         return 1
@@ -371,7 +374,9 @@ def cmd_service(args: argparse.Namespace, settings: Settings, secrets: SecretSto
     try:
         if args.action == "install":
             interval = args.interval or settings.poll_interval_s
-            actions = service.install_service(sys.platform, home, args.data_dir, interval)
+            actions = service.install_service(
+                sys.platform, home, args.data_dir, interval, profile=settings.profile
+            )
         elif args.action == "uninstall":
             actions = service.uninstall_service(sys.platform, home, args.data_dir)
         else:
@@ -400,6 +405,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
     parser.add_argument(
         "--data-dir", type=Path, default=None, help="where the pid file and log live"
+    )
+    parser.add_argument(
+        "--profile",
+        default=None,
+        help="a second account: its own keyring entry, database, port and pid file "
+        "(env: QUOTALENS_PROFILE)",
     )
     parser.add_argument(
         "--user-agent",
@@ -461,10 +472,12 @@ def main(argv: Sequence[str] | None = None, secrets: SecretStore | None = None) 
         args.data_dir = default_data_dir()
     _setup_logging(args.verbose, getattr(args, "log_file", None))
     try:
-        settings = settings_from_env().with_overrides(user_agent=args.user_agent)
+        settings = settings_from_env(args.profile).with_overrides(user_agent=args.user_agent)
         if scratch_dir and not os.environ.get("QUOTALENS_DB") and not getattr(args, "db", None):
             # A scratch data directory must never write to the real database by default.
-            settings = settings.with_overrides(db_path=args.data_dir / "quotalens.db")
+            settings = settings.with_overrides(
+                db_path=args.data_dir / default_db_path(settings.profile).name
+            )
         if args.command in ("serve", "prune"):
             settings = settings.with_overrides(db_path=getattr(args, "db", None))
         if args.command == "serve":
@@ -480,7 +493,7 @@ def main(argv: Sequence[str] | None = None, secrets: SecretStore | None = None) 
     except SettingsError as exc:
         parser.error(str(exc))
     if secrets is None:
-        secrets = KeyringSecretStore()
+        secrets = KeyringSecretStore(profile=settings.profile)
     handlers = {
         "auth": cmd_auth,
         "probe": cmd_probe,

@@ -277,7 +277,12 @@ def test_status_uses_the_recorded_port_when_none_is_given(tmp_path) -> None:
 
     status(tmp_path, None, fetch=fetch)
     assert seen and seen[0].startswith("http://127.0.0.1:8790/")
-    assert service.read_runtime(tmp_path) == {"pid": os.getpid(), "port": 8790, "interval_s": 30}
+    assert service.read_runtime(tmp_path) == {
+        "pid": os.getpid(),
+        "port": 8790,
+        "interval_s": 30,
+        "profile": "",
+    }
     service.clear_runtime(tmp_path)
     assert service.read_runtime(tmp_path) is None
     assert status(tmp_path, None, fetch=fetch).exit_code == 1  # nothing recorded, no pid

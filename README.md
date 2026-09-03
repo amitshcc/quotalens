@@ -22,6 +22,24 @@ quotalens stop
 curl 'http://127.0.0.1:8787/api/quota/current'
 ```
 
+## Two accounts
+
+A profile is a second account. It gets its own keyring entry, its own database,
+its own port and its own pid file, so the two never see each other:
+
+```sh
+quotalens --profile work auth
+quotalens --profile work start        # a derived port, printed by `start`
+quotalens --profile personal auth
+quotalens --profile personal start
+quotalens --profile work stop         # leaves the personal one running
+```
+
+Two accounts is two processes and two bookmarks, not an account picker inside
+one process. The port is derived from the name and is the same on every run;
+pass `--port` if two names happen to collide. `QUOTALENS_PROFILE` works too, for
+a service unit.
+
 ## Running it as a service
 
 ```sh
