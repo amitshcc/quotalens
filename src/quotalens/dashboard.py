@@ -19,7 +19,13 @@ from quotalens.config import Settings
 from quotalens.parse import SpendReading, humanize
 from quotalens.poller import PollerStatus
 from quotalens.runway import HourBar, Runway, compute_runway, hour_strip, median_peak
-from quotalens.sessions import SessionWindow, coverage_pct, idle_spans, window_from_row
+from quotalens.sessions import (
+    SESSION_LENGTH_S,
+    SessionWindow,
+    coverage_pct,
+    idle_spans,
+    window_from_row,
+)
 from quotalens.state import (
     CRITICAL,
     ELEVATED,
@@ -50,6 +56,7 @@ MAX_POINTS_PER_SERIES = 600  # longer ranges are bucketed, keeping the last samp
 DISPLAY_MIN_BURN_SPAN_S = 300  # a rate over less than this is noise at 68px
 FORCE_NOTE_TTL_S = 15
 HISTORY_ROWS = 20
+SPARK_POINTS = 40
 THIN_COVERAGE_PCT = 25.0  # under this coverage a window is a guess
 PEAK_FINAL_NOTE_PTS = 2.0  # peak and close differ by more than this: worth a note
 
@@ -219,6 +226,7 @@ class SessionRowView:
     samples: int
     coverage_pct: float
     coverage_text: str
+    spark: str  # polyline points of the 5-hour trace inside the window, 60x18 box
     thin: bool  # too few samples to trust
     is_current: bool
     selected: bool  # the chart range is exactly this window
@@ -366,7 +374,7 @@ def build_dashboard(
         else sessions_all
     )
     page = listed if view.history_all else listed[:HISTORY_ROWS]
-    history = _history_view(page, labels, slots, view, settings.poll_interval_s, now)
+    history = _history_view(page, labels, slots, view, settings.poll_interval_s, now, store)
     history.total = len(sessions_all)
     if len(sessions_all) > HISTORY_ROWS:
         if view.history_all:
@@ -825,6 +833,20 @@ def _delta_text(w: SessionWindow, key: str) -> str:
     return text + " (reset)" if d.reset else text
 
 
+def sparkline(rows: list[QuotaRow], started_at: int) -> str:
+    """Polyline points for a 60x18 box: x is time across the 5-hour window, y is 0-100%."""
+    if len(rows) < 2:
+        return ""
+    step = max(1, len(rows) // SPARK_POINTS)
+    picked = rows[::step]
+    if picked[-1] is not rows[-1]:
+        picked.append(rows[-1])
+    return " ".join(
+        f"{2 + (r.ts - started_at) / SESSION_LENGTH_S * 56:.1f},{17 - r.pct / 100 * 16:.1f}"
+        for r in picked
+    )
+
+
 def _history_view(
     windows: list[SessionWindow],
     labels: dict[str, str],
@@ -832,6 +854,7 @@ def _history_view(
     view: ViewOptions,
     interval_s: int,
     now: int,
+    store: Store | None = None,
 ) -> HistoryView:
     keys = sorted(
         {k for w in windows for k in w.deltas if k.startswith("limit:")},
@@ -847,6 +870,10 @@ def _history_view(
         note = ""
         if abs(w.peak_pct - w.final_pct) > PEAK_FINAL_NOTE_PTS:
             note = f"Peak {fmt_pct(w.peak_pct)}%, closed at {fmt_pct(w.final_pct)}%"
+        spark = ""
+        if store is not None:
+            trace = store.quota_series(w.first_ts, window=RATE_WINDOW, until_ts=w.last_ts)
+            spark = sparkline(trace, w.started_at)
         rows.append(
             SessionRowView(
                 started_at=w.started_at,
@@ -859,6 +886,7 @@ def _history_view(
                 samples=w.samples,
                 coverage_pct=coverage,
                 coverage_text=f"{coverage:.0f}%",
+                spark=spark,
                 thin=coverage < THIN_COVERAGE_PCT,
                 is_current=w.is_current,
                 selected=view.custom == (w.started_at, end),
