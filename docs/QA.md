@@ -12,7 +12,8 @@ mkdir -p /tmp/qa
 python -c "import sqlite3, pathlib; src = pathlib.Path.home() / 'Library/Application Support/quotalens/quotalens.db'; s = sqlite3.connect(src); d = sqlite3.connect('/tmp/qa/copy.db'); s.backup(d)"
 # a stand-in upstream you can switch between states
 python qa/fake_claude.py 8799 &
-# an instance that never touches your real data directory
+# an instance that never touches your real data: --data-dir also moves the
+# database there unless QUOTALENS_DB or --db says otherwise
 QUOTALENS_DB=/tmp/qa/copy.db QUOTALENS_BASE_URL=http://127.0.0.1:8799 \
   quotalens --data-dir /tmp/qa start --port 8790 --interval 30
 ```
@@ -87,8 +88,9 @@ inference from source: write down what was on screen or in the DOM.
 
 ## Data shapes
 
-- [ ] Cold database (under 15 minutes of data): "Collecting: Nm of data" instead
-      of a grid; the hero says collecting; no burn alert fires.
+- [ ] Cold database: under 5 minutes of data the hero says collecting and no
+      alert fires; under 15 minutes the chart says "Collecting: Nm of data"
+      instead of a grid (the hero may already show a rate).
 - [ ] A real reset boundary inside the selected range (24h on live data): the
       session trace breaks cleanly, the meter foot says "N resets in range", a
       session-start rule appears on the chart.
@@ -108,3 +110,16 @@ inference from source: write down what was on screen or in the DOM.
       (the same number rounded twice, differently).
 - 2026-09-03: the critical headroom figure rendered inside a chip box because a
       state modifier shared the chip class name `crit`.
+- 2026-09-03: `--data-dir` does not move the database. A scratch instance started
+      without `QUOTALENS_DB` opened the real `~/Library/Application Support/quotalens/quotalens.db`
+      and wrote fake-upstream samples into it; always export `QUOTALENS_DB` in QA.
+- 2026-09-03: samples whose `resets_at` alternates between values (two upstreams
+      interleaved, or a flapping API) made `sessions.rebuild` raise
+      `IntegrityError: UNIQUE constraint failed: session_window.started_at`; every
+      `start` then died at lifespan and the poller of the live instance failed too.
+- 2026-09-03: `status` with no `--port` and no `quotalens.runtime.json` (instance
+      never started) fell through to port 8787 and printed "running (pid unknown,
+      no pid file)" with that instance's session, exit 0.
+- 2026-09-03: the "partial, N% observed" badge divides by the viewing instance's
+      `--interval`, not the cadence the samples were collected at: a 60s database
+      viewed at `--interval 30` showed every window as ~50% observed.

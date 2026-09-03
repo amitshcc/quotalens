@@ -266,3 +266,18 @@ def test_unrecognised_block_event_fires_once_per_change(settings, store, secrets
     asyncio.run(poller.poll_once())
     kinds = [e.kind for e in store.recent_events()]
     assert kinds.count("unrecognised_block") == 1
+
+
+def test_session_rebuild_failure_does_not_fail_the_poll(
+    settings, store, secrets, monkeypatch
+) -> None:
+    from quotalens import poller as poller_module
+
+    def boom(store, now):
+        raise RuntimeError("UNIQUE constraint failed: session_window.started_at")
+
+    monkeypatch.setattr(poller_module, "rebuild_sessions", boom)
+    poller = _poller(settings, store, secrets, make_handler())
+    assert asyncio.run(poller.poll_once()) == 60
+    assert poller.status.state == "ok" and store.counts()["quota"] == 3
+    assert "session_rebuild_failed" in [e.kind for e in store.recent_events()]

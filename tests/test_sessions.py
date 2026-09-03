@@ -110,13 +110,36 @@ def test_weekly_delta_and_reset_mid_window() -> None:
     assert "limit:fable" not in w.deltas
 
 
-def test_coverage_percentage_including_a_window_shorter_than_the_interval() -> None:
-    assert coverage_pct(287, 5 * 3600, 60) == 95.7
-    assert coverage_pct(300, 5 * 3600, 60) == 100.0
-    assert coverage_pct(600, 5 * 3600, 60) == 100.0  # capped
-    assert coverage_pct(1, 30, 60) == 100.0  # shorter than one interval: one sample is full
-    assert coverage_pct(0, 30, 60) == 0.0
-    assert coverage_pct(3, 4 * 3600, 60) == 1.2
+def test_coverage_is_observed_time_not_the_viewer_interval() -> None:
+    from quotalens.sessions import observed_seconds
+
+    assert coverage_pct(17_230, 5 * 3600) == 95.7
+    assert coverage_pct(18_000, 5 * 3600) == 100.0
+    assert coverage_pct(20_000, 5 * 3600) == 100.0  # capped
+    assert coverage_pct(30, 30) == 100.0  # a window shorter than one interval, fully seen
+    assert coverage_pct(0, 30) == 0.0
+    # samples every 30s and every 60s over the same hour both count as fully observed
+    hour = list(range(0, 3601, 30))
+    assert observed_seconds(hour, 0, 3600, 180) == 3600
+    assert observed_seconds(hour[::2], 0, 3600, 180) == 3600
+    # a 20-minute silence in the middle is not observed; edges count up to the threshold
+    gappy = [t for t in hour if not 1200 < t < 2400]
+    assert observed_seconds(gappy, 0, 3600, 180) == 3600 - (2400 - 1200)
+    assert observed_seconds([1000, 1060], 0, 3600, 180) == 60 + 180 + 180
+    assert observed_seconds([], 0, 3600, 180) == 0
+
+
+def test_interleaved_expiries_merge_into_one_window_each() -> None:
+    """Two collectors writing alternately: their samples merge by expiry, no duplicate starts."""
+    e1 = T0 + SESSION_LENGTH_S
+    e2 = e1 - 4 * 60  # a second, slightly different expiry
+    rows = []
+    for i in range(0, 20):
+        rows.append(QuotaRow(T0 + i * 60, "five_hour", "5-hour", 10 + i, iso(e1)))
+        rows.append(QuotaRow(T0 + i * 60 + 5, "five_hour", "5-hour", 50 + i, iso(e2)))
+    windows = derive_sessions({"five_hour": rows}, now=T0 + 3600)
+    assert len({w.started_at for w in windows}) == len(windows) == 2
+    assert sorted(w.samples for w in windows) == [20, 20]
 
 
 def test_backfill_is_idempotent_and_survives_reopen(tmp_path) -> None:
@@ -201,8 +224,8 @@ def test_thin_windows_render_far_and_idle_differs_from_gap(settings, store) -> N
     dash = build_dashboard(settings, store, status, now, 20.0, ViewOptions(range_key="24h"))
     thin = [r for r in dash.history.rows if r.samples == 3]
     assert thin and thin[0].thin and not dash.history.rows[0].thin
-    assert thin[0].badge == "partial, 1% observed"
-    assert dash.history.rows[0].badge == "partial, 50% observed"
+    assert thin[0].badge.startswith("partial, ") and thin[0].thin
+    assert dash.history.rows[0].badge == ""  # sampled every two minutes: fully observed
     assert dash.chart.idle_minutes > 0 and dash.chart.gap_minutes > 0
     assert len(dash.chart.session_x) == 2
     html = render_app(dash)

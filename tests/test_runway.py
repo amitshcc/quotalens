@@ -50,7 +50,7 @@ def test_verdicts() -> None:
     assert collecting.verdict == "Collecting: 3m of samples. 37% left, resets in 2h 14m."
     none = compute_runway(63, 30, 900, None, NOW)
     assert none.verdict.startswith("No session running") and none.remaining_s == 0
-    assert compute_runway(None, None, 0, reset, NOW).verdict == "No 5-hour readings yet."
+    assert compute_runway(None, None, 0, reset, NOW).verdict == "No session readings yet."
 
 
 def test_countdown_at_the_moment_of_reset() -> None:

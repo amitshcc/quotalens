@@ -18,7 +18,7 @@ from typing import Any
 
 from quotalens.parse import QuotaReading, SpendReading
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # Statements that bring an older database up to each version, in order.
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
@@ -28,6 +28,7 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
         "ALTER TABLE overage ADD COLUMN exponent INTEGER NOT NULL DEFAULT 2",
     ),
     3: (),  # session_window is created by the CREATE statements; rebuilt from samples
+    4: ("ALTER TABLE session_window ADD COLUMN covered_s INTEGER NOT NULL DEFAULT 0",),
 }
 
 _SCHEMA = """
@@ -90,7 +91,8 @@ CREATE TABLE IF NOT EXISTS session_window (
     samples INTEGER NOT NULL,
     first_ts INTEGER NOT NULL,
     last_ts INTEGER NOT NULL,
-    deltas TEXT NOT NULL
+    deltas TEXT NOT NULL,
+    covered_s INTEGER NOT NULL DEFAULT 0
 );
 -- detected climbs, threshold crossings, poll failures
 CREATE TABLE IF NOT EXISTS event (
@@ -196,7 +198,11 @@ class Store:
                 current = 1  # tables without a version row predate versioning
             for version in range(current + 1, SCHEMA_VERSION + 1):
                 for statement in _MIGRATIONS.get(version, ()):
-                    cur.execute(statement)
+                    try:
+                        cur.execute(statement)
+                    except sqlite3.OperationalError as exc:
+                        if "duplicate column" not in str(exc):
+                            raise  # the CREATE statements already carry the column
                 cur.execute(
                     "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
                     (version, now_ts()),
@@ -265,14 +271,16 @@ class Store:
                 w.first_ts,
                 w.last_ts,
                 json.dumps({k: d.as_dict() for k, d in w.deltas.items()}),
+                w.covered_s,
             )
             for w in windows
         ]
         with self._tx() as cur:
             cur.execute("DELETE FROM session_window")
             cur.executemany(
-                "INSERT INTO session_window (started_at, ends_at, is_current, peak_pct, "
-                "final_pct, samples, first_ts, last_ts, deltas) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO session_window (started_at, ends_at, is_current, "
+                "peak_pct, final_pct, samples, first_ts, last_ts, deltas, covered_s) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
 

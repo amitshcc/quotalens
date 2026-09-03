@@ -24,6 +24,7 @@ from quotalens.store import QuotaRow, Store
 SESSION_LENGTH_S = 5 * 3600
 RATE_WINDOW = "five_hour"
 RESET_TOLERANCE_S = 60  # resets_at jitters by a second or so between polls
+GAP_THRESHOLD_S = 180  # a longer silence than this counts as not observed
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,7 @@ class SessionWindow:
     first_ts: int
     last_ts: int
     deltas: dict[str, Delta] = field(default_factory=dict)
+    covered_s: int = 0  # seconds of the window during which the collector was running
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -59,6 +61,7 @@ class SessionWindow:
             "first_ts": self.first_ts,
             "last_ts": self.last_ts,
             "deltas": {k: d.as_dict() for k, d in self.deltas.items()},
+            "covered_s": self.covered_s,
         }
 
 
@@ -75,25 +78,44 @@ def _epoch(value: str | None) -> int | None:
 
 
 def _group_rate_rows(rows: list[QuotaRow]) -> list[list[tuple[QuotaRow, int]]]:
-    """Consecutive five_hour samples sharing an expiry (within tolerance), taken before it."""
+    """Session samples grouped by expiry (within tolerance), taken before that expiry.
+
+    Groups are keyed by expiry rather than by run, so samples that alternate between
+    two expiries (two collectors writing to one database) merge instead of producing
+    two windows with the same start.
+    """
     groups: list[list[tuple[QuotaRow, int]]] = []
-    current: list[tuple[QuotaRow, int]] = []
-    ref: int | None = None
+    refs: list[int] = []
     for row in sorted(rows, key=lambda r: r.ts):
         ends = _epoch(row.resets_at)
         if ends is None:
             continue  # no window running
-        same = ref is not None and abs(ends - ref) <= RESET_TOLERANCE_S
-        if not same:
-            if current:
-                groups.append(current)
-            current, ref = [], ends
-        if row.ts > (ref or ends) + RESET_TOLERANCE_S:
+        index = next(
+            (i for i in range(len(refs) - 1, -1, -1) if abs(ends - refs[i]) <= RESET_TOLERANCE_S),
+            None,
+        )
+        if index is None:
+            groups.append([])
+            refs.append(ends)
+            index = len(refs) - 1
+        ref = refs[index]
+        if row.ts > ref + RESET_TOLERANCE_S:
             continue  # the window expired and nothing new started: idle, not a sample of it
-        current.append((row, ref or ends))
-    if current:
-        groups.append(current)
-    return groups
+        groups[index].append((row, ref))
+    return [g for g in groups if g]
+
+
+def observed_seconds(timestamps: list[int], start: int, end: int, threshold_s: int) -> int:
+    """Seconds of [start, end] during which samples kept arriving (gaps under the threshold)."""
+    ts = sorted(t for t in timestamps if start <= t <= end)
+    if not ts:
+        return 0
+    covered = 0
+    for a, b in pairwise(ts):
+        if b - a <= threshold_s:
+            covered += b - a
+    covered += min(threshold_s, ts[0] - start) + min(threshold_s, end - ts[-1])
+    return min(covered, end - start)
 
 
 def _delta(rows: list[QuotaRow], first_ts: int, last_ts: int) -> Delta | None:
@@ -114,8 +136,12 @@ def derive_sessions(rows_by_window: dict[str, list[QuotaRow]], now: int) -> list
     windows: list[SessionWindow] = []
     for index, group in enumerate(groups):
         ends_at = group[0][1]
-        rows = [r for r, _ in group]
+        rows = sorted((r for r, _ in group), key=lambda r: r.ts)
         first_ts, last_ts = rows[0].ts, rows[-1].ts
+        started_at = ends_at - SESSION_LENGTH_S
+        covered = observed_seconds(
+            [r.ts for r in rows], started_at, min(ends_at, now), GAP_THRESHOLD_S
+        )
         deltas = {}
         for w, wrows in others.items():
             d = _delta(wrows, first_ts, last_ts)
@@ -123,7 +149,7 @@ def derive_sessions(rows_by_window: dict[str, list[QuotaRow]], now: int) -> list
                 deltas[w] = d
         windows.append(
             SessionWindow(
-                started_at=ends_at - SESSION_LENGTH_S,
+                started_at=started_at,
                 ends_at=ends_at,
                 is_current=index == len(groups) - 1 and now < ends_at,
                 peak_pct=max(r.pct for r in rows),
@@ -132,15 +158,17 @@ def derive_sessions(rows_by_window: dict[str, list[QuotaRow]], now: int) -> list
                 first_ts=first_ts,
                 last_ts=last_ts,
                 deltas=deltas,
+                covered_s=covered,
             )
         )
     return windows
 
 
-def coverage_pct(samples: int, elapsed_s: int, interval_s: int) -> float:
-    """Share of the samples the poll interval would have produced, capped at 100."""
-    expected = max(1.0, elapsed_s / max(1, interval_s))
-    return min(100.0, round(samples / expected * 100, 1))
+def coverage_pct(covered_s: int, elapsed_s: int) -> float:
+    """Share of the window's elapsed time that was observed, capped at 100."""
+    if elapsed_s <= 0:
+        return 100.0
+    return min(100.0, round(covered_s / elapsed_s * 100, 1))
 
 
 def idle_spans(windows: list[SessionWindow], now: int) -> list[tuple[int, int]]:
@@ -177,4 +205,5 @@ def window_from_row(row: dict[str, Any]) -> SessionWindow:
         first_ts=row["first_ts"],
         last_ts=row["last_ts"],
         deltas={k: Delta(v["start"], v["end"], bool(v["reset"])) for k, v in raw.items()},
+        covered_s=int(row.get("covered_s") or 0),
     )
