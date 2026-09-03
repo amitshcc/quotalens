@@ -1,0 +1,12 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security issue
+    url: https://github.com/amitsharma/quotalens/security/advisories/new
+    about: >-
+      Anything involving the session cookie, credential storage or redaction.
+      Report it privately, not in a public issue.
+  - name: Per-project attribution
+    url: https://github.com/ccusage/ccusage
+    about: >-
+      QuotaLens does not do per-project token attribution. ccusage does, and
+      /usage inside Claude Code attributes to skills, subagents and MCP servers.
