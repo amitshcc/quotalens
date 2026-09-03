@@ -73,6 +73,20 @@ DISPLAY_LABELS = {
 }
 SHORT_LABELS = {"five_hour": "Session", "seven_day": "Weekly all"}
 
+# Fable models may use "up to 50% of your weekly usage limits" at no extra cost,
+# so this meter's 100% is half the weekly pool. Without saying so the dashboard
+# reports an exhausted account when the account has half its week left.
+SUBCAP_NOTE = "half of weekly pool"
+SUBCAP_TITLE = (
+    "Fable models may use up to 50% of your weekly limits. 100% here means that half is "
+    "spent, not that the account is out of quota, so it does not set the account state."
+)
+
+
+def is_subcapped(window: str) -> bool:
+    """Does this window measure a slice of the weekly pool rather than the pool?"""
+    return window.startswith("limit:") and "fable" in window
+
 
 def _model_name(window: str, stored_label: str | None) -> str:
     """The model behind a ``limit:`` key: the stored display name, else the slug."""
@@ -131,6 +145,16 @@ def clock(ts: int) -> str:
     return local(ts).strftime("%H:%M")
 
 
+def day_month(dt: datetime) -> str:
+    """"4 Sep", without a leading zero on any platform.
+
+    ``%-d`` is a glibc and BSD extension and ``%#d`` is the Windows spelling;
+    neither is portable, and asking for the wrong one raises ValueError rather
+    than degrading. The day is an integer, so format it as one.
+    """
+    return f"{dt.day} {dt.strftime('%b')}"
+
+
 def parse_iso(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -150,7 +174,7 @@ def when(dt: datetime | None, now: int) -> str:
         return dt.strftime("%H:%M")
     if 0 < (dt.date() - today).days < 7:
         return dt.strftime("%a %H:%M")
-    return dt.strftime("%-d %b")
+    return day_month(dt)
 
 
 def duration(seconds: float) -> str:
@@ -182,6 +206,9 @@ class WindowView:
     delta_text: str  # change over the selected range
     bar_pct: float  # clipped to the track
     withheld: bool
+    note: str = ""  # a qualifier on what 100% means here
+    note_title: str = ""  # the long form, on hover
+    subcap: bool = False  # measures a slice of another window, so not an account-level state
 
 
 @dataclass
@@ -414,7 +441,10 @@ def build_dashboard(
             history.show_all_href = view.href(history_all=True)
     spend = _spend_view(status.spend, withheld, now)
 
-    magnitude = worst([w.state for w in windows] + ([spend.state] if spend else []))
+    # A sub-capped window is excluded: Fable at 100% is half the weekly pool spent,
+    # and an account chip reading "critical" for that is simply false.
+    account_states = [w.state for w in windows if not w.subcap]
+    magnitude = worst(account_states + ([spend.state] if spend else []))
     if withheld:
         chip, chip_text = epistemic.kind, epistemic.title
     elif magnitude != NORMAL:
@@ -442,7 +472,9 @@ def build_dashboard(
         "Poll interval": f"{settings.poll_interval_s}s",
         "Samples stored": f"{counts['quota']:,}",
         "Database": f"{size / 1_048_576:.1f} MB" if size is not None else "in memory",
-        "Oldest sample": local(oldest).strftime("%-d %b %H:%M") if oldest else "none",
+        "Oldest sample": (
+            f"{day_month(local(oldest))} {clock(oldest)}" if oldest else "none"
+        ),
         "Last poll": clock(status.last_attempt_ts) if status.last_attempt_ts else "never",
         "Next poll": clock(status.next_poll_ts) if status.next_poll_ts else "pending",
     }
@@ -541,6 +573,9 @@ def _window_view(
     now: int,
 ) -> WindowView:
     label = display_label(row.window, row.label)
+    subcap = is_subcapped(row.window)
+    note = SUBCAP_NOTE if subcap else ""
+    note_title = SUBCAP_TITLE if subcap else ""
     if withheld:
         return WindowView(
             row.window,
@@ -554,6 +589,9 @@ def _window_view(
             "",
             0.0,
             True,
+            note,
+            note_title,
+            subcap,
         )
     state = magnitude_state(row.pct, row.severity)
     if row.window == RATE_WINDOW and burn_elevated and state == NORMAL:
@@ -570,6 +608,9 @@ def _window_view(
         _change_over_range(rows_in_range, rng),
         max(0.0, min(row.pct, 100.0)),
         False,
+        note,
+        note_title,
+        subcap,
     )
 
 
@@ -830,7 +871,7 @@ def _mark_sessions(
 
 def _window_text(w: SessionWindow, now: int) -> str:
     start, end = local(w.started_at), local(w.ends_at)
-    day = "" if start.date() == local(now).date() else start.strftime("%-d %b ")
+    day = "" if start.date() == local(now).date() else day_month(start) + " "
     return f"{day}{start.strftime('%H:%M')}–{end.strftime('%H:%M')}"
 
 
@@ -922,7 +963,7 @@ def _x_ticks(start: int, end: int, x_of: Any) -> list[tuple[float, str]]:
     ticks = []
     t = first
     while t <= end:
-        label = clock(t) if span <= 2 * 86400 else local(t).strftime("%-d %b")
+        label = clock(t) if span <= 2 * 86400 else day_month(local(t))
         ticks.append((x_of(t), label))
         t += step
     return ticks

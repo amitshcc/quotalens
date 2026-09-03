@@ -1,0 +1,574 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{box-sizing:border-box}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>QuotaLens Design Directions</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+</head><body>
+<style>
+/* ── page chrome: achromatic, the way the product's own rule asks.
+      All colour on this page comes from inside the specimens. ── */
+:root{
+  --pg:#F2F3F1; --pg-2:#E8EAE7; --ink:#15191A; --dim:#5B6462; --far:#89918F;
+  --hair:#D6DAD6; --hair-2:#C2C7C2; --lift:#FBFCFA;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --cond:"IBM Plex Sans Condensed","IBM Plex Sans",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --pg:#121516; --pg-2:#191D1E; --ink:#DDE2E0; --dim:#98A19E; --far:#6C7573;
+    --hair:#252B2C; --hair-2:#333A3B; --lift:#0D1011;
+  }
+}
+:root[data-theme="dark"]{
+  --pg:#121516; --pg-2:#191D1E; --ink:#DDE2E0; --dim:#98A19E; --far:#6C7573;
+  --hair:#252B2C; --hair-2:#333A3B; --lift:#0D1011;
+}
+:root[data-theme="light"]{
+  --pg:#F2F3F1; --pg-2:#E8EAE7; --ink:#15191A; --dim:#5B6462; --far:#89918F;
+  --hair:#D6DAD6; --hair-2:#C2C7C2; --lift:#FBFCFA;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--pg);color:var(--ink);font-family:var(--sans);
+  font-size:16px;line-height:1.55;-webkit-font-smoothing:antialiased;
+  font-variant-numeric:tabular-nums}
+.wrap{max-width:1080px;margin:0 auto;padding:0 28px 96px}
+p{margin:0 0 14px}
+a{color:inherit}
+.lede{max-width:66ch}
+.eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--far);margin:0 0 10px}
+
+/* masthead */
+header.top{border-bottom:1px solid var(--hair-2);padding:56px 0 26px;margin-bottom:34px}
+h1{font-family:var(--cond);font-weight:600;font-size:clamp(34px,5vw,52px);
+  line-height:1.04;letter-spacing:-.015em;margin:0 0 14px;text-wrap:balance}
+.sub{font-size:17px;color:var(--dim);max-width:62ch;margin:0}
+.meta{display:flex;flex-wrap:wrap;gap:22px;margin-top:22px;
+  font-family:var(--mono);font-size:12px;color:var(--far)}
+.meta b{font-weight:500;color:var(--dim)}
+
+/* section frames */
+section{padding-top:52px}
+h2{font-family:var(--cond);font-weight:600;font-size:27px;letter-spacing:-.01em;
+  margin:0 0 8px;line-height:1.15}
+h3{font-family:var(--sans);font-weight:600;font-size:14px;margin:0 0 6px;
+  letter-spacing:.005em}
+.rule{height:1px;background:var(--hair-2);margin:52px 0 0}
+
+/* direction head */
+.dhead{display:grid;grid-template-columns:56px 1fr;gap:20px;align-items:start}
+.tag{font-family:var(--cond);font-weight:600;font-size:40px;line-height:.9;
+  color:var(--far)}
+.thesis{font-size:18px;line-height:1.5;max-width:60ch;margin:6px 0 0;color:var(--ink)}
+
+/* specimen frame */
+.spec{margin:26px 0 0;border:1px solid var(--hair-2);overflow:hidden}
+.spec-cap{display:flex;justify-content:space-between;align-items:center;gap:16px;
+  padding:8px 12px;background:var(--pg-2);border-bottom:1px solid var(--hair-2);
+  font-family:var(--mono);font-size:11px;color:var(--far);letter-spacing:.04em}
+.spec-body{overflow-x:auto}
+
+/* notes grid */
+.notes{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));
+  gap:0;margin-top:26px;border-top:1px solid var(--hair)}
+.note{padding:16px 20px 18px;border-bottom:1px solid var(--hair);
+  border-right:1px solid var(--hair)}
+.note:last-child{border-right:none}
+.note p{font-size:14px;color:var(--dim);margin:0}
+.note .k{font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--far);display:block;margin-bottom:5px}
+
+.tradeoff{display:grid;grid-template-columns:1fr 1fr;gap:28px;margin-top:24px;
+  font-size:14.5px;max-width:900px}
+.tradeoff div{border-left:2px solid var(--hair-2);padding-left:14px}
+.tradeoff .k{font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--far);display:block;margin-bottom:5px}
+.tradeoff p{color:var(--dim);margin:0}
+
+/* marks */
+.marks{display:grid;grid-template-columns:repeat(auto-fit,minmax(196px,1fr));
+  border-top:1px solid var(--hair);margin-top:28px}
+.mk{border-bottom:1px solid var(--hair);border-right:1px solid var(--hair);
+  padding:22px 20px 20px}
+.mk:last-child{border-right:none}
+.mk-row{display:flex;align-items:flex-end;gap:16px;height:46px;margin-bottom:16px;
+  color:var(--ink)}
+.mk-name{font-family:var(--sans);font-weight:600;font-size:14px;margin:0 0 4px}
+.mk p{font-size:13.5px;color:var(--dim);margin:0}
+.lockup{display:flex;align-items:center;gap:9px;margin-top:14px;padding:8px 10px;
+  background:var(--lift);border:1px solid var(--hair);
+  font-size:14px;font-weight:500;letter-spacing:-.005em}
+
+table.cmp{width:100%;border-collapse:collapse;font-size:14px;margin-top:20px}
+table.cmp th,table.cmp td{text-align:left;padding:9px 14px 9px 0;
+  border-bottom:1px solid var(--hair);vertical-align:top}
+table.cmp th{font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--far);font-weight:400;white-space:nowrap}
+table.cmp td:first-child{font-weight:500;white-space:nowrap;padding-right:22px}
+table.cmp td{color:var(--dim)}
+
+ul.tight{margin:0;padding-left:18px;font-size:15px;color:var(--dim);max-width:64ch}
+ul.tight li{margin-bottom:7px}
+ul.tight b{color:var(--ink);font-weight:600}
+
+/* ══════════ SPECIMEN A — "Tape" ══════════ */
+.mA{--pa:#F1F2EF;--pi:#14171A;--pd:#5E6664;--ph:#D5D9D4;--pl:#E4E7E2;
+  --now:#1B44A0;--alert:#B3242B;
+  background:var(--pa);color:var(--pi);padding:18px 20px 20px;min-width:840px;
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:13px}
+.mA .hd{display:flex;justify-content:space-between;align-items:baseline;
+  padding-bottom:11px;border-bottom:1px solid var(--pi)}
+.mA .wm{font-size:15px;font-weight:500;letter-spacing:-.01em;display:flex;
+  align-items:center;gap:8px}
+.mA .hd .m{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;
+  color:var(--pd)}
+.mA .answer{font-size:19px;line-height:1.4;margin:18px 0 4px;max-width:52ch;
+  letter-spacing:-.012em}
+.mA .answer em{font-style:normal;color:var(--alert);font-weight:500}
+.mA .answer-sub{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:11.5px;color:var(--pd);margin:0 0 4px}
+
+/* ══════════ SPECIMEN B — "Answer" ══════════ */
+.mB{--pa:#FBFBFA;--pi:#131616;--pd:#6A716F;--ph:#E1E3DF;--alert:#A81E26;
+  background:var(--pa);color:var(--pi);padding:26px 32px 30px;min-width:640px;
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:14px}
+.mB .col{max-width:600px;margin:0 auto}
+.mB .hd{display:flex;justify-content:space-between;align-items:baseline;
+  font-size:13px;color:var(--pd);padding-bottom:26px}
+.mB .hd .wm{color:var(--pi);font-weight:500;font-size:14px;letter-spacing:-.01em}
+.mB .hd .m{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
+.mB .say{font-size:31px;line-height:1.24;letter-spacing:-.022em;font-weight:400;
+  margin:0 0 12px;text-wrap:balance}
+.mB .say em{font-style:normal;color:var(--alert)}
+.mB .because{font-size:14.5px;color:var(--pd);margin:0 0 26px;line-height:1.5}
+.mB .facts{border-top:1px solid var(--ph);margin-top:24px}
+.mB .fact{display:flex;justify-content:space-between;gap:20px;padding:9px 0;
+  border-bottom:1px solid var(--ph);font-size:13px}
+.mB .fact .l{color:var(--pd)}
+.mB .fact .v{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-variant-numeric:tabular-nums}
+.mB .fact .v.bad{color:var(--alert)}
+.mB .more{margin-top:16px;font-size:12.5px;color:var(--pd);
+  text-decoration:underline;text-underline-offset:3px}
+
+/* ══════════ SPECIMEN C — "Console" ══════════ */
+.mC{--pa:#0E1113;--pi:#C6CCC9;--pd:#6E7A78;--ph:#1E2528;--cy:#5FC9DE;
+  --alert:#F0575C;
+  background:var(--pa);color:var(--pi);padding:16px 20px 20px;min-width:760px;
+  font-family:ui-monospace,SFMono-Regular,"SF Mono","Cascadia Mono",Menlo,
+  Consolas,monospace;font-size:12.5px;line-height:1.55}
+.mC .hd{display:flex;justify-content:space-between;color:var(--pd);
+  padding-bottom:8px;border-bottom:1px solid var(--ph)}
+.mC .hd b{color:var(--pi);font-weight:500}
+.mC .cur{display:inline-block;width:7px;height:13px;background:var(--cy);
+  vertical-align:-2px;margin-left:3px}
+.mC .big{display:flex;align-items:baseline;gap:12px;margin:16px 0 2px}
+.mC .big .n{font-size:38px;line-height:1;color:var(--cy);letter-spacing:-.02em}
+.mC .big .u{color:var(--pd);font-size:12.5px}
+.mC .big .d{color:var(--alert);font-size:12.5px;margin-left:auto}
+.mC .say{color:var(--pd);margin:0 0 18px}
+.mC .say b{color:var(--pi);font-weight:400}
+.mC .meter{display:grid;grid-template-columns:104px 1fr 62px;gap:14px;
+  align-items:center;padding:3px 0}
+.mC .meter .l{color:var(--pd)}
+.mC .bar{display:flex;gap:2px;height:11px}
+.mC .bar i{flex:1;background:var(--ph)}
+.mC .bar i.on{background:var(--cy)}
+.mC .bar.crit i.on{background:var(--alert)}
+.mC .meter .v{text-align:right;color:var(--cy)}
+.mC .meter .v.crit{color:var(--alert)}
+.mC .meter .v.na{color:var(--pd)}
+.mC .bar.stale i{background:transparent;border-top:1px dashed var(--pd);height:0;
+  align-self:center}
+.mC hr{border:0;border-top:1px solid var(--ph);margin:16px 0}
+.mC table{width:100%;border-collapse:collapse;font-size:12px}
+.mC th{text-align:left;color:var(--pd);font-weight:400;padding:2px 10px 6px 0}
+.mC td{padding:2px 10px 2px 0;white-space:nowrap}
+.mC td.r,.mC th.r{text-align:right;padding-right:0}
+.mC .drv{color:var(--alert)}
+
+.foot{margin-top:60px;padding-top:22px;border-top:1px solid var(--hair-2);
+  font-family:var(--mono);font-size:12px;color:var(--far);max-width:70ch}
+@media (max-width:720px){
+  .tradeoff{grid-template-columns:1fr}
+  .dhead{grid-template-columns:1fr;gap:6px}
+  .tag{font-size:28px}
+}
+</style>
+
+<div class="wrap">
+
+<header class="top">
+  <p class="eyebrow">QuotaLens · design review · 3 September 2026</p>
+  <h1>Three ways this could look</h1>
+  <p class="sub">The current system — <em>Bench</em>, an instrument in an anodised housing with one lit amber
+  readout — is coherent and it works. What follows is not a repaint of it. Each direction takes a different
+  position on <em>what the page is</em>, which changes the layout before it changes a single colour.</p>
+  <div class="meta">
+    <span><b>Same data in all three:</b> 4.82 pts/hr · 5-hour 68% · 7-day 91% · climb began 03:14</span>
+    <span><b>Shared constraints:</b> no webfonts, no framework, no third-party request</span>
+  </div>
+</header>
+
+<p class="lede">Every direction below keeps the rules that are load-bearing rather than decorative: colour is
+never the only channel, epistemic states (stale, auth failed, unverified) remove the number instead of
+colouring it, there is no green for "good", and the specimens are set in the system stack the product
+actually ships. What changes is the organising idea.</p>
+
+<!-- ══════════════════ A ══════════════════ -->
+<section>
+  <div class="dhead">
+    <div class="tag">A</div>
+    <div>
+      <p class="eyebrow">Direction A</p>
+      <h2>Tape</h2>
+      <p class="thesis">The page is one time axis. Now is a fixed vertical rule; the record runs left of it and
+      the projection runs right. Every window is a lane on that axis instead of a card of its own.</p>
+    </div>
+  </div>
+
+  <div class="spec">
+    <div class="spec-cap"><span>specimen A — dashboard, light default</span><span>system-ui · no boxes · hairline lanes</span></div>
+    <div class="spec-body">
+      <div class="mA">
+        <div class="hd">
+          <span class="wm">
+            <svg width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 18H22" stroke="#5E6664" stroke-width="1.8" stroke-linecap="round" fill="none"/><path d="M15 5V21" stroke="#1B44A0" stroke-width="2.4" stroke-linecap="round" fill="none"/></svg>
+            quotalens</span>
+          <span class="m">polled 14s ago · 18,402 samples · 4.1 MB</span>
+        </div>
+        <p class="answer">The weekly window reaches 100% <em>today at 16:40</em>, an hour and forty
+        minutes before the session window resets.</p>
+        <p class="answer-sub">4.82 pts/hr — 3.4× your 5-hour baseline. Climb began 03:14.</p>
+
+        <svg viewBox="0 0 960 232" width="100%" role="img" aria-label="Three windows plotted on one shared time axis, with a now rule and a projection to the weekly limit at 16:40">
+          <defs>
+            <pattern id="hatchA" width="7" height="7" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+              <line x1="0" y1="0" x2="0" y2="7" stroke="#C6CBC5" stroke-width="1"/>
+            </pattern>
+          </defs>
+          <!-- projection field -->
+          <rect x="418" y="26" width="512" height="150" fill="url(#hatchA)" opacity=".5"/>
+          <!-- lane 1 : 5-hour -->
+          <text x="92" y="46" text-anchor="end" font-size="12.5" fill="#5E6664" font-family="system-ui,sans-serif">5-hour</text>
+          <rect x="100" y="30" width="830" height="22" fill="#E4E7E2"/>
+          <rect x="182" y="30" width="236" height="22" fill="#14171A"/>
+          <line x1="598" y1="24" x2="598" y2="58" stroke="#5E6664" stroke-width="1.4" stroke-dasharray="3 3"/>
+          <text x="606" y="46" font-size="11" fill="#5E6664" font-family="ui-monospace,Menlo,monospace">resets 17:00</text>
+          <text x="426" y="46" font-size="12" fill="#F1F2EF" font-family="ui-monospace,Menlo,monospace" text-anchor="end" dx="-8">68%</text>
+          <!-- lane 2 : 7-day -->
+          <text x="92" y="94" text-anchor="end" font-size="12.5" fill="#5E6664" font-family="system-ui,sans-serif">7-day</text>
+          <rect x="100" y="78" width="830" height="22" fill="#E4E7E2"/>
+          <rect x="100" y="78" width="318" height="22" fill="#14171A"/>
+          <path d="M418 89H566" stroke="#B3242B" stroke-width="2.2" stroke-dasharray="5 4" fill="none"/>
+          <rect x="566" y="72" width="3" height="34" fill="#B3242B"/>
+          <text x="576" y="86" font-size="11" fill="#B3242B" font-family="ui-monospace,Menlo,monospace">100% · 16:40</text>
+          <text x="576" y="100" font-size="11" fill="#B3242B" font-family="ui-monospace,Menlo,monospace" opacity=".8">projected</text>
+          <text x="410" y="94" font-size="12" fill="#F1F2EF" font-family="ui-monospace,Menlo,monospace" text-anchor="end">91%</text>
+          <!-- lane 3 : sessions -->
+          <text x="92" y="142" text-anchor="end" font-size="12.5" fill="#5E6664" font-family="system-ui,sans-serif">sessions</text>
+          <rect x="100" y="128" width="830" height="20" fill="#EDEFEA"/>
+          <rect x="118" y="128" width="54" height="20" fill="#C2C7C1"/>
+          <rect x="196" y="128" width="38" height="20" fill="#C2C7C1"/>
+          <rect x="262" y="128" width="156" height="20" fill="#1B44A0"/>
+          <text x="270" y="142" font-size="10.5" fill="#F1F2EF" font-family="ui-monospace,Menlo,monospace">gic-migration-factory</text>
+          <!-- now rule -->
+          <line x1="418" y1="18" x2="418" y2="182" stroke="#1B44A0" stroke-width="2"/>
+          <text x="418" y="14" font-size="11" fill="#1B44A0" text-anchor="middle" font-family="ui-monospace,Menlo,monospace">now 14:49</text>
+          <!-- axis -->
+          <line x1="100" y1="176" x2="930" y2="176" stroke="#C6CBC5" stroke-width="1"/>
+          <g font-size="10.5" fill="#8A918E" font-family="ui-monospace,Menlo,monospace">
+            <text x="100" y="192">11:00</text><text x="266" y="192">13:00</text>
+            <text x="432" y="192">15:00</text><text x="598" y="192">17:00</text>
+            <text x="764" y="192">19:00</text><text x="906" y="192">21:00</text>
+          </g>
+          <text x="100" y="216" font-size="11" fill="#5E6664" font-family="system-ui,sans-serif">record</text>
+          <text x="930" y="216" font-size="11" fill="#5E6664" text-anchor="end" font-family="system-ui,sans-serif">projection — hatched, because it has not happened</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <div class="notes">
+    <div class="note"><span class="k">Structure</span><p>One shared x-axis; lanes, not cards. Attribution becomes a fourth lane rather than a table.</p></div>
+    <div class="note"><span class="k">Palette</span><p>Paper <code>#F1F2EF</code> and ink, light-first. One chromatic: ultramarine <code>#1B44A0</code> = now &amp; live. Red only for a breach.</p></div>
+    <div class="note"><span class="k">Type</span><p>System sans for prose, mono for anything on the axis. No large readout — the shape is the headline.</p></div>
+    <div class="note"><span class="k">Cost to switch</span><p>High. The chart <em>is</em> the layout, so the dashboard is rebuilt. The site keeps the strip as its hero image.</p></div>
+  </div>
+
+  <div class="tradeoff">
+    <div><span class="k">What it buys</span><p>The claim the product actually makes — <em>we keep the series, and we can see ahead</em> — becomes the structure of the page rather than one panel inside it. "The session resets before the weekly runs out" is legible without reading a number.</p></div>
+    <div><span class="k">What it gives up</span><p>The single dominant readout. Someone glancing for one number has to read a bar. It also needs real horizontal room, so the phone layout is a genuine second design, not a reflow.</p></div>
+  </div>
+</section>
+
+<div class="rule"></div>
+
+<!-- ══════════════════ B ══════════════════ -->
+<section>
+  <div class="dhead">
+    <div class="tag">B</div>
+    <div>
+      <p class="eyebrow">Direction B</p>
+      <h2>Answer</h2>
+      <p class="thesis">Lead with the sentence, not the number. The page states its conclusion in plain English
+      and puts the evidence underneath. Colour appears only when something is wrong — so a grey page is itself
+      the all-clear.</p>
+    </div>
+  </div>
+
+  <div class="spec">
+    <div class="spec-cap"><span>specimen B — dashboard and website share this column verbatim</span><span>600px measure · achromatic + one red</span></div>
+    <div class="spec-body">
+      <div class="mB">
+        <div class="col">
+          <div class="hd">
+            <span class="wm">quotalens</span>
+            <span class="m">polled 14s ago</span>
+          </div>
+          <p class="say">You reach the weekly limit <em>today, about 16:40</em> — two hours and eleven
+          minutes from now.</p>
+          <p class="because">You are burning 4.82 points an hour, 3.4× your usual pace for this time of day.
+          The climb started at 03:14 while nothing was open on this machine.</p>
+
+          <svg viewBox="0 0 600 132" width="100%" role="img" aria-label="Weekly window rising from 57 percent to 91 percent over 24 hours, with a dotted projection reaching 100 percent at 16:40">
+            <line x1="0" y1="16" x2="600" y2="16" stroke="#E1E3DF" stroke-width="1"/>
+            <text x="0" y="12" font-size="10" fill="#8A918E" font-family="ui-monospace,Menlo,monospace">100%</text>
+            <line x1="0" y1="104" x2="600" y2="104" stroke="#E1E3DF" stroke-width="1"/>
+            <text x="0" y="100" font-size="10" fill="#8A918E" font-family="ui-monospace,Menlo,monospace">50%</text>
+            <path d="M0 66 C 60 64, 110 60, 160 55 S 260 46, 330 40 S 420 32, 470 26" fill="none" stroke="#131616" stroke-width="2"/>
+            <path d="M470 26 L 560 16" fill="none" stroke="#A81E26" stroke-width="2" stroke-dasharray="4 4"/>
+            <circle cx="470" cy="26" r="3.4" fill="#131616"/>
+            <circle cx="560" cy="16" r="3.4" fill="#A81E26"/>
+            <text x="470" y="46" font-size="10.5" fill="#6A716F" font-family="ui-monospace,Menlo,monospace" text-anchor="middle">91% now</text>
+            <text x="560" y="36" font-size="10.5" fill="#A81E26" font-family="ui-monospace,Menlo,monospace" text-anchor="end">16:40</text>
+            <g font-size="10" fill="#8A918E" font-family="ui-monospace,Menlo,monospace">
+              <text x="0" y="126">yesterday 15:00</text>
+              <text x="600" y="126" text-anchor="end">18:00</text>
+            </g>
+          </svg>
+
+          <div class="facts">
+            <div class="fact"><span class="l">Session window · resets 17:00</span><span class="v">68%</span></div>
+            <div class="fact"><span class="l">Weekly window · resets Fri 09:00</span><span class="v bad">91%</span></div>
+            <div class="fact"><span class="l">Weekly, Sonnet · last good sample 05:12</span><span class="v na">—</span></div>
+            <div class="fact"><span class="l">Heaviest project, 24h · gic-migration-factory</span><span class="v">3.1 pts/hr</span></div>
+          </div>
+          <div class="more">The 24-hour chart, every window, and the full attribution table</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="notes">
+    <div class="note"><span class="k">Structure</span><p>One 600px column, stacked. Detail lives one click down, not on the first screen. The site is the same column with different words.</p></div>
+    <div class="note"><span class="k">Palette</span><p>Achromatic, plus a single red <code>#A81E26</code> that only appears when a window is in trouble. No accent, no brand hue at all.</p></div>
+    <div class="note"><span class="k">Type</span><p>The conclusion at 31px in the UI face; mono only for figures. Prose-scale, not instrument-scale.</p></div>
+    <div class="note"><span class="k">Cost to switch</span><p>Lowest. One stylesheet serves the app and the site, and most of the existing markup survives as the "details" view.</p></div>
+  </div>
+
+  <div class="tradeoff">
+    <div><span class="k">What it buys</span><p>It answers the question people open the tool to ask, in the words they would use. Site and app become one design, so a change is made once. And a page with no colour on it is unambiguous good news.</p></div>
+    <div><span class="k">What it gives up</span><p>Density. This is a page you read, not an instrument you scan, and power users who want six series at once must click through. Writing a correct sentence for every state is real work — six states, plus the "nothing is wrong" case.</p></div>
+  </div>
+</section>
+
+<div class="rule"></div>
+
+<!-- ══════════════════ C ══════════════════ -->
+<section>
+  <div class="dhead">
+    <div class="tag">C</div>
+    <div>
+      <p class="eyebrow">Direction C</p>
+      <h2>Console</h2>
+      <p class="thesis">It is a local tool you started from a terminal, so render it like one. Everything sits on
+      a monospace character grid: meters are cells, the chart has square joins, there are no icons and no
+      curves anywhere.</p>
+    </div>
+  </div>
+
+  <div class="spec">
+    <div class="spec-cap"><span>specimen C — dashboard, dark only</span><span>ui-monospace throughout · character grid</span></div>
+    <div class="spec-body">
+      <div class="mC">
+        <div class="hd">
+          <span><b>quotalens</b><span class="cur"></span> &nbsp;default</span>
+          <span>polled 14s · db 4.1M · [t] theme &nbsp;[e] export</span>
+        </div>
+
+        <div class="big">
+          <span class="n">4.82</span><span class="u">pts/hr</span>
+          <span class="d">3.4x baseline &nbsp;→ &nbsp;weekly limit today 16:40 (2h11m)</span>
+        </div>
+        <p class="say">climb began <b>03:14</b> — gic-migration-factory, opus-4.6, no local session open</p>
+
+        <div class="meter"><span class="l">5-hour</span>
+          <span class="bar"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+          <span class="v">68%</span></div>
+        <div class="meter"><span class="l">7-day</span>
+          <span class="bar crit"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></span>
+          <span class="v crit">91%</span></div>
+        <div class="meter"><span class="l">7-day sonnet</span>
+          <span class="bar stale"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+          <span class="v na">—</span></div>
+        <div class="meter"><span class="l" style="color:#6E7A78"></span>
+          <span class="l" style="font-size:11px">resets 17:00 · Fri 09:00 · last good sample 05:12, field absent in payload</span><span></span></div>
+
+        <hr>
+
+        <svg viewBox="0 0 860 150" width="100%" role="img" aria-label="Twenty-four hours of the session window as a step plot, sawtoothing between resets, with the weekly window rising steadily">
+          <g stroke="#1E2528" stroke-width="1">
+            <line x1="46" y1="18" x2="860" y2="18"/><line x1="46" y1="60" x2="860" y2="60"/>
+            <line x1="46" y1="126" x2="860" y2="126"/>
+          </g>
+          <g font-size="10" fill="#6E7A78" font-family="ui-monospace,Menlo,monospace">
+            <text x="40" y="22" text-anchor="end">100</text><text x="40" y="64" text-anchor="end">50</text>
+            <text x="40" y="130" text-anchor="end">0</text>
+            <text x="46" y="146">11:00</text><text x="248" y="146">15:00</text>
+            <text x="450" y="146">19:00</text><text x="652" y="146">03:00</text>
+            <text x="854" y="146" text-anchor="end">now</text>
+          </g>
+          <path d="M46 126 H96 V96 H146 V64 H196 V38 H206 V126 H256 V98 H306 V62 H356 V40 H366 V126 H416 V100 H466 V70 H516 V46 H526 V126 H576 V102 H626 V74 H676 V54 H686 V126 H736 V96 H786 V62 H836 V44 H854"
+            fill="none" stroke="#5FC9DE" stroke-width="2" stroke-linejoin="miter"/>
+          <path d="M46 74 H146 V70 H246 V64 H346 V56 H446 V48 H546 V40 H646 V32 H746 V26 H854"
+            fill="none" stroke="#F0575C" stroke-width="1.6" stroke-dasharray="6 4"/>
+          <text x="854" y="40" text-anchor="end" font-size="10" fill="#5FC9DE" font-family="ui-monospace,Menlo,monospace">5-hour</text>
+          <text x="854" y="20" text-anchor="end" font-size="10" fill="#F0575C" font-family="ui-monospace,Menlo,monospace">7-day</text>
+        </svg>
+
+        <hr>
+
+        <table>
+          <tr><th>project</th><th>model</th><th class="r">turns</th><th class="r">in</th><th class="r">burn</th><th class="r">last</th></tr>
+          <tr><td class="drv">gic-migration-factory</td><td>opus-4.6</td><td class="r">412</td><td class="r">1.94M</td><td class="r drv">3.1 pts/h</td><td class="r">2m</td></tr>
+          <tr><td>quotalens</td><td>sonnet-4.8</td><td class="r">96</td><td class="r">318k</td><td class="r">0.6 pts/h</td><td class="r">1m</td></tr>
+          <tr><td>brahma-scc</td><td>opus-4.6</td><td class="r">54</td><td class="r">221k</td><td class="r">0.4 pts/h</td><td class="r">46m</td></tr>
+          <tr><td>(web app)</td><td>—</td><td class="r">—</td><td class="r">—</td><td class="r">0.3 pts/h</td><td class="r">18m</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="notes">
+    <div class="note"><span class="k">Structure</span><p>A fixed measure, sections divided by full-width rules. Nothing is a card. Everything is on screen at once.</p></div>
+    <div class="note"><span class="k">Palette</span><p>Near-black <code>#0E1113</code>, ice <code>#5FC9DE</code> for the live rate, red for breach. Dark only — a light mode would fight the idea.</p></div>
+    <div class="note"><span class="k">Type</span><p>Monospace for everything, including prose. Two sizes and one accent size; the grid does the rest.</p></div>
+    <div class="note"><span class="k">Cost to switch</span><p>Medium. New tokens and a rewritten chart, but the markup and density are close to what exists.</p></div>
+  </div>
+
+  <div class="tradeoff">
+    <div><span class="k">What it buys</span><p>The highest density of the three and the strongest fit to what the thing is — a CLI with a window attached. Meters made of cells cost nothing to draw and stay honest at any width, and the look is unmistakable next to any other Claude usage tool.</p></div>
+    <div><span class="k">What it gives up</span><p>Prose set in mono is harder to read, so the website cannot use this language directly — it needs a quieter sibling. Terminal aesthetics also read as niche; someone who is not a developer will find it cold.</p></div>
+  </div>
+</section>
+
+<div class="rule"></div>
+
+<!-- ══════════════════ MARK ══════════════════ -->
+<section>
+  <p class="eyebrow">Identity</p>
+  <h2>Five marks that are not a logo</h2>
+  <p class="lede">The lens with rays was doing symbolic work — refraction as the metaphor for turning a level
+  into a rate. It is a fair idea and a dull picture, and it stops being legible at 16px. These go the other
+  way: no metaphor, just a shape that either carries information or gets out of the way. All are one or two
+  paths, all hold at favicon size, all inherit <code>currentColor</code>.</p>
+
+  <div class="marks">
+    <div class="mk">
+      <div class="mk-row">
+        <svg width="40" height="40" viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="8" width="19" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="5" y="10.5" width="9.2" height="3" fill="currentColor"/></svg>
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="8" width="19" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="5" y="10.5" width="9.2" height="3" fill="currentColor"/></svg>
+      </div>
+      <p class="mk-name">1 · The meter</p>
+      <p>The mark <em>is</em> the reading. Fixed at 68% on the site; live in the app, so the favicon in your
+      tab strip is the session window. No symbolism to explain.</p>
+      <div class="lockup"><svg width="19" height="19" viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="8" width="19" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="5" y="10.5" width="9.2" height="3" fill="currentColor"/></svg> QuotaLens</div>
+    </div>
+
+    <div class="mk">
+      <div class="mk-row">
+        <svg width="40" height="40" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M9 4H5V20H9"/><path d="M15 4H19V20H15"/></svg>
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M9 4H5V20H9"/><path d="M15 4H19V20H15"/></svg>
+      </div>
+      <p class="mk-name">2 · The window</p>
+      <p>A window is the product's actual unit — five-hour, seven-day. Two brackets, nothing inside them.
+      Geometric, quiet, and it never needs to be redrawn for a new feature.</p>
+      <div class="lockup"><svg width="19" height="19" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M9 4H5V20H9"/><path d="M15 4H19V20H15"/></svg> QuotaLens</div>
+    </div>
+
+    <div class="mk">
+      <div class="mk-row">
+        <svg width="40" height="40" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M2.5 18H21.5" stroke-width="1.6" opacity=".45"/><path d="M15 4.5V21" stroke-width="2.6"/></svg>
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M2.5 18H21.5" stroke-width="1.6" opacity=".45"/><path d="M15 4.5V21" stroke-width="2.6"/></svg>
+      </div>
+      <p class="mk-name">3 · The now-rule</p>
+      <p>A timeline crossed by the present moment. Direction A's central device shrunk to 16px — if the
+      dashboard is a tape, this is a frame of it.</p>
+      <div class="lockup"><svg width="19" height="19" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M2.5 18H21.5" stroke-width="1.6" opacity=".45"/><path d="M15 4.5V21" stroke-width="2.6"/></svg> QuotaLens</div>
+    </div>
+
+    <div class="mk">
+      <div class="mk-row">
+        <svg width="40" height="40" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17H10.5L21 6.5"/></svg>
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17H10.5L21 6.5"/></svg>
+      </div>
+      <p class="mk-name">4 · The break</p>
+      <p>Flat, then the climb. One path, two segments — the same idea the lens was reaching for, said without
+      the optics lesson. The most conventional of the five.</p>
+      <div class="lockup"><svg width="19" height="19" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17H10.5L21 6.5"/></svg> QuotaLens</div>
+    </div>
+
+    <div class="mk">
+      <div class="mk-row">
+        <span style="font-family:var(--mono);font-size:23px;font-weight:500;letter-spacing:-.02em">quotalens<span style="display:inline-block;width:9px;height:17px;background:currentColor;vertical-align:-2px;margin-left:2px"></span></span>
+      </div>
+      <p class="mk-name">5 · No mark at all</p>
+      <p>Lowercase wordmark and a block cursor, which blinks in the app and holds still on the site. The
+      favicon becomes the cursor alone. Nothing to defend, nothing to redraw.</p>
+      <div class="lockup" style="font-family:var(--mono);font-size:13.5px">quotalens<span style="display:inline-block;width:7px;height:13px;background:currentColor;vertical-align:-2px;margin-left:2px"></span></div>
+    </div>
+  </div>
+</section>
+
+<div class="rule"></div>
+
+<!-- ══════════════════ COMPARE + PICK ══════════════════ -->
+<section>
+  <p class="eyebrow">Side by side</p>
+  <h2>What each one costs you</h2>
+  <table class="cmp">
+    <tr><th></th><th>A · Tape</th><th>B · Answer</th><th>C · Console</th></tr>
+    <tr><td>Organising idea</td><td>Shared time axis</td><td>Conclusion first, evidence after</td><td>Character grid</td></tr>
+    <tr><td>Default scheme</td><td>Light</td><td>Light, dark equally good</td><td>Dark only</td></tr>
+    <tr><td>Chroma</td><td>One blue + red</td><td>None until something breaks</td><td>One cyan + red</td></tr>
+    <tr><td>Density</td><td>Medium</td><td>Low</td><td>High</td></tr>
+    <tr><td>Site and app</td><td>Different languages, shared strip</td><td>Literally the same stylesheet</td><td>Site needs a quieter sibling</td></tr>
+    <tr><td>Phone</td><td>Second design required</td><td>Free — it is already a column</td><td>Horizontal scroll or a cut-down view</td></tr>
+    <tr><td>Rebuild</td><td>Dashboard from scratch</td><td>Restructure, keep most markup</td><td>New tokens, new chart, same bones</td></tr>
+    <tr><td>Pairs with mark</td><td>3 (now-rule) or 1</td><td>5 (no mark) or 1</td><td>5 (cursor) or 1</td></tr>
+  </table>
+
+  <h3 style="margin-top:38px">If it were mine</h3>
+  <ul class="tight">
+    <li><b>B for the language, A's strip for the dashboard's centre.</b> B decides what the product sounds
+    like and unifies the site with the app for almost nothing; A's lane strip then earns its place as the one
+    illustration on the page, replacing the "details" chart rather than sitting beside it. That is one
+    design language and one real signature graphic, which is roughly what a project this size can carry.</li>
+    <li><b>Mark 1, the meter.</b> It is the only one of the five that does a job — a live favicon telling you
+    the session window is at 91% from a background tab is a feature, not decoration — and it is the least
+    likely to look dated in two years, because it is not a picture of anything.</li>
+    <li><b>C if you want the project to be recognisably itself</b> more than you want it to be broadly
+    approachable. It is the most distinctive of the three and the most exclusive.</li>
+    <li><b>Keep amber only if you keep Bench.</b> In A and C the "one lit colour" rule survives with a
+    different hue; in B there is no lit colour at all, and the rule becomes "colour means something is
+    wrong", which is stricter and easier to hold.</li>
+  </ul>
+
+  <p class="foot">Specimens are hand-built HTML and inline SVG with no external requests, set in the system
+  stacks the product ships. Figures are the same illustrative sample throughout — 4.82 pts/hr, 68% and 91% —
+  and are not read from a real account. This page's own chrome is set in IBM Plex, which is a review-document
+  choice; nothing here proposes adding a webfont to the product.</p>
+</section>
+
+</div>
+</body></html>
