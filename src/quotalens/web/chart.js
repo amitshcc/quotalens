@@ -18,6 +18,12 @@
     window.addEventListener("mousemove", onDrag);
   }
 
+  /* SVG elements have no .hidden property: toggle the attribute itself */
+  function show(el, on) {
+    if (!el) return;
+    if (on) el.removeAttribute("hidden"); else el.setAttribute("hidden", "");
+  }
+
   /* pixel x (client) -> chart x in viewBox units */
   function toChartX(clientX) {
     var rect = state.svg.getBoundingClientRect();
@@ -74,8 +80,8 @@
     });
     line.setAttribute("x1", snapX.toFixed(1));
     line.setAttribute("x2", snapX.toFixed(1));
-    hover.hidden = false;
-    box.hidden = false;
+    show(hover, true);
+    show(box, true);
     box.innerHTML = '<span class="rt">' + fmtClock(ts) + "</span>" + rows.join("");
     var rect = state.svg.getBoundingClientRect();
     var px = (snapX / d.w) * rect.width;
@@ -85,8 +91,8 @@
   function hide() {
     var hover = document.getElementById("hover");
     var box = document.getElementById("readout");
-    if (hover) hover.hidden = true;
-    if (box) box.hidden = true;
+    show(hover, false);
+    show(box, false);
   }
   function fmt(v) { return Math.abs(v - Math.round(v)) < 0.05 ? String(Math.round(v)) : v.toFixed(1); }
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
@@ -97,7 +103,7 @@
     if (ev.target.closest && ev.target.closest("a")) return; // label links keep their click
     state.drag = { x0: toChartX(ev.clientX), x1: toChartX(ev.clientX) };
     var sel = document.getElementById("sel");
-    if (sel) { sel.hidden = false; sel.setAttribute("x", state.drag.x0.toFixed(1)); sel.setAttribute("width", "0"); }
+    if (sel) { show(sel, true); sel.setAttribute("x", state.drag.x0.toFixed(1)); sel.setAttribute("width", "0"); }
     hide();
     ev.preventDefault();
   }
@@ -115,7 +121,7 @@
     var drag = state.drag;
     state.drag = null;
     var sel = document.getElementById("sel");
-    if (sel) sel.hidden = true;
+    show(sel, false);
     var a = Math.min(drag.x0, drag.x1), b = Math.max(drag.x0, drag.x1);
     if (b - a < 6) return; // a click, not a selection
     var from = xToTs(a), to = xToTs(b);
