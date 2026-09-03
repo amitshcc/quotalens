@@ -19,6 +19,7 @@ from quotalens.sessions import (
     idle_spans,
     rebuild,
     rebuild_recent,
+    reset_model_violation,
 )
 from quotalens.store import QuotaRow, Store
 from quotalens.views import ViewOptions
@@ -352,3 +353,31 @@ def test_incremental_rebuild_cost_does_not_grow_with_history(tmp_path) -> None:
     assert large_reads < large.counts()["quota"] / 3
     small.close()
     large.close()
+
+
+# -- the inference is checked, not assumed ---------------------------------------
+
+
+def test_the_watchdog_fires_when_a_window_is_extended_in_place() -> None:
+    """A forward move under five hours with no drop: the fixed-window model is wrong."""
+    base = T0 + SESSION_LENGTH_S
+    detail = reset_model_violation(iso(base), 40.0, iso(base + 2 * 3600 + 300), 41.0)
+    assert detail is not None
+    assert "moved forward 2h 05m" in detail and "40% then 41%" in detail
+    assert "may be wrong" in detail
+
+
+def test_the_watchdog_stays_quiet_for_everything_consistent() -> None:
+    base = T0 + SESSION_LENGTH_S
+    # a genuine new window: five hours or more later, and the percentage drops
+    assert reset_model_violation(iso(base), 90.0, iso(base + SESSION_LENGTH_S), 2.0) is None
+    assert reset_model_violation(iso(base), 90.0, iso(base + 6 * 3600), 2.0) is None
+    # sub-second jitter on the same window
+    assert reset_model_violation(iso(base), 40.0, iso(base + 1), 41.0) is None
+    # a forward move under five hours, but the percentage dropped: odd, not falsifying
+    assert reset_model_violation(iso(base), 90.0, iso(base + 3600), 5.0) is None
+    # backwards, unparsable or missing
+    assert reset_model_violation(iso(base), 40.0, iso(base - 3600), 41.0) is None
+    assert reset_model_violation(None, 40.0, iso(base), 41.0) is None
+    assert reset_model_violation(iso(base), None, iso(base + 3600), 41.0) is None
+    assert reset_model_violation("nonsense", 40.0, iso(base + 3600), 41.0) is None

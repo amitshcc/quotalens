@@ -26,7 +26,7 @@ from quotalens.client import (
 from quotalens.config import PRUNE_EVERY_S, Settings
 from quotalens.parse import ParseError, SpendReading, UsageParse, parse_spend, parse_usage
 from quotalens.secrets import Redactor, SecretStore, SecretStoreError
-from quotalens.sessions import RATE_WINDOW
+from quotalens.sessions import MODEL_VIOLATION_KIND, RATE_WINDOW, reset_model_violation
 from quotalens.sessions import rebuild_recent as rebuild_recent_sessions
 from quotalens.store import Store
 
@@ -83,6 +83,7 @@ class PollerStatus:
     )
     started_ts: int = field(default_factory=lambda: int(time.time()))
     burn_rate: float | None = None  # points per hour at the last poll
+    model_violation: str | None = None  # the fixed-window inference failed
     last_attempt_ts: int | None = None
     last_success_ts: int | None = None
     last_error: str | None = None
@@ -166,6 +167,7 @@ class Poller:
         self._last_ignored: frozenset[str] = frozenset()
         self._last_prune_ts: float | None = None
         self._detector = ThresholdDetector(settings.burn_alert_pts_per_hour)
+        self._last_session: tuple[str | None, float | None] = (None, None)
         self._webhooks: set[asyncio.Task[bool]] = set()
         self.schedule = Schedule(interval_s=float(settings.poll_interval_s))
         self.status = PollerStatus()
@@ -323,6 +325,7 @@ class Poller:
             self._store.record_event("session_rebuild_failed", detail, ts=now)
             log.warning("session rebuild failed: %s", self._redactor.redact(str(exc)))
 
+        self._check_reset_model(now, parsed)
         self._check_threshold(now, parsed)
         self._maybe_prune(now)
 
@@ -332,6 +335,20 @@ class Poller:
         self.status.polls_ok += 1
         log.info("poll ok: %d readings", len(parsed.readings))
         return self.schedule.on_success()
+
+    def _check_reset_model(self, now: int, parsed: UsageParse) -> None:
+        """The session model is an inference; this is the check that it still holds."""
+        current = next((r for r in parsed.readings if r.window == RATE_WINDOW), None)
+        if current is None:
+            return
+        prev_reset, prev_pct = self._last_session
+        detail = reset_model_violation(prev_reset, prev_pct, current.resets_at, current.pct)
+        self._last_session = (current.resets_at, current.pct)
+        if detail is None:
+            return
+        self.status.model_violation = detail
+        self._store.record_event(MODEL_VIOLATION_KIND, detail, ts=now)
+        log.warning("reset model violated: %s", detail)
 
     def _check_threshold(self, now: int, parsed: UsageParse) -> None:
         """One event per crossing, not one per poll while over the line."""
