@@ -143,6 +143,28 @@ class EventRow:
         return {"ts": self.ts, "kind": self.kind, "detail": self.detail}
 
 
+_SESSION_UPSERT = (
+    "INSERT OR REPLACE INTO session_window (started_at, ends_at, is_current, "
+    "peak_pct, final_pct, samples, first_ts, last_ts, deltas, covered_s) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+)
+
+
+def _session_row(w: Any) -> tuple[Any, ...]:
+    return (
+        w.started_at,
+        w.ends_at,
+        int(w.is_current),
+        w.peak_pct,
+        w.final_pct,
+        w.samples,
+        w.first_ts,
+        w.last_ts,
+        json.dumps({k: d.as_dict() for k, d in w.deltas.items()}),
+        w.covered_s,
+    )
+
+
 def now_ts() -> int:
     return int(time.time())
 
@@ -260,29 +282,27 @@ class Store:
 
     def replace_sessions(self, windows: Iterable[Any]) -> None:
         """Replace the whole session_window table in one transaction (idempotent)."""
-        rows = [
-            (
-                w.started_at,
-                w.ends_at,
-                int(w.is_current),
-                w.peak_pct,
-                w.final_pct,
-                w.samples,
-                w.first_ts,
-                w.last_ts,
-                json.dumps({k: d.as_dict() for k, d in w.deltas.items()}),
-                w.covered_s,
-            )
-            for w in windows
-        ]
+        rows = [_session_row(w) for w in windows]
         with self._tx() as cur:
             cur.execute("DELETE FROM session_window")
-            cur.executemany(
-                "INSERT OR REPLACE INTO session_window (started_at, ends_at, is_current, "
-                "peak_pct, final_pct, samples, first_ts, last_ts, deltas, covered_s) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                rows,
-            )
+            cur.executemany(_SESSION_UPSERT, rows)
+
+    def upsert_sessions(self, windows: Iterable[Any], demote_before: int | None = None) -> int:
+        """Replace only the given windows, leaving every other row untouched.
+
+        ``demote_before`` clears ``is_current`` on older rows, so the flag cannot be
+        left behind on a window the incremental pass did not look at.
+        """
+        rows = [_session_row(w) for w in windows]
+        with self._tx() as cur:
+            if demote_before is not None:
+                cur.execute(
+                    "UPDATE session_window SET is_current = 0 "
+                    "WHERE started_at < ? AND is_current = 1",
+                    (demote_before,),
+                )
+            cur.executemany(_SESSION_UPSERT, rows)
+        return len(rows)
 
     def sessions(self, limit: int = 50, order: str = "recent") -> list[dict[str, Any]]:
         order_sql = "peak_pct DESC, started_at DESC" if order == "consumed" else "started_at DESC"

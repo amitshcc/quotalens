@@ -24,7 +24,7 @@ from quotalens.client import (
 from quotalens.config import Settings
 from quotalens.parse import ParseError, SpendReading, UsageParse, parse_spend, parse_usage
 from quotalens.secrets import Redactor, SecretStore, SecretStoreError
-from quotalens.sessions import rebuild as rebuild_sessions
+from quotalens.sessions import rebuild_recent as rebuild_recent_sessions
 from quotalens.store import Store
 
 log = logging.getLogger(__name__)
@@ -308,7 +308,7 @@ class Poller:
 
         await self._poll_overage(client, now, usage_raw)
         try:
-            rebuild_sessions(self._store, now)
+            rebuild_recent_sessions(self._store, now)
         except Exception as exc:  # the readings are stored; the history table is derived
             detail = self._redactor.redact(f"{type(exc).__name__}: {exc}")
             self._store.record_event("session_rebuild_failed", detail, ts=now)
