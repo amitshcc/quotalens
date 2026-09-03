@@ -281,3 +281,28 @@ def test_session_rebuild_failure_does_not_fail_the_poll(
     assert asyncio.run(poller.poll_once()) == 60
     assert poller.status.state == "ok" and store.counts()["quota"] == 3
     assert "session_rebuild_failed" in [e.kind for e in store.recent_events()]
+
+
+def test_overage_endpoint_is_fetched_once_not_every_poll(settings, store, secrets) -> None:
+    """It doubled our request rate against an endpoint documented to rate limit hard."""
+    seen: list[FakeRequest] = []
+    handler = make_handler(usage=USAGE_LIVE_2026_09, seen=seen)
+    poller = _poller(settings, store, secrets, handler)
+    for _ in range(5):
+        asyncio.run(poller.poll_once())
+    paths = [r.url.path for r in seen]
+    assert sum(p.endswith("/usage") for p in paths) == 5
+    assert sum(p.endswith("/overage_spend_limit") for p in paths) == 1  # startup only
+    assert poller.status.overage_available is True  # and spend still reads
+    assert poller.status.spend is not None and poller.status.spend.used_text == "$3.16"
+
+
+def test_overage_is_still_fetched_when_the_usage_payload_lacks_spend(
+    settings, store, secrets
+) -> None:
+    seen: list[FakeRequest] = []
+    poller = _poller(settings, store, secrets, make_handler(seen=seen))  # documented shape
+    for _ in range(3):
+        asyncio.run(poller.poll_once())
+    paths = [r.url.path for r in seen]
+    assert sum(p.endswith("/overage_spend_limit") for p in paths) == 3  # the only source
