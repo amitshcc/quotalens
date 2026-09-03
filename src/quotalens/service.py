@@ -27,10 +27,11 @@ from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape as xml_escape
 
-from quotalens.config import APP_NAME, DEFAULT_PORT, default_data_dir
+from quotalens.config import APP_NAME, DEFAULT_PORT, default_data_dir, profile_suffix
 
 log = logging.getLogger(__name__)
 
+# One set of files per profile, or `stop` on one profile kills the other's server.
 PID_FILE = f"{APP_NAME}.pid"
 LOG_FILE = f"{APP_NAME}.log"
 RUNTIME_FILE = f"{APP_NAME}.runtime.json"  # port and interval of the instance in this data dir
@@ -58,38 +59,38 @@ class ServiceError(RuntimeError):
 # -- paths and pid file ---------------------------------------------------------
 
 
-def pid_path(data_dir: Path | None = None) -> Path:
-    return (data_dir or default_data_dir()) / PID_FILE
+def pid_path(data_dir: Path | None = None, profile: str = "") -> Path:
+    return (data_dir or default_data_dir()) / f"{APP_NAME}{profile_suffix(profile)}.pid"
 
 
-def log_path(data_dir: Path | None = None) -> Path:
-    return (data_dir or default_data_dir()) / LOG_FILE
+def log_path(data_dir: Path | None = None, profile: str = "") -> Path:
+    return (data_dir or default_data_dir()) / f"{APP_NAME}{profile_suffix(profile)}.log"
 
 
-def runtime_path(data_dir: Path | None = None) -> Path:
-    return (data_dir or default_data_dir()) / RUNTIME_FILE
+def runtime_path(data_dir: Path | None = None, profile: str = "") -> Path:
+    return (data_dir or default_data_dir()) / f"{APP_NAME}{profile_suffix(profile)}.runtime.json"
 
 
-def write_runtime(data_dir: Path, port: int, interval_s: int) -> None:
+def write_runtime(data_dir: Path, port: int, interval_s: int, profile: str = "") -> None:
     """Written by ``serve`` so ``status`` and ``restart`` address this instance, not a default."""
     data_dir.mkdir(parents=True, exist_ok=True)
-    runtime_path(data_dir).write_text(
-        json.dumps({"pid": os.getpid(), "port": port, "interval_s": interval_s})
+    runtime_path(data_dir, profile).write_text(
+        json.dumps({"pid": os.getpid(), "port": port, "interval_s": interval_s, "profile": profile})
     )
 
 
-def read_runtime(data_dir: Path) -> dict[str, Any] | None:
+def read_runtime(data_dir: Path, profile: str = "") -> dict[str, Any] | None:
     try:
-        data = json.loads(runtime_path(data_dir).read_text())
+        data = json.loads(runtime_path(data_dir, profile).read_text())
     except (OSError, ValueError):
         return None
     return data if isinstance(data, dict) else None
 
 
-def clear_runtime(data_dir: Path) -> None:
-    runtime = read_runtime(data_dir)
+def clear_runtime(data_dir: Path, profile: str = "") -> None:
+    runtime = read_runtime(data_dir, profile)
     if runtime and runtime.get("pid") == os.getpid():
-        runtime_path(data_dir).unlink(missing_ok=True)
+        runtime_path(data_dir, profile).unlink(missing_ok=True)
 
 
 def read_pid(path: Path) -> int | None:
@@ -198,10 +199,17 @@ def follow(path: Path, out: Callable[[str], None], poll_s: float = 0.5) -> None:
 
 
 def serve_command(
-    python: str = sys.executable, extra: Sequence[str] = (), data_dir: Path | None = None
+    python: str = sys.executable,
+    extra: Sequence[str] = (),
+    data_dir: Path | None = None,
+    profile: str = "",
 ) -> list[str]:
-    """The foreground command. ``--data-dir`` is global, so it goes before ``serve``."""
-    prefix = ["--data-dir", str(data_dir)] if data_dir is not None else []
+    """The foreground command. ``--data-dir`` and ``--profile`` are global flags."""
+    prefix: list[str] = []
+    if data_dir is not None:
+        prefix += ["--data-dir", str(data_dir)]
+    if profile:
+        prefix += ["--profile", profile]
     return [python, "-m", "quotalens", *prefix, "serve", *extra]
 
 
@@ -233,14 +241,17 @@ def start(
     serve_args: Sequence[str] = (),
     spawner: Spawner = _spawn_detached,
     grace_s: float = START_GRACE_S,
+    profile: str = "",
 ) -> StartResult:
-    pidfile, logfile = pid_path(data_dir), log_path(data_dir)
+    pidfile, logfile = pid_path(data_dir, profile), log_path(data_dir, profile)
     existing = running_pid(pidfile)
     if existing is not None:
         raise ServiceError(
             f"already running (pid {existing}); use `quotalens restart` to replace it"
         )
-    cmd = serve_command(extra=[*serve_args, "--log-file", str(logfile)], data_dir=data_dir)
+    cmd = serve_command(
+        extra=[*serve_args, "--log-file", str(logfile)], data_dir=data_dir, profile=profile
+    )
     pid = spawner(cmd, logfile)
     pidfile.parent.mkdir(parents=True, exist_ok=True)
     pidfile.write_text(f"{pid}\n")
@@ -252,9 +263,9 @@ def start(
     return StartResult(pid, logfile, pidfile)
 
 
-def stop(data_dir: Path, timeout_s: float = STOP_TIMEOUT_S) -> int | None:
+def stop(data_dir: Path, timeout_s: float = STOP_TIMEOUT_S, profile: str = "") -> int | None:
     """Terminate the recorded process. Returns the pid stopped, or None if nothing ran."""
-    pidfile = pid_path(data_dir)
+    pidfile = pid_path(data_dir, profile)
     pid = running_pid(pidfile)
     if pid is None:
         return None
@@ -294,12 +305,13 @@ def status(
     port: int | None,
     fetch: Callable[[str], Any] = fetch_json,
     now: float | None = None,
+    profile: str = "",
 ) -> StatusReport:
     """``port`` None means: the port the instance in this data directory recorded."""
     now = now if now is not None else time.time()
-    pidfile = pid_path(data_dir)
+    pidfile = pid_path(data_dir, profile)
     pid = running_pid(pidfile)
-    runtime = read_runtime(data_dir) or {}
+    runtime = read_runtime(data_dir, profile) or {}
     if port is None:
         if pid is None and not runtime:
             return StatusReport(1, ["not running", f"pid file: {pidfile} (absent)"])
@@ -339,7 +351,7 @@ def status(
             lines.append(f"  {name:<22} {reading['pct']:6.1f}%")
     except (urllib.error.URLError, OSError, ValueError, KeyError):
         lines.append("  (windows unavailable)")
-    lines.append(f"log: {log_path(data_dir)}")
+    lines.append(f"log: {log_path(data_dir, profile)}")
     stalled = collector.get("kind") in STALLED_KINDS or poller.get("state") in {
         "keyring_error",
         "no_cookie",
@@ -447,10 +459,13 @@ def install_service(
     interval: int,
     runner: Runner = _run,
     python: str = sys.executable,
+    profile: str = "",
 ) -> Actions:
     actions = Actions()
-    logfile = log_path(data_dir)
-    cmd = serve_command(python, ["--interval", str(interval), "--log-file", str(logfile)])
+    logfile = log_path(data_dir, profile)
+    cmd = serve_command(
+        python, ["--interval", str(interval), "--log-file", str(logfile)], profile=profile
+    )
     data_dir.mkdir(parents=True, exist_ok=True)
     if platform == "darwin":
         plist = home / "Library" / "LaunchAgents" / f"{LAUNCHD_LABEL}.plist"
