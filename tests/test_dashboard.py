@@ -146,6 +146,52 @@ def test_healthy_model_shows_values_and_burn(settings, store) -> None:
     assert {s.label for s in dash.chart.series} == {"Session", "Weekly all", "Weekly Fable"}
 
 
+def _seed_one(store, now: int, readings) -> None:
+    for i in range(3):
+        store.record_quota(now - (2 - i) * 60, readings)
+
+
+def test_a_full_fable_meter_does_not_make_the_account_critical(settings, store) -> None:
+    """Fable may use half the weekly pool, so 100% of it is not an exhausted account."""
+    now = int(time.time())
+    _seed_one(
+        store,
+        now,
+        [
+            QuotaReading("five_hour", "5-hour", 12.0, "r1", "normal", True),
+            QuotaReading("seven_day", "7-day", 40.0, "r2", "normal", False),
+            QuotaReading("limit:fable", "Fable", 100.0, "r3", "critical", False),
+        ],
+    )
+    status = _status(
+        state="ok", last_success_ts=now, last_windows=["five_hour", "seven_day", "limit:fable"]
+    )
+    dash = build_dashboard(settings, store, status, now, burn_alert=20.0)
+    fable = next(w for w in dash.windows if w.key == "limit:fable")
+
+    assert fable.state == "critical"  # the Fable half really is spent
+    assert fable.subcap and fable.note == "half of weekly pool"
+    assert "50%" in fable.note_title
+    assert dash.chip == "", "the account is at 12% and 40%; nothing about it is critical"
+
+
+def test_a_full_weekly_meter_still_makes_the_account_critical(settings, store) -> None:
+    """The control for the test above: only sub-capped windows are excluded."""
+    now = int(time.time())
+    _seed_one(
+        store,
+        now,
+        [
+            QuotaReading("five_hour", "5-hour", 12.0, "r1", "normal", True),
+            QuotaReading("seven_day", "7-day", 100.0, "r2", "critical", False),
+        ],
+    )
+    status = _status(state="ok", last_success_ts=now, last_windows=["five_hour", "seven_day"])
+    dash = build_dashboard(settings, store, status, now, burn_alert=20.0)
+    assert dash.chip == "critical"
+    assert all(not w.subcap for w in dash.windows)
+
+
 def test_stale_model_withholds_every_value(settings, store) -> None:
     now = int(time.time())
     _seed(store, now - 3600)
@@ -252,7 +298,7 @@ def test_healthy_page_shows_three_windows_and_values(settings, store, secrets) -
     with TestClient(app) as tc:
         html = tc.get("/").text
     assert html.count('class="meter"') == 3
-    assert ">limit:fable<" not in html and ">Weekly — Fable<" in html  # never a raw key
+    assert ">limit:fable<" not in html and ">Weekly — Fable " in html  # never a raw key
     assert '<span class="num">35</span>' in html
     assert "$3.16 / $2.00" in html and '<span class="num">158</span>' in html
     assert 'style="width:100.0%;background:var(--hair-firm)"' in html  # neutral: off

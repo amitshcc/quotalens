@@ -241,9 +241,12 @@ def _meters(dash: Dashboard) -> str:
 def _meter(w: WindowView) -> str:
     label = e(w.label)
     active = ' <span class="far">active</span>' if w.is_active and not w.withheld else ""
+    # Sits on the label line like "active" does, so no meter changes height.
+    note = f' <span class="far" title="{e(w.note_title)}">{e(w.note)}</span>' if w.note else ""
     if w.withheld:
         return (
-            f'<div class="meter is-stale" data-slot="{w.slot}"><div class="lbl">{label}</div>'
+            f'<div class="meter is-stale" data-slot="{w.slot}">'
+            f'<div class="lbl">{label}{note}</div>'
             f'<div class="v m">{WITHHELD}</div><div class="bar hatch"></div>'
             f'<div class="foot m"><span>{e(w.resets_text)}</span><span></span></div></div>'
         )
@@ -253,7 +256,7 @@ def _meter(w: WindowView) -> str:
     state_chip = " " + chip(w.state, w.state) if w.state != "normal" else ""
     return (
         f'<div class="meter" data-slot="{w.slot}">'
-        f'<div class="lbl">{label}{state_chip}{active}</div>'
+        f'<div class="lbl">{label}{note}{state_chip}{active}</div>'
         f'<div class="v m"{style}><span class="num">{e(w.pct_text)}</span><span class="u">%</span>'
         '<span class="dash">—</span></div>'
         f'<div class="bar"><i style="width:{w.bar_pct:.1f}%;background:{bar_colour}"></i></div>'

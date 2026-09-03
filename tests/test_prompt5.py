@@ -195,7 +195,7 @@ def test_renamed_labels_keep_stored_rows_and_bookmarks_working(settings, store, 
     with TestClient(app) as tc:
         html = tc.get("/?hide=seven_day&range=1h").text
         current = tc.get("/api/quota/current").json()
-    assert ">Session<" in html and ">Weekly — all models<" in html and ">Weekly — Fable<" in html
+    assert ">Session<" in html and ">Weekly — all models<" in html and ">Weekly — Fable " in html
     assert "5-hour" not in html.split('id="chart-data"')[0] and "7-day window" not in html
     assert 'class="el off">Weekly all</text>' in html  # the old key in the bookmark still hides it
     assert [r["display"] for r in current["readings"]] == [

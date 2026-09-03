@@ -329,6 +329,24 @@ def test_unknown_platform_is_an_error(tmp_path) -> None:
         install_service("plan9", tmp_path, tmp_path, 60, runner=lambda c: (0, ""))
 
 
+def test_no_source_file_uses_a_platform_specific_strftime_code() -> None:
+    """`%-d` raises ValueError on Windows, and only at the moment a date is rendered.
+
+    Caught in CI as a wall of unrelated-looking test failures, so it is worth a
+    guard that names the actual rule.
+    """
+    import quotalens
+
+    src = Path(quotalens.__file__).parent
+    offenders = [
+        f"{path.name}:{n}"
+        for path in sorted(src.rglob("*.py"))
+        for n, line in enumerate(path.read_text().splitlines(), 1)
+        if "strftime" in line and ("%-" in line or "%#" in line)
+    ]
+    assert offenders == [], f"non-portable strftime codes: {offenders}"
+
+
 # -- logs -----------------------------------------------------------------------
 
 
