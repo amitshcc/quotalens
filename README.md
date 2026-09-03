@@ -32,9 +32,14 @@ quotalens service uninstall
 
 Every file written and command run is printed so it can be undone by hand. On
 Linux the unit only runs while you are logged in unless you enable lingering;
-the installer prints the exact `loginctl enable-linger` command. Windows gets a
-Task Scheduler XML and instructions rather than a pretend install. `serve` stays
+the installer prints the exact `loginctl enable-linger` command. `serve` stays
 the foreground command the service manager execs.
+
+**Windows has no user-level service manager this installs into**, so
+`service install` says so and stops. Run `quotalens start` at logon instead:
+either a Task Scheduler task with the trigger "At log on" and the action
+`quotalens start`, or a shortcut to it in `shell:startup`. `start`, `stop`,
+`status` and `logs` work the same way on Windows.
 
 A background agent reading the OS keychain may prompt on first run or be
 refused; `quotalens status` then says "keyring" specifically rather than "no
@@ -80,9 +85,6 @@ the expensive session, click it, and the chart shows exactly that window. On the
 chart, session starts are vertical rules and spans with no session running are
 shaded flat, which is a different mark from the hatched spans where the
 collector was not running.
-
-Renamed from `quotawatch`: on first start an existing database and keyring
-entry under the old name are moved across automatically.
 
 ## How it reaches claude.ai
 

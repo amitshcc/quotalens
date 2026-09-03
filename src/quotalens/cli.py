@@ -25,7 +25,6 @@ from quotalens.config import (
     settings_from_env,
     validate,
 )
-from quotalens.legacy import LEGACY_ENV_PREFIX, LEGACY_KEYRING_SERVICE, migrate_legacy
 from quotalens.parse import ParseError, parse_spend, parse_usage
 from quotalens.secrets import (
     KeyringSecretStore,
@@ -480,14 +479,8 @@ def main(argv: Sequence[str] | None = None, secrets: SecretStore | None = None) 
             )
     except SettingsError as exc:
         parser.error(str(exc))
-    stale_env = sorted(k for k in os.environ if k.startswith(LEGACY_ENV_PREFIX))
-    if stale_env:
-        log.warning("ignoring %s; the prefix is now QUOTALENS_", ", ".join(stale_env))
     if secrets is None:
         secrets = KeyringSecretStore()
-        migrate_legacy(
-            settings.db_path, secrets, KeyringSecretStore(service=LEGACY_KEYRING_SERVICE)
-        )
     handlers = {
         "auth": cmd_auth,
         "probe": cmd_probe,
