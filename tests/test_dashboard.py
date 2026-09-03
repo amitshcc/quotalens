@@ -272,7 +272,7 @@ def test_app_css_stays_within_budget() -> None:
         text = re.sub(r"\s+", " ", text)
         return re.sub(r"\s*([{};:,])\s*", r"\1", text)
 
-    assert len(minify(css).encode()) + len(minify(tokens).encode()) < 9_500
+    assert len(minify(css).encode()) + len(minify(tokens).encode()) < 12_000
     # no colour literal outside tokens.css
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b", minify(css))
 

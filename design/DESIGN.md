@@ -109,7 +109,7 @@ channel; it just moves the failure to the corner of the chart.
 
 ## 5. States
 
-Five, and they are two different kinds of thing.
+Six, and they are two different kinds of thing.
 
 **Magnitude states colour the value. Epistemic states colour the frame and take
 the value away.**
@@ -121,12 +121,20 @@ the value away.**
 | critical | `--st-critical` | outlined chip + alert triangle | yes, in red |
 | stale | `--st-stale` | dashed border + hatched fill | **no — em dash** |
 | auth failed | `--st-auth` | 3px solid left rule + key glyph | **no — em dash** |
+| unverified | `--st-stale` | dashed border + hatched fill, own message | **no — em dash** |
 
 Normal has no chip and no colour. Absence is the signal, and this is why the
 system has no green: red against nothing cannot fail for a red-green dichromat,
 where red against green can.
 
-Stale and auth-failed must never be styled anywhere on the amber→red ramp. They
+Unverified is the collector's third epistemic failure: claude.ai answered but
+the response could not be parsed, or was recovered by the generic fallback and
+cannot be trusted. It borrows the stale treatment because the consequence is the
+same — the number on screen is not known — but carries its own wording, because
+the action is different: run `quotalens probe` and report the shape, rather than
+restart the collector or refresh a cookie.
+
+Stale, auth-failed and unverified must never be styled anywhere on the amber→red ramp. They
 are not high usage. A stale meter showing a large red number is a lie: the
 correct display is an em dash, a hatched bar, and a timestamp for the last good
 sample. Quota during an auth failure is unknown, not zero, and local scanning

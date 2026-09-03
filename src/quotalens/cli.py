@@ -291,7 +291,8 @@ def cmd_start(args: argparse.Namespace, settings: Settings, secrets: SecretStore
     print(f"started pid {result.pid}")
     print(f"pid file: {result.pidfile}")
     print(f"log:      {result.log}")
-    print(f"dashboard: http://{settings.host}:{settings.port}/")
+    port = args.port or settings.port
+    print(f"dashboard: http://{settings.host}:{port}/")
     return 0
 
 
@@ -316,7 +317,7 @@ def cmd_restart(args: argparse.Namespace, settings: Settings, secrets: SecretSto
 
 
 def cmd_status(args: argparse.Namespace, settings: Settings, secrets: SecretStore) -> int:
-    report = service.status(args.data_dir, settings.port)
+    report = service.status(args.data_dir, args.port or settings.port)
     print("\n".join(report.lines))
     for line in service.service_status(sys.platform, Path.home(), args.data_dir):
         print(line)
@@ -410,7 +411,8 @@ def build_parser() -> argparse.ArgumentParser:
     restart = sub.add_parser("restart", help="stop, then start")
     restart.add_argument("--port", type=int)
     restart.add_argument("--interval", type=int)
-    sub.add_parser("status", help="running? exit 0 healthy, 1 not running, 2 stalled")
+    st = sub.add_parser("status", help="running? exit 0 healthy, 1 not running, 2 stalled")
+    st.add_argument("--port", type=int)
     logs = sub.add_parser("logs", help="show the log")
     logs.add_argument("-f", "--follow", action="store_true")
     logs.add_argument("-n", "--lines", type=int, default=50)

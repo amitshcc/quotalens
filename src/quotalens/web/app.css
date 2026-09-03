@@ -76,6 +76,17 @@ button:hover{background:var(--hover);color:var(--txt)}
 .is-stale .v{color:var(--txt-far)}
 .hatch{background:repeating-linear-gradient(-45deg,var(--st-stale-bg) 0 3px,transparent 3px 6px)}
 
+/* toolbar — range, lookback, auto-refresh, poll now. Links and forms, enhanced by script */
+.toolbar{display:flex;align-items:center;gap:var(--sp-4);flex-wrap:wrap;margin-top:var(--sp-3);
+  font-size:var(--fs-sm);color:var(--txt-dim)}
+.ctl{display:inline-flex;align-items:center;gap:var(--sp-1);margin:0}
+.ctl .lbl{margin-right:var(--sp-1)}
+.rb{color:var(--txt-dim);text-decoration:none;padding:2px var(--sp-2);border:var(--hair) solid transparent;
+  border-radius:var(--r-1);font-family:var(--font-num);font-size:var(--fs-xs)}
+.rb:hover{background:var(--hover);color:var(--txt)}
+.rb.on{color:var(--txt);border-color:var(--hair-firm);background:var(--chrome)}
+button:disabled{opacity:.5;cursor:default}
+
 /* chart */
 .chart{margin-top:var(--sp-3);padding:var(--sp-3) var(--sp-4) var(--sp-2)}
 .chart svg{width:100%;height:216px;display:block}
@@ -84,6 +95,21 @@ button:hover{background:var(--hover);color:var(--txt)}
 .ax{fill:var(--txt-far);font:var(--fs-xs)/1 var(--font-num)}
 .el{font:var(--w-med) var(--fs-xs)/1 var(--font-ui)}
 .trace{fill:none;stroke-linecap:round;stroke-linejoin:round}
+.chart{position:relative}
+.el.off{opacity:.45;text-decoration:line-through}
+.el-link{cursor:pointer}
+.el-link:focus-visible{outline:var(--focus-w) solid var(--focus);outline-offset:var(--focus-off)}
+.gap{pointer-events:none}
+.xh{stroke:var(--txt-far);stroke-width:1;stroke-dasharray:2 3}
+.sel{fill:var(--select);stroke:var(--focus);stroke-width:1}
+#chart{cursor:crosshair;user-select:none}
+.readout-box{position:absolute;pointer-events:none;background:var(--chrome);border:var(--hair) solid var(--hairline);
+  border-radius:var(--r-2);padding:var(--sp-1) var(--sp-2);font-size:var(--fs-xs);display:grid;
+  grid-template-columns:auto auto;gap:2px var(--sp-3);min-width:120px}
+.readout-box[hidden]{display:none}
+.readout-box .rt{grid-column:1/-1;color:var(--txt-far)}
+.readout-box span:nth-child(2n+1):not(.rt){color:var(--txt)}
+.readout-box span:nth-child(2n){text-align:right}
 
 /* attribution table + side panel */
 .cols{display:grid;grid-template-columns:1fr 288px;gap:var(--sp-5);margin-top:var(--sp-3);align-items:start}
@@ -115,6 +141,7 @@ footer{margin-top:var(--sp-5);padding-top:var(--sp-3);border-top:var(--hair) sol
 [data-link=lost] .meter{background:var(--case)}
 [data-link=lost] .chip:not(#link){display:none}
 [data-link=lost] .why,[data-link=lost] .foot span+span{visibility:hidden}
+[data-link=lost] .toolbar{opacity:.5;pointer-events:none}
 .readout.off .num,[data-link=lost] .readout .dash{font-size:var(--fs-metric)}
 
 @media (max-width:1000px){.meters{grid-template-columns:1fr}.cols{grid-template-columns:1fr}
