@@ -496,6 +496,32 @@ def test_meter_change_is_over_the_selected_range(settings, store) -> None:
     assert dash.windows[0].delta_text == "+15 pts in range"
 
 
+def test_a_reset_in_range_reports_the_move_since_it_not_a_count_of_resets(settings, store) -> None:
+    """ "6 resets in range" reads as a statistic and is really an apology for not answering.
+
+    The number wanted is still there: the change over the segment since the last
+    boundary. The count is dropped; "since the reset" already says one happened.
+    """
+    now = int(time.time())
+    first = iso_utc(now - 1800)
+    second = iso_utc(now + 5400)  # a different window: a boundary between the two halves
+    for i in range(10):
+        store.record_quota(
+            now - (10 - i) * 60,
+            [QuotaReading("five_hour", "5-hour", 40.0 + i, first if i < 5 else second)],
+        )
+    dash = build_dashboard(
+        settings,
+        store,
+        _status(state="ok", last_success_ts=now),
+        now,
+        20.0,
+        ViewOptions(range_key="1h"),
+    )
+    assert dash.windows[0].delta_text == "+4 pts since the reset"
+    assert "reset" in dash.windows[0].delta_text and "in range" not in dash.windows[0].delta_text
+
+
 def test_five_minute_lookback_can_actually_display(settings, store) -> None:
     now = int(time.time())
     _seed(store, now, minutes=5, base=10)  # samples at now-4m .. now: a 4-minute span
@@ -509,3 +535,9 @@ def test_five_minute_lookback_can_actually_display(settings, store) -> None:
     )
     assert not dash.burn.withheld and dash.burn.rate_text == "60.00"
     assert "lookback 5m" in dash.burn.detail
+
+
+def iso_utc(ts: int) -> str:
+    from datetime import UTC, datetime
+
+    return datetime.fromtimestamp(ts, UTC).isoformat()
