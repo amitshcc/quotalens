@@ -84,7 +84,13 @@ def collect(settings: object, store: object, status: object, now: int) -> list[F
     """Every family, in a stable order. Imports stay local to keep this module thin."""
     from quotalens.budget import compute_budgets
     from quotalens.burn import burn_rate
-    from quotalens.dashboard import RATE_WINDOW, parse_iso, weekly_limits
+    from quotalens.dashboard import (
+        RATE_WINDOW,
+        parse_iso,
+        weekly_limits,
+        window_has_lapsed,
+        window_is_stale,
+    )
     from quotalens.sessions import RATE_WINDOW as SESSION_WINDOW
     from quotalens.sessions import window_from_row
     from quotalens.state import STALE_AFTER_INTERVALS
@@ -103,7 +109,11 @@ def collect(settings: object, store: object, status: object, now: int) -> list[F
     resets = Family("window_resets_at_seconds", "gauge", "Unix time at which a window resets.")
     for row in store.latest_quota():
         labels = {"window": row.window, "label": row.label or row.window}
-        quota.add(row.pct if fresh else None, **labels)
+        # A closed window's last value is not this window's percentage, and a block
+        # that stopped arriving is not current however healthy the collector is.
+        # NaN for both, because a stale number here is one somebody alerts on.
+        live = fresh and not window_has_lapsed(row, now) and not window_is_stale(row, interval, now)
+        quota.add(row.pct if live else None, **labels)
         reset_dt = parse_iso(row.resets_at)
         resets.add(reset_dt.timestamp() if reset_dt else None, window=row.window)
 

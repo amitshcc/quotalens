@@ -154,6 +154,30 @@ It is on `/api/budget` and in `/metrics` as `quotalens_weekly_windows_remaining`
 `quotalens_weekly_window_cost_points` and
 `quotalens_weekly_clock_windows_remaining`.
 
+## When a window is not running
+
+A five-hour window expires and, until the next message, no window is open. The
+reading from the window that just closed is not a current reading of anything,
+so nothing shows it: the hero says so, the meter's value is removed, its footer
+says **ended 14:00** rather than "resets 14:00", and the ring and the favicon go
+to the empty track. The chart shades the gap as "no session" instead of running
+the trace flat to the right edge.
+
+The rule is one line — *never present a session percentage as current once its
+window's reset time has passed* — and it lives in `compute_runway`, so every
+consumer inherits it rather than each learning it separately.
+
+Staleness is also tracked **per window**, not only per collector. A block can
+stop arriving inside an otherwise healthy payload, and a healthy collector is not
+evidence that every meter on the page is current; a window whose own reading has
+gone unrefreshed for three poll intervals is withheld like any other unknown.
+
+`/api/quota/current` says all of this in fields rather than leaving a consumer to
+infer it. `pct` is `null` unless the reading is current, the value moves to
+`last_pct`, and `current`, `lapsed`, `stale` and `window_open` say which reason
+applies. `/metrics` reports `NaN` for the same cases, never a stale number
+somebody would alert on.
+
 ## The dashboard
 
 The figure it leads with is how much of the session window is left. Below it: one meter per quota window with the API's own

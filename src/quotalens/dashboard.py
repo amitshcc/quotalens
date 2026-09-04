@@ -174,15 +174,22 @@ def parse_iso(value: str | None) -> datetime | None:
 
 
 def when(dt: datetime | None, now: int) -> str:
-    """'17:00' today, else 'Fri 09:00', else '1 Oct'."""
+    """'17:00' today, else 'Fri 09:00', else '1 Oct'. A past time is never a pending one.
+
+    Callers phrase these as "resets X" and "until X", so a bare past timestamp
+    would read as a promise about the future. Marking it here means no caller has
+    to remember, and one that forgets cannot produce "resets 14:00" at 14:22.
+    """
     if dt is None:
         return "unknown"
     today = local(now).date()
     if dt.date() == today:
-        return dt.strftime("%H:%M")
-    if 0 < (dt.date() - today).days < 7:
-        return dt.strftime("%a %H:%M")
-    return day_month(dt)
+        text = dt.strftime("%H:%M")
+    elif 0 < (dt.date() - today).days < 7:
+        text = dt.strftime("%a %H:%M")
+    else:
+        text = day_month(dt)
+    return f"{text} (passed)" if dt.timestamp() <= now else text
 
 
 def duration(seconds: float) -> str:
@@ -433,6 +440,7 @@ def build_dashboard(
             withheld,
             burn_elevated,
             now,
+            settings.poll_interval_s,
         )
         for row in sorted(latest, key=lambda r: slots[r.window])
     ]
@@ -711,6 +719,43 @@ def _change_over_range(rows: list[QuotaRow], rng: ResolvedRange) -> str:
     return f"{delta:+.0f} pts in range"
 
 
+def window_is_stale(row: QuotaRow, interval_s: int, now: int) -> bool:
+    """Has *this window's* reading stopped being refreshed, whatever the collector is doing?
+
+    Staleness was tracked per collector only, and a healthy collector is not
+    evidence that every meter is current: one block inside a healthy payload can
+    go dark, and the last stored row then sits on the page at full confidence.
+    """
+    return now - row.ts > STALE_AFTER_INTERVALS * max(1, interval_s)
+
+
+def _window_open(row: QuotaRow, now: int) -> bool:
+    reset = parse_iso(row.resets_at)
+    return reset is not None and reset.timestamp() > now
+
+
+def window_has_lapsed(row: QuotaRow, now: int) -> bool:
+    """Is this reading describing a window whose reset time has already passed?
+
+    The same invariant :func:`compute_runway` applies to the hero. A meter is not
+    a different kind of consumer: "resets 14:00" at 14:22 beside a hero that says
+    "no window" is one bug wearing two labels. An undated reading is not lapsed —
+    it is the current value of a window that is not running.
+    """
+    reset = parse_iso(row.resets_at)
+    return reset is not None and reset.timestamp() <= now
+
+
+def _resets_text(row: QuotaRow, now: int) -> str:
+    """A reset time that has passed is not a pending one, and must not be worded as one."""
+    reset = parse_iso(row.resets_at)
+    if reset is None:
+        return "no window open"
+    if reset.timestamp() <= now:
+        return f"ended {clock(int(reset.timestamp()))}"
+    return f"resets {when(reset, now)}"
+
+
 def _window_view(
     row: QuotaRow,
     slot: int,
@@ -719,21 +764,23 @@ def _window_view(
     withheld: bool,
     burn_elevated: bool,
     now: int,
+    interval_s: int = 60,
 ) -> WindowView:
     label = display_label(row.window, row.label)
     subcap = is_subcapped(row.window)
     note = SUBCAP_NOTE if subcap else ""
     note_title = SUBCAP_TITLE if subcap else ""
-    if withheld:
+    lapsed = window_has_lapsed(row, now)
+    if withheld or lapsed or window_is_stale(row, interval_s, now):
         return WindowView(
             row.window,
             label,
             slot,
             None,
-            "—",
+            EM_DASH,
             NORMAL,
             bool(row.is_active),
-            f"last ok {clock(row.ts)}",
+            _resets_text(row, now) if lapsed else f"last ok {clock(row.ts)}",
             "",
             0.0,
             True,
@@ -752,8 +799,10 @@ def _window_view(
         fmt_pct(row.pct),
         state,
         bool(row.is_active),
-        f"resets {when(parse_iso(row.resets_at), now)}",
-        _change_over_range(rows_in_range, rng),
+        _resets_text(row, now),
+        # "+35 pts since the last reset" describes a window that has closed. While
+        # no window is open there is nothing for a change to be a change *of*.
+        _change_over_range(rows_in_range, rng) if _window_open(row, now) else "",
         max(0.0, min(row.pct, 100.0)),
         False,
         note,

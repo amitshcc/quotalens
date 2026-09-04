@@ -54,9 +54,15 @@ def test_verdicts() -> None:
 
 
 def test_countdown_at_the_moment_of_reset() -> None:
+    """A window whose expiry has arrived is closed, and its 63% is no longer current.
+
+    It used to pass the last percentage straight through this branch, so the page
+    showed a headroom figure for a window that no longer existed.
+    """
     at_reset = compute_runway(63, 30, 900, NOW, NOW)
     assert at_reset.remaining_s == 0 and at_reset.sustainable is None
-    assert at_reset.verdict.startswith("No session running")
+    assert at_reset.pct is None and at_reset.headroom_pct is None
+    assert at_reset.verdict.startswith("The session window ended at")
     one_second = compute_runway(99.5, 3600, 900, NOW + 1, NOW)  # one point per second
     assert one_second.remaining_s == 1 and one_second.verdict.startswith("Exhausted at")
 

@@ -206,3 +206,17 @@ inference from source: write down what was on screen or in the DOM.
 - 2026-09-04: the hero read "Session 79% left" while the meter under it read "Session
       33%" — the same window stated two ways, which reads as two numbers disagreeing.
       The meter now says "33% used", so the pair sums to 100 on sight.
+- 2026-09-04: a session window that ended at 14:00 still read "Session 40% used,
+      resets 14:00, +35 pts since the last reset" at 14:22, twelve pixels below a hero
+      saying "no window". `compute_runway` detected the lapse, refused to project, and
+      passed the stored percentage through anyway, so the meter, the ring and the
+      favicon all rendered a window that no longer existed.
+- 2026-09-04: the cause underneath it. `parse.py` dropped any block without a
+      `resets_at`, and the drop fed Diagnostics only. The server sent
+      `five_hour: {utilization: 0.0, resets_at: null}` for twenty-five consecutive
+      polls — verified in the stored payloads — while `seven_day` and `limit:fable`
+      recorded every minute. Nothing marked the window as no longer updating, so the
+      13:59 row stayed newest and kept rendering.
+- 2026-09-04: staleness was per collector only. `last_success_ts` was current
+      throughout, `collector: ok`, and one block inside that healthy payload had gone
+      dark. A healthy collector is not evidence that every meter is current.
