@@ -220,3 +220,12 @@ inference from source: write down what was on screen or in the DOM.
 - 2026-09-04: staleness was per collector only. `last_success_ts` was current
       throughout, `collector: ok`, and one block inside that healthy payload had gone
       dark. A healthy collector is not evidence that every meter is current.
+- 2026-09-04: the weekly budget panel rendered "none left" at 18px mono in "Full
+      sessions left" and "none left" at 12px in "At your typical session", side by side
+      in the same row. `.bignum` was applied to whatever string the answer cell held,
+      so a phrase wore a readout's clothes: the row with nothing left was the loudest
+      thing in the panel while the row with a real number was not. `--fs-sub` is
+      reserved for readouts by DESIGN.md §6 and also outgrew `--row-h`, so those rows
+      stood taller than the rest of the table.
+- 2026-09-04: the same panel left "Each full session costs" blank for a saturated
+      limit, with no em dash and no reason — the one cell in it that explained nothing.
