@@ -17,29 +17,39 @@ real dashboard and is the reference for spacing, density and state treatment.
 **Amber means the session window, and nothing else.**
 
 Chrome may never use amber. Not for a hover, not for a border, not for a link.
-The headroom readout is amber because it is what is left of the session window;
-the `--s1` trace is amber because it is that window plotted over time; the
-elevated state is amber because it means "the session window is being consumed
-fast." Those three uses agree with each other. A fourth use would break all of
-them.
+The `--s1` trace is amber because it is that window plotted over time; the mark's
+arc is amber because it is the same reading drawn as a ring; the elevated state is
+amber because it means "the session window is being consumed fast." Those three
+uses agree with each other. A fourth use would break all of them.
+
+The headroom readout used to be a fourth, and it is the reason this rule is
+written down. It was amber at every value, so its colour said nothing, and a
+number reading "89% left" — the best news the tool has — looked like a caution.
+It is achromatic now unless §5 gives it a state, and amber there means what it
+means everywhere else.
 
 Everything else in the chrome is achromatic. If a chrome element seems to need
 colour, it is either data (use a series colour) or a state (use a state
 treatment). It is never a brand accent.
 
-The mark is the fourth use and it agrees with the other three: its arc **is**
-the session window, drawn at whatever fraction the window is currently at. That
-is why the mark may carry amber while the header it sits in may not. A mark
-drawn amber for decoration would break the rule; a mark that is a reading does
-not.
+The mark earns its amber the same way: its arc **is** the session window, drawn
+at whatever fraction the window is currently at. That is why the mark may carry
+amber while the header it sits in may not. A mark drawn amber for decoration
+would break the rule; a mark that is a reading does not.
 
 ## 2. Three tiers of emphasis
 
 | Tier | What it is | Treatment |
 |---|---|---|
-| **Lit** | The session headroom. One per screen. | `--lit`, `--fs-readout`, mono, tabular |
+| **Lead** | The session headroom. One per screen. | `--fs-readout`, mono, tabular, `--txt` |
 | **Legible** | The data: traces, current values, table figures | `--txt`, chroma only from the series palette |
 | **Quiet** | Everything else: labels, axes, rules, nav, units, timestamps | `--txt-dim` / `--txt-far`, never chroma |
+
+The lead tier is made of **size**, not colour. It was `--lit` — amber, always,
+whatever the number said — until it became clear what that costs: "89% left" is
+the healthiest state this tool can report, and it was rendering as a caution at
+68px. A colour that never changes carries nothing, and it teaches the eye to stop
+reading the one that does. The readout takes a colour only when §5 gives it one.
 
 When you are unsure which tier something belongs to, ask whether the number
 would change if the poller stopped. If yes it is data. If no it is chrome.
@@ -132,7 +142,19 @@ the value away.**
 
 Normal has no chip and no colour. Absence is the signal, and this is why the
 system has no green: red against nothing cannot fail for a red-green dichromat,
-where red against green can.
+where red against green can. This is the rule, and it holds for **every** value
+including the headroom readout — §2's lead tier is a size, not a hue.
+
+**One window, one tier.** Where two elements describe the same window, they read
+one state and render it identically. The readout and the session meter sit twelve
+pixels apart, so the readout takes the meter's own magnitude rather than deriving
+its own — otherwise they can be correct and still contradict each other on screen.
+
+**A projection is not a level.** "This rate will exhaust the window before it
+resets" is a finding about a rate; the magnitude states describe a level. They
+must not share a palette, because the reader cannot tell which one a colour is
+speaking for. The projection belongs in the verdict sentence, in words, and if it
+needs a mark of its own it takes the burn-rate alert chip.
 
 Unverified is the collector's third epistemic failure: claude.ai answered but
 the response could not be parsed, or was recovered by the generic fallback and

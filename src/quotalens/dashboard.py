@@ -80,6 +80,7 @@ DISPLAY_LABELS = {
 }
 SHORT_LABELS = {"five_hour": "Session", "seven_day": "Weekly all"}
 EM_DASH = "—"  # a value we do not have, never a zero standing in for unknown
+READOUT_OFF = "off"  # the readout has no value to colour, whatever the reason
 
 # Fable models may use "up to 50% of your weekly usage limits" at no extra cost,
 # so this meter's 100% is half the weekly pool. Without saying so the dashboard
@@ -239,8 +240,9 @@ class BurnView:
     runway: Runway | None = None
     hours: list[HourBar] = field(default_factory=list)
     hours_max: float = 20.0  # scale for the hour bars
-    headroom_text: str = "—"  # the lit figure
-    critical: bool = False  # exhausted before the reset at the current rate
+    headroom_text: str = "—"  # the headroom figure
+    critical: bool = False  # exhausted before the reset at the current rate: a projection
+    state: str = NORMAL  # the session meter's tier, and the readout's colour with it
 
 
 @dataclass
@@ -446,6 +448,9 @@ def build_dashboard(
         for row in sorted(latest, key=lambda r: slots[r.window])
     ]
     baseline = median_peak([w.peak_pct for w in sessions_all if not w.is_current])
+    # The hero reads the session meter's own view: same tier, same withholding, one
+    # window. Recomputing either here is how they came to say different things.
+    session_view = next((w for w in windows if w.key == RATE_WINDOW), None)
     burn = _burn_view(
         rate_burn,
         next((r for r in latest if r.window == RATE_WINDOW), None),
@@ -457,6 +462,12 @@ def build_dashboard(
         now,
         session,
         baseline,
+        # "off" when the meter withholds its value, so the readout takes the same
+        # treatment without losing the verdict that explains why — a lapsed window
+        # still has something to say, it just has no number to say it with.
+        READOUT_OFF
+        if session_view is not None and session_view.withheld
+        else (session_view.state if session_view else NORMAL),
     )
     gap_threshold = STALE_AFTER_INTERVALS * settings.poll_interval_s
     labels = {r.window: r.label for r in latest}
@@ -831,7 +842,10 @@ def _burn_view(
     now: int,
     session: tuple[int, int] | None = None,
     baseline: float | None = None,
+    state: str = NORMAL,
 ) -> BurnView:
+    """The hero. ``state`` is the session meter's magnitude, passed in rather than
+    recomputed, so the two elements describing one window cannot disagree on screen."""
     lookback_label = duration(lookback_s)
     if withheld:
         why = "Session state unknown while the collector is not reporting."
@@ -853,7 +867,18 @@ def _burn_view(
     if not displayable:
         detail = f"The {lookback_label} rate needs at least {need_s // 60} minutes of samples."
         return BurnView(
-            "—", "pts/hr", why, False, False, detail, runway, hours, hours_max, headroom, False
+            "—",
+            "pts/hr",
+            why,
+            False,
+            False,
+            detail,
+            runway,
+            hours,
+            hours_max,
+            headroom,
+            False,
+            state,
         )
     text = f"{rate:.2f}" if abs(rate) < 100 else f"{rate:.0f}"
     detail = f"{text} pts/hr over the last {duration(burn.span_s)}, lookback {lookback_label}."
@@ -871,6 +896,7 @@ def _burn_view(
         hours_max,
         headroom,
         runway.critical,
+        state,
     )
 
 

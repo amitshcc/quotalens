@@ -66,10 +66,13 @@ button:hover{background:var(--hover);color:var(--txt)}
 .hero{padding:var(--sp-4) var(--sp-5) var(--sp-2);margin-top:var(--sp-5)}
 .hrow{display:flex;align-items:flex-end;gap:var(--sp-6);flex-wrap:wrap}
 .readout{flex:none;font-family:var(--font-num);font-size:var(--fs-readout);line-height:var(--lh-num);
-  letter-spacing:var(--tr-readout);color:var(--lit);font-weight:var(--w-med);
+  letter-spacing:var(--tr-readout);color:var(--txt);font-weight:var(--w-med);
   display:flex;align-items:baseline;gap:var(--sp-2)}
 .readout.off{color:var(--txt-far)}
-.readout.is-crit{color:var(--st-critical)}
+/* Colour here is a magnitude state, not an identity: at 89% left there is nothing
+   to say, so the readout says it in --txt like every other normal value. DESIGN.md §5. */
+.readout.is-elevated{color:var(--st-elevated)}
+.readout.is-critical{color:var(--st-critical)}
 .readout .u{font-size:var(--fs-sub);color:var(--txt-dim);letter-spacing:0}
 .resets{flex:none;display:flex;flex-direction:column;gap:var(--sp-1)}
 .resets .v{font-size:var(--fs-metric);line-height:var(--lh-num);letter-spacing:var(--tr-readout);
