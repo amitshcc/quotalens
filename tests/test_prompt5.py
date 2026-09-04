@@ -147,7 +147,7 @@ def test_future_region_is_blank_not_a_gap_and_projection_reaches_reset(
     # "now" read as a cropped chart, in a region the pointer still reads values
     # from; the `now` line asserted above is what marks the present.
     zero_rule = next(ln for ln in html.split("<line") if 'class="gz"' in ln)
-    assert 'x2="1150.0"' in zero_rule
+    assert 'x2="814.0"' in zero_rule  # the plot right edge, CHART_W - CHART_R
     assert html.count('class="hr"') == 4  # hourly separators inside the window
     assert 'class="proj" stroke="var(--s1)"' in html  # 60 pts/hr on 40% left over 2h: survives
     assert body["runway"]["exhaust_ts"] is None
@@ -200,7 +200,11 @@ def test_renamed_labels_keep_stored_rows_and_bookmarks_working(settings, store, 
         html = tc.get("/?hide=seven_day&range=1h").text
         current = tc.get("/api/quota/current").json()
     assert ">Session<" in html and ">Weekly — all models<" in html and ">Weekly — Fable " in html
-    assert "5-hour" not in html.split('id="chart-data"')[0] and "7-day window" not in html
+    # The stored labels must not be *rendered*; a caption that says "5-hour sessions"
+    # is prose, not a leaked window name, so this looks for them as element text.
+    above_chart = html.split('id="chart-data"')[0]
+    assert ">5-hour<" not in above_chart and ">7-day<" not in above_chart
+    assert "7-day window" not in html
     assert 'class="el off">Weekly all</text>' in html  # the old key in the bookmark still hides it
     assert [r["display"] for r in current["readings"]] == [
         "Session",

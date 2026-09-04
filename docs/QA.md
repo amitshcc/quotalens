@@ -192,3 +192,17 @@ inference from source: write down what was on screen or in the DOM.
       was 17 hours away. `split_at_resets` counted 6 with them and 0 without; the
       session series went from 17 to 6. It also flagged the real 13:00–18:00 window
       `(reset)`, which would have excluded the best data point from the weekly budget.
+- 2026-09-04: the weekly budget panel showed "—" for a limit with no usable sessions
+      and threw away `Budget.reason`, which already held the explanation. A reader
+      could not tell "we do not know yet" from "the answer is nothing", which are
+      opposite facts to plan against. It also called the unit a "window" and put
+      "windows of clock" in a column beside it, where it read as a second budget.
+- 2026-09-04: the attribution panel rendered an empty table promising milestone M3,
+      which `docs/MVP-SCOPE.md` puts out indefinitely. An empty table occupies the
+      slot and delivers nothing; the slot now names `claude /usage` and `ccusage`.
+- 2026-09-04: `.cols` began below the chart, so the sidebar could not start until the
+      full-width chart had ended, leaving a tall half-empty right column beside
+      Diagnostics and Recent events.
+- 2026-09-04: the hero read "Session 79% left" while the meter under it read "Session
+      33%" — the same window stated two ways, which reads as two numbers disagreeing.
+      The meter now says "33% used", so the pair sums to 100 on sight.

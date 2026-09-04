@@ -134,9 +134,9 @@ returns your real numbers.
 table with reset countdowns, overage spend when non-zero. Dark and light. Done
 when you can watch it climb in real time.
 
-**M3 — local attribution.** JSONL scanner with offset bookmarks, project
-breakdown, overlay on the quota timeline. Done when a Claude Code session in a
-repo shows up attributed to that repo within a minute.
+**M3 — local attribution. Not being built** (see the note at the top). JSONL
+scanner with offset bookmarks, project breakdown, overlay on the quota timeline.
+The dashboard points at `claude /usage` and `ccusage` in this slot instead.
 
 **M4 — alerts and export.** Burn-rate threshold detection writing to `event`,
 desktop notification (`plyer` or per-OS shell-out), CSV/JSON export,

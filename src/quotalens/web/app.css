@@ -156,8 +156,22 @@ tbody th a:hover{text-decoration:underline}
 .readout-box span:nth-child(2n+1):not(.rt){color:var(--txt)}
 .readout-box span:nth-child(2n){text-align:right}
 
+/* budget: the answer column carries a readout's weight. pointers: prose, not a table */
+.bignum{font-family:var(--font-num);font-size:var(--fs-sub);color:var(--txt)}
+.budget p,.pointers p,.pointers dd{max-width:76ch}
+.budget p{margin:var(--sp-2) var(--sp-4) var(--sp-3);font-size:var(--fs-sm)}
+.pointers{padding:0 var(--sp-4) var(--sp-4)}
+.cap{padding:var(--sp-3) 0 var(--sp-2);font-size:var(--fs-sm);color:var(--txt-dim)}
+.pointers p{margin:0 0 var(--sp-3)}
+.pointers dl{margin:0 0 var(--sp-3);display:grid;grid-template-columns:auto 1fr;
+  gap:var(--sp-2) var(--sp-4);align-items:baseline}
+.pointers dt{font-family:var(--font-num);white-space:nowrap}
+.pointers dd{margin:0;color:var(--txt-dim)}
+.pointers>:last-child{margin-bottom:0}
+
 /* attribution table + side panel */
-.cols{display:grid;grid-template-columns:1fr 288px;gap:var(--sp-5);margin-top:var(--sp-3);align-items:start}
+.cols{display:grid;grid-template-columns:1fr 288px;gap:var(--sp-5);margin-top:0;align-items:start}
+.cols>div{min-width:0}  /* the chart may shrink; a grid item will not below content width by default */
 table{width:100%;border-collapse:collapse;font-size:var(--fs-sm)}
 caption{text-align:left;padding:var(--sp-3) var(--sp-4) var(--sp-2);font-size:var(--fs-sm);color:var(--txt-dim)}
 th,td{padding:0 var(--sp-3);height:var(--row-h);border-bottom:var(--hair) solid var(--hairline);
@@ -168,7 +182,7 @@ thead th.n,td.n{text-align:right}
 tbody th .chip{margin-left:var(--sp-1)}
 tbody tr:last-child td{border-bottom:0}
 td.empty{white-space:normal;height:auto;padding:var(--sp-4) var(--sp-3);color:var(--txt-far)}
-.side{padding:var(--sp-2) 0 0 var(--sp-4);border-left:var(--hair) solid var(--hairline)}
+.side{padding:var(--sp-3) 0 0 var(--sp-4);border-left:var(--hair) solid var(--hairline)}
 .side dl{margin:0;display:grid;grid-template-columns:1fr auto;gap:6px var(--sp-3);font-size:var(--fs-sm)}
 .side dt{color:var(--txt-dim)}
 .side dd{margin:0;text-align:right;font-family:var(--font-num)}
