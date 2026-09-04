@@ -135,16 +135,26 @@ def test_an_undated_weekly_block_is_still_only_a_diagnostic() -> None:
 # -- the hero and the meter cannot disagree ---------------------------------------
 
 
-# (rows, last_success_ts, is a window open, meter footer, percentage the meter shows)
+LIVE_RESET = NOW + 90 * 60
+LAPSED_RESET = NOW - 22 * 60
+
+
+def hhmm(ts: int) -> str:
+    """Local wall clock, because the page renders local time and CI runs in UTC."""
+    return time.strftime("%H:%M", time.localtime(ts))
+
+
+# (rows, last_success_ts, is a window open, footer prefix, the time in it, meter percentage)
 CASES = {
-    "live window": (session_rows(40.0, NOW + 90 * 60), NOW, True, "resets 15:00", 40.0),
-    "lapsed window": (session_rows(40.0, NOW - 22 * 60), NOW, False, "ended 13:08", None),
-    "no window open": (session_rows(0.0, None), NOW, False, "no window open", 0.0),
+    "live window": (session_rows(40.0, LIVE_RESET), NOW, True, "resets ", LIVE_RESET, 40.0),
+    "lapsed window": (session_rows(40.0, LAPSED_RESET), NOW, False, "ended ", LAPSED_RESET, None),
+    "no window open": (session_rows(0.0, None), NOW, False, "no window open", None, 0.0),
     "stale collector": (
-        session_rows(40.0, NOW + 90 * 60),
+        session_rows(40.0, LIVE_RESET),
         NOW - 3600,
         False,
-        "last ok 13:30",
+        "last ok ",
+        NOW,
         None,
     ),
 }
@@ -159,7 +169,7 @@ def test_the_hero_and_the_meter_agree_about_whether_a_window_is_open(case: str) 
     open" still shows a percentage: an undated reading is the current value of a
     window that is not running, which is the 0% the endpoint reports between them.
     """
-    rows, last_ok, expect_open, expect_footer, expect_pct = CASES[case]
+    rows, last_ok, expect_open, prefix, stamp, expect_pct = CASES[case]
     html, dash, _current, _icon, _metrics = render(rows, last_ok=last_ok)
     hero, footer = hero_window_text(html), meter_footer(html)[0]
 
@@ -167,7 +177,9 @@ def test_the_hero_and_the_meter_agree_about_whether_a_window_is_open(case: str) 
     meter_open = footer.startswith("resets ") and "(passed)" not in footer
     assert hero_open == meter_open, f"{case}: hero {hero!r} vs meter {footer!r}"
     assert hero_open is expect_open
-    assert footer == expect_footer
+    assert footer.startswith(prefix), f"{case}: {footer!r}"
+    if stamp is not None:
+        assert hhmm(stamp) in footer, f"{case}: {footer!r}"
     assert dash["windows"][0]["pct"] == expect_pct
     assert dash["windows"][0]["withheld"] is (expect_pct is None)
 
@@ -216,7 +228,7 @@ def test_the_reported_state_shows_no_phantom_percentage_anywhere() -> None:
     for forbidden in ("40 %", ">40<", "40.0", "resets 14"):
         assert forbidden not in visible, forbidden
     assert hero_window_text(html) == "no window"
-    assert meter_footer(html) == (f"ended {time.strftime('%H:%M', time.localtime(ended))}", "")
+    assert meter_footer(html) == (f"ended {hhmm(ended)}", "")
     assert dash["runway"]["headroom_pct"] is None
     assert dash["burn"]["why"].startswith("The session window ended at")
 
