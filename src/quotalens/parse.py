@@ -32,6 +32,7 @@ SEVERITIES = frozenset({"normal", "warning", "critical"})
 NOT_A_WINDOW = frozenset({"extra_usage", "spend"})
 # Scope-less ``limits`` entries that mirror a top-level window, by ``kind``.
 LIMIT_KIND_TO_WINDOW = {"session": "five_hour", "weekly_all": "seven_day"}
+RATE_WINDOW = "five_hour"  # the one window whose "not running" state is normal
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 _CURRENCY_SYMBOLS = {"USD": "$", "EUR": "€", "GBP": "£"}
@@ -184,9 +185,21 @@ def _top_level_windows(payload: dict[str, Any]) -> tuple[list[QuotaReading], lis
         if pct is None:
             continue
         reset = _reset_of(value)
-        if reset is None:
+        if reset is None and key != RATE_WINDOW:
+            # A block we cannot date is not a window. For everything but the session
+            # this stays diagnostics-only: an undated weekly block is not a state the
+            # endpoint is documented to have, and inventing a meter from one would
+            # put a model tier on the page that the account may not even use.
             ignored.append(IgnoredBlock(key, "no resets_at"))
             continue
+        if reset is None:
+            # The session window is the exception, because "not running" is its
+            # normal resting state and the product leads with it. Dropping the value
+            # is what let a closed window's reading sit on the page as though it were
+            # live: the server said `five_hour: 0.0` for twenty-five consecutive
+            # polls while the meter went on showing 40%. Stored undated, so
+            # `sessions.py` still reads it as no window running.
+            ignored.append(IgnoredBlock(key, "no resets_at, value kept"))
         readings.append(QuotaReading(key, humanize(key), pct, reset, _severity_of(value)))
     return readings, ignored
 

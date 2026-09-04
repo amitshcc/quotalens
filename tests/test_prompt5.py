@@ -267,8 +267,11 @@ def test_hero_at_the_moment_of_reset_says_no_window(settings, store, secrets) ->
         body = tc.get("/api/dashboard").json()
     assert body["runway"]["remaining_s"] == 0
     assert '<span class="num">no window</span>' in html
-    assert body["burn"]["why"].startswith("No session running")
+    assert body["burn"]["why"].startswith("The session window ended at")
     assert 'id="reset-in"' not in html  # nothing to count down
+    # The window closed, so its last reading is not a current one anywhere.
+    assert body["runway"]["headroom_pct"] is None
+    assert "35 %" not in html and ">35<" not in html
 
 
 def test_cold_database_with_a_session_still_says_collecting(settings, store, secrets) -> None:

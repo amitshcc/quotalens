@@ -92,9 +92,23 @@ def compute_runway(
         return Runway(
             reset_ts, remaining, None, None, rate, None, None, None, "No session readings yet.", ""
         )
-    if reset_ts is None or remaining <= 0:
+    if reset_ts is not None and remaining <= 0:
+        # The invariant: a session percentage is never current once its window's
+        # reset time has passed. This reading describes a window that has closed
+        # and the server has not opened a new one, so it is removed rather than
+        # relabelled — the same rule the stale treatment applies to a whole page.
+        # Every consumer inherits this: the meter, the hero, the ring, the favicon.
+        verdict = (
+            f"The session window ended at {clock(reset_ts)} and no new one has opened. "
+            "The next message starts a fresh window."
+        )
+        return Runway(reset_ts, 0, None, None, rate, None, None, None, verdict, "")
+    if reset_ts is None:
+        # No window running, and the server said so by declining to date the block.
+        # The reading itself is current: it is this account's consumption of a
+        # window that is not open, which is what a fresh allowance looks like.
         verdict = "No session running. The next message starts a fresh session window."
-        return Runway(reset_ts, 0, pct, headroom, rate, None, None, None, verdict, "")
+        return Runway(None, 0, pct, headroom, rate, None, None, None, verdict, "")
     exhaust_ts, finish = project(pct, rate, now, reset_ts)
     sustain = sustainable_rate(headroom, remaining)
     left = f"{headroom:.0f}% left, resets in {fmt_span(remaining)}."

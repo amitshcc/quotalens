@@ -22,7 +22,13 @@ from fastapi.responses import (
 from quotalens import __version__
 from quotalens.burn import burn_rate
 from quotalens.config import Settings
-from quotalens.dashboard import as_json, build_dashboard, display_label
+from quotalens.dashboard import (
+    as_json,
+    build_dashboard,
+    display_label,
+    window_has_lapsed,
+    window_is_stale,
+)
 from quotalens.export import (
     RAW_WARNING,
     ExportError,
@@ -265,11 +271,33 @@ def create_app(
 
     @app.get("/api/quota/current")
     def quota_current() -> dict[str, Any]:
+        """The latest reading per window, and whether each one is still current.
+
+        `pct` is null unless the reading is current, and the value moves to
+        `last_pct` when it is not. A consumer reading `pct` therefore cannot reach
+        the conclusion the page stopped reaching: that a window which closed at
+        14:00 is still 40% consumed at 14:22. `window_open`, `lapsed` and `stale`
+        say which of the three reasons applies.
+        """
+        now = int(time.time())
         rows = state.store.latest_quota()
+        readings = []
+        for r in rows:
+            lapsed = window_has_lapsed(r, now)
+            stale = window_is_stale(r, settings.poll_interval_s, now)
+            current = not lapsed and not stale
+            reading = {**r.as_dict(), "display": display_label(r.window, r.label)}
+            reading.update(
+                pct=r.pct if current else None,
+                last_pct=r.pct,
+                current=current,
+                lapsed=lapsed,
+                stale=stale,
+                window_open=not lapsed and r.resets_at is not None,
+            )
+            readings.append(reading)
         return {
-            "readings": [
-                {**r.as_dict(), "display": display_label(r.window, r.label)} for r in rows
-            ],
+            "readings": readings,
             "overage": state.store.latest_overage(),
             "spend": spend_as_dict(state.poller.status.spend),
             "last_success_ts": state.poller.status.last_success_ts,
