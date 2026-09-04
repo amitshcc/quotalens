@@ -229,3 +229,8 @@ inference from source: write down what was on screen or in the DOM.
       stood taller than the rest of the table.
 - 2026-09-04: the same panel left "Each full session costs" blank for a saturated
       limit, with no em dash and no reason — the one cell in it that explained nothing.
+- 2026-09-04: the budget table's answer column was set at 15px inside a 12px table,
+      so "0.2" was a quarter larger than "Weekly — all models" and "3%" in the same
+      row, and the gloss inside that cell dropped back to 12px against its own parent.
+      One row read as two. Emphasis by size is the wrong lever in a table row; colour
+      and weight cost no vertical rhythm. (The same cell had been 18px before that.)
