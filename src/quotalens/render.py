@@ -304,7 +304,13 @@ def _hero(dash: Dashboard) -> str:
     b = dash.burn
     r = b.runway
     withheld = b.withheld
-    cls = "readout off" if withheld else ("readout is-crit" if b.critical else "readout")
+    # The readout's colour is the session window's magnitude, the same tier the meter
+    # below it renders, so the two cannot disagree about one window. It is never the
+    # runway projection: that is a rate finding, and it says itself in the verdict.
+    quiet = withheld or b.state in ("normal", "off")
+    cls = "readout off" if withheld or b.state == "off" else "readout"
+    if not quiet:
+        cls = f"readout is-{b.state}"
     value = (
         WITHHELD
         if withheld
@@ -321,11 +327,8 @@ def _hero(dash: Dashboard) -> str:
         resets = '<span class="v m"><span class="num">no window</span></span>'
     verdict = e(b.why) if withheld else f"<b>{e(b.why)}</b>"
     detail = f'<br><span class="far">{e(b.detail)}</span>' if b.detail else ""
-    state_chip = ""
-    if not withheld and b.critical:
-        state_chip = " " + chip("critical", "critical")
-    elif b.elevated:
-        state_chip = " " + chip("elevated", "elevated")
+    # One tier per window: the chip, the readout's colour and the meter all read it.
+    state_chip = "" if quiet else " " + chip(b.state, b.state)
     return (
         '<section class="screen hero" aria-labelledby="br">'
         f'<h2 class="lbl" id="br">Session{state_chip}</h2><div class="hrow">'

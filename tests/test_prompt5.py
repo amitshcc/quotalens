@@ -175,7 +175,11 @@ def test_projection_turns_critical_when_exhausted_before_reset(settings, store, 
     assert body["burn"]["why"].startswith("Exhausted at ")
     assert 'class="proj" stroke="var(--st-critical)"' in html
     assert 'class="ax cross"' in html and "exhausted " in html
-    assert 'class="readout is-crit"' in html  # the lit headroom turns critical
+    # The projection is a rate finding and says itself in the verdict, above. It does
+    # not colour the readout: that is the level, and the level here is 80% used.
+    assert 'class="readout is-elevated"' in html
+    assert "is-critical" not in html
+    assert body["burn"]["critical"] is True  # still reported, still not a colour
 
 
 # -- Prompt 6, Job B ----------------------------------------------------------------

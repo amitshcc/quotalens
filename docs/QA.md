@@ -234,3 +234,13 @@ inference from source: write down what was on screen or in the DOM.
       row, and the gloss inside that cell dropped back to 12px against its own parent.
       One row read as two. Emphasis by size is the wrong lever in a table row; colour
       and weight cost no vertical rhythm. (The same cell had been 18px before that.)
+- 2026-09-04: the hero's headroom readout was `--lit` unconditionally, with one override
+      to `--st-critical`. "89% left" — the healthiest state the tool can report — was a
+      68px amber number, for the same reason "9% left" was: the element was always
+      amber. The colour carried nothing, and it taught the eye to stop reading the one
+      time it did change.
+- 2026-09-04: that override came from `Runway.critical`, a projection (will this rate
+      exhaust the window before it resets), while the meter twelve pixels below was
+      coloured by `magnitude_state`, a level. Two adjacent elements, one palette, two
+      meanings: at 20% used with a steep climb the hero went red while the meter stayed
+      quiet, and both were behaving as designed.
