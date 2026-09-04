@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+from datetime import UTC, datetime
 from importlib import resources
 
 from fastapi.testclient import TestClient
@@ -222,7 +223,10 @@ def test_overage_reads_unclamped_with_clipped_bar(settings, store) -> None:
     assert (dash.spend.used_text, dash.spend.limit_text) == ("$3.16", "$2.00")
     assert dash.spend.pct_text == "158"
     assert dash.spend.bar_pct == 100.0
-    assert dash.spend.status_text.startswith("Extra usage off until 1 Oct")
+    # Derived, not written down: the page renders local time and a fixture that
+    # spells out "1 Oct" fails wherever midnight UTC is still the day before.
+    until = datetime(2026, 10, 1, tzinfo=UTC).astimezone()
+    assert dash.spend.status_text.startswith(f"Extra usage off until {until.day} {until:%b}")
 
 
 def test_quota_window_over_100_keeps_number_clips_bar(settings, store) -> None:
