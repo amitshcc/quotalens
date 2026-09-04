@@ -82,9 +82,11 @@ def render(families: Iterable[Family]) -> str:
 
 def collect(settings: object, store: object, status: object, now: int) -> list[Family]:
     """Every family, in a stable order. Imports stay local to keep this module thin."""
+    from quotalens.budget import compute_budgets
     from quotalens.burn import burn_rate
-    from quotalens.dashboard import RATE_WINDOW, parse_iso
+    from quotalens.dashboard import RATE_WINDOW, parse_iso, weekly_limits
     from quotalens.sessions import RATE_WINDOW as SESSION_WINDOW
+    from quotalens.sessions import window_from_row
     from quotalens.state import STALE_AFTER_INTERVALS
 
     interval = getattr(settings, "poll_interval_s", 60)
@@ -120,6 +122,33 @@ def collect(settings: object, store: object, status: object, now: int) -> list[F
     session = next((r for r in store.latest_quota() if r.window == RATE_WINDOW), None)
     headroom.add(max(0.0, 100.0 - session.pct) if session and fresh else None)
 
+    # The weekly limit in the unit the work comes in. NaN, never zero, when there
+    # is not enough history to estimate the cost of a window: a zero here would
+    # page someone at 3am for a budget that is merely unknown.
+    windows_left = Family(
+        "weekly_windows_remaining",
+        "gauge",
+        "Session windows the weekly headroom will pay for. basis=full is a window "
+        "run to 100%, basis=typical is the median window in this history.",
+    )
+    window_cost = Family(
+        "weekly_window_cost_points",
+        "gauge",
+        "Median weekly points a session window run to 100% has cost.",
+    )
+    clock_left = Family(
+        "weekly_clock_windows_remaining",
+        "gauge",
+        "Five-hour windows of wall clock before the weekly limit resets.",
+    )
+    sessions = [window_from_row(r) for r in store.sessions(limit=500, order="recent")]
+    report = compute_budgets(weekly_limits(store.latest_quota(), not fresh), sessions, now)
+    for item in report.budgets:
+        windows_left.add(item.full_windows, window=item.key, basis="full")
+        windows_left.add(item.typical_windows, window=item.key, basis="typical")
+        window_cost.add(item.cost_per_full, window=item.key)
+        clock_left.add(item.clock_windows, window=item.key)
+
     polls_ok = Family("poll_success_total", "counter", "Successful polls since start.")
     polls_ok.add(getattr(status, "polls_ok", 0))
     polls_failed = Family("poll_failure_total", "counter", "Failed polls since start.")
@@ -150,6 +179,9 @@ def collect(settings: object, store: object, status: object, now: int) -> list[F
         burn,
         threshold,
         headroom,
+        windows_left,
+        window_cost,
+        clock_left,
         polls_ok,
         polls_failed,
         last,

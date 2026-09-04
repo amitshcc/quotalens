@@ -34,6 +34,7 @@ curl 'http://127.0.0.1:8787/api/quota/current'
 Then, as you need them:
 
 ```sh
+curl 'http://127.0.0.1:8787/api/budget'                    # the weekly limit, in session windows
 curl 'http://127.0.0.1:8787/metrics'                       # Prometheus, hand rolled
 curl 'http://127.0.0.1:8787/api/export.csv?table=quota'    # or export.json
 curl 'http://127.0.0.1:8787/api/events'                    # threshold crossings, anomalies
@@ -113,6 +114,38 @@ task starts at **login**, not at boot, and only for your account.
 A background agent reading the OS keychain may prompt on first run or be
 refused; `quotalens status` then says "keyring" specifically rather than "no
 data".
+
+## The weekly limit, in windows you can plan with
+
+"Weekly is at 93%" is not a number you can act on. The dashboard puts the same
+fact under the weekly meters in the unit the work actually arrives in:
+
+```
+Limit                 Windows of budget        Windows of clock   Cost per full window
+Weekly — all models   0.5 full · 0.6 typical   13.6               11.6 pts  9.6–14.8
+Weekly — Fable        none left                13.6               —
+Weekly — Fable is spent, so none of the 6% left on Weekly — all models can be used on it.
+```
+
+Budget beside clock is the whole story in one line: half a window of budget
+against thirteen windows of wall clock means rationing, not racing.
+
+**The cost of a window is measured, not assumed.** Every complete session window
+in your history carries both its own consumption and what it cost each weekly
+limit, so the ratio is an observation about how *you* use models. The median is
+the estimate and the range beside it is the spread, because the model mix moves
+it — in one real history the same 100% window cost between 9.6 and 14.8 points.
+
+Windows that would poison the ratio are excluded, strictly: one still running,
+one only partially observed, one the weekly limit reset inside, one too small to
+divide, and one where the limit was already at its cap and so could not move.
+Below five usable windows it prints an em dash and says how many it has, because
+a confident "3.2 windows left" drawn from two observations is worse than no
+number — you would plan a week around it.
+
+It is on `/api/budget` and in `/metrics` as `quotalens_weekly_windows_remaining`,
+`quotalens_weekly_window_cost_points` and
+`quotalens_weekly_clock_windows_remaining`.
 
 ## The dashboard
 

@@ -88,13 +88,25 @@ inference from source: write down what was on screen or in the DOM.
       either of the above. (Until 4 Sep 2026 the rules stopped at "now"; the chart
       read as cropped in a region the pointer still reads values out of.)
 
+## The weekly budget
+
+- [ ] Under the meters, never in the hero. The hero stays the session window.
+- [ ] "Windows of budget" beside "windows of clock", both in five-hour units.
+- [ ] Cost per full window shows a median and a range, not one number.
+- [ ] A history below five usable windows shows an em dash, and the row's title
+      says how many it has. It never shows a number computed from two windows.
+- [ ] A spent sub-cap (Fable at 100%) reads "none left" without needing a cost
+      estimate, and the footnote says the parent's headroom cannot be spent on it.
+- [ ] `/api/budget` and the page agree; `/metrics` carries NaN, never 0, where the
+      page shows an em dash.
+
 ## Data shapes
 
 - [ ] Cold database: under 5 minutes of data the hero says collecting and no
       alert fires; under 15 minutes the chart says "Collecting: Nm of data"
       instead of a grid (the hero may already show a rate).
 - [ ] A real reset boundary inside the selected range (24h on live data): the
-      session trace breaks cleanly, the meter foot says "N resets in range", a
+      session trace breaks cleanly, the meter foot says "+N pts since the reset", a
       session-start rule appears on the chart.
 - [ ] `POST /mode/reset` on the fake upstream: within a poll the hero shows a
       new window, the history gains a row, the old row closes.
@@ -172,3 +184,11 @@ inference from source: write down what was on screen or in the DOM.
 - 2026-09-04: `pid_alive` on Windows treated "OpenProcess succeeded" as "still
       running". A process that has exited still opens while any handle to it is held,
       so a dead child read as alive.
+- 2026-09-04: "6 resets in range" on a weekly meter, on two days of history, where a
+      weekly window cannot reset even once. Not a bug in `is_reset`: every real weekly
+      row carried `resets_at` within 1s of `2026-09-07T01:00:00`, far inside the 60s
+      tolerance, and the drop rule never runs where an expiry is present. All six were
+      crossings into or out of the eight contaminated samples, whose weekly reset time
+      was 17 hours away. `split_at_resets` counted 6 with them and 0 without; the
+      session series went from 17 to 6. It also flagged the real 13:00–18:00 window
+      `(reset)`, which would have excluded the best data point from the weekly budget.

@@ -291,6 +291,23 @@ def create_app(
             "readings": [r.as_dict() for r in rows],
         }
 
+    @app.get("/api/budget")
+    def budget() -> dict[str, Any]:
+        """The weekly limits in session windows: how many more you can afford, and by when.
+
+        Its own route rather than a key on the burn payload. `/api/burn` answers a
+        question about one window over one lookback; this answers a question about
+        every weekly limit and their interaction, and it changes on a different
+        clock. Bolting a variable-length list of limits onto that payload would
+        make its shape depend on how many weekly limits an account happens to have.
+        """
+        dash = _dashboard(parse_view({}, int(time.time())))
+        report = dash.budget
+        return {
+            "now_ts": dash.now,
+            **({} if report is None else report.as_dict()),
+        }
+
     @app.get("/api/burn")
     def burn(
         window: str | None = Query(None, max_length=100),

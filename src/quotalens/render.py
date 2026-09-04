@@ -246,6 +246,7 @@ def _main(dash: Dashboard) -> str:
         + _health_strip(dash)
         + _hero(dash)
         + _meters(dash)
+        + _budget(dash)
         + _toolbar(dash)
         + _chart(dash)
         + '<div class="cols">'
@@ -367,6 +368,44 @@ def _meters(dash: Dashboard) -> str:
         body = "".join(_meter(w) for w in dash.windows)
     n = max(1, min(len(dash.windows), 4)) if dash.windows else 1
     return f'<div class="screen meters" style="--n:{n}">{body}</div>'
+
+
+def _budget(dash: Dashboard) -> str:
+    """The weekly limits in session windows. Under the meters, never in the hero.
+
+    The hero is the session window and stays that way; this answers the other
+    question, which is about the week.
+    """
+    view = dash.budget_view
+    if view is None or not view.rows:
+        return ""
+    body = "".join(
+        f"<tr{f' title={_q(r.reason)}' if r.reason else ''}>"
+        f"<td>{e(r.label)}</td>"
+        f'<td class="n">{e(r.budget_text)}</td>'
+        f'<td class="n">{e(r.clock_text)}</td>'
+        f'<td class="n">{e(r.cost_text)}'
+        + (f' <span class="far">{e(r.spread_text)}</span>' if r.spread_text else "")
+        + "</td></tr>"
+        for r in view.rows
+    )
+    note = (
+        f'<tfoot><tr><td colspan="4" class="far">{e(view.constraint)}</td></tr></tfoot>'
+        if view.constraint
+        else ""
+    )
+    return (
+        '<section class="screen budget"><table>'
+        "<caption>Weekly budget — session windows the headroom will pay for, costed from "
+        "this history</caption>"
+        '<thead><tr><th>Limit</th><th class="n">Windows of budget</th>'
+        '<th class="n">Windows of clock</th><th class="n">Cost per full window</th></tr></thead>'
+        f"<tbody>{body}</tbody>{note}</table></section>"
+    )
+
+
+def _q(text: str) -> str:
+    return f'"{e(text)}"'
 
 
 def _meter(w: WindowView) -> str:

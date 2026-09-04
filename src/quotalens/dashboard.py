@@ -15,6 +15,7 @@ from itertools import pairwise
 from typing import Any
 
 from quotalens.alerts import ALERT_KIND, CLEARED_KIND, standing
+from quotalens.budget import BudgetReport, WeeklyLimit, compute_budgets
 from quotalens.burn import BurnResult, burn_rate, min_trusted_span, split_at_resets
 from quotalens.config import Settings
 from quotalens.parse import SpendReading, humanize
@@ -73,6 +74,7 @@ DISPLAY_LABELS = {
     "seven_day_oauth_apps": "Weekly — OAuth apps",
 }
 SHORT_LABELS = {"five_hour": "Session", "seven_day": "Weekly all"}
+EM_DASH = "—"  # a value we do not have, never a zero standing in for unknown
 
 # Fable models may use "up to 50% of your weekly usage limits" at no extra cost,
 # so this meter's 100% is half the weekly pool. Without saying so the dashboard
@@ -306,6 +308,25 @@ class SpendView:
 
 
 @dataclass
+class BudgetRowView:
+    """One weekly limit, in windows, with every number already a string."""
+
+    label: str
+    budget_text: str  # "0.5 full · 0.6 typical", "none left", or an em dash
+    reason: str  # why there is no number, for the row's title
+    clock_text: str
+    cost_text: str
+    spread_text: str
+    spent: bool
+
+
+@dataclass
+class BudgetView:
+    rows: list[BudgetRowView]
+    constraint: str
+
+
+@dataclass
 class Control:
     key: str
     label: str
@@ -338,6 +359,8 @@ class Dashboard:
     refresh_controls: list[Control]
     lookback_s: int
     history: HistoryView
+    budget: BudgetReport | None = None  # the weekly limits, in session windows
+    budget_view: BudgetView | None = None
     cooldown_s: int = 0  # seconds until another forced poll is allowed
     events: list[dict[str, Any]] = field(default_factory=list)
     alert_standing: bool = False  # a burn alert fired and has not cleared
@@ -441,6 +464,10 @@ def build_dashboard(
         else:
             history.show_all_href = view.href(history_all=True)
     spend = _spend_view(status.spend, withheld, now)
+    # Withheld readings mean the weekly percentages are not trusted, and a budget
+    # computed from an untrusted headroom is exactly the confident wrong number
+    # this whole module refuses to print.
+    budget = compute_budgets(weekly_limits(latest, withheld), sessions_all, now)
 
     # A sub-capped window is excluded: Fable at 100% is half the weekly pool spent,
     # and an account chip reading "critical" for that is simply false.
@@ -509,6 +536,8 @@ def build_dashboard(
         ],
         lookback_s=lookback_s,
         history=history,
+        budget=budget,
+        budget_view=_budget_view(budget),
         cooldown_s=cooldown_s,
         events=events,
         alert_standing=alert_standing,
@@ -551,13 +580,90 @@ def _polled_text(last_ok: int | None, now: int) -> str:
     return f"polled {age}s ago" if age < 120 else f"last ok {clock(last_ok)}"
 
 
+def weekly_limits(rows: list[QuotaRow], withheld: bool = False) -> list[WeeklyLimit]:
+    """The weekly meters, as the budget needs them: value, reset time, and sub-cap.
+
+    Built from the same latest rows the meters are, and used by both the page and
+    ``/metrics``, so the budget cannot end up answering about a different number
+    from the one on screen. ``withheld`` carries the epistemic state in: a budget
+    computed from an untrusted percentage is the confident wrong number this
+    whole derivation exists to refuse.
+    """
+    out = []
+    slots = assign_slots([r.window for r in rows])  # the order the meters are in
+    for row in sorted(rows, key=lambda r: (slots.get(r.window, 9), r.window)):
+        if row.window == RATE_WINDOW or row.window.startswith("unknown:"):
+            continue  # the session window is the hero's business, not the weekly budget's
+        reset = parse_iso(row.resets_at)
+        out.append(
+            WeeklyLimit(
+                row.window,
+                display_label(row.window, row.label),
+                None if withheld else row.pct,
+                int(reset.timestamp()) if reset else None,
+                is_subcapped(row.window),
+            )
+        )
+    return out
+
+
+def _windows_text(value: float | None) -> str:
+    return EM_DASH if value is None else f"{value:.1f}"
+
+
+def _budget_view(report: BudgetReport | None) -> BudgetView | None:
+    """Pre-format the budget for the page. The derivation decides; this only words it."""
+    if report is None or not report.budgets:
+        return None
+    rows = []
+    for item in report.budgets:
+        spent = item.full_windows == 0.0
+        if spent:
+            budget_text = "none left"
+        elif item.known:
+            budget_text = (
+                f"{item.full_windows:.1f} full · {_windows_text(item.typical_windows)} typical"
+            )
+        else:
+            budget_text = EM_DASH
+        cost = EM_DASH if item.cost_per_full is None else f"{item.cost_per_full:.1f} pts"
+        spread = ""
+        if item.cost_low is not None and item.cost_high is not None and not spent:
+            # The same 100% window has cost between these two, because the model
+            # mix moves it. One number would hide that.
+            spread = f"{item.cost_low:.1f}–{item.cost_high:.1f}"
+        rows.append(
+            BudgetRowView(
+                item.label,
+                budget_text,
+                item.reason,
+                _windows_text(item.clock_windows),
+                cost,
+                spread,
+                spent,
+            )
+        )
+    return BudgetView(rows, report.constraint)
+
+
 def _change_over_range(rows: list[QuotaRow], rng: ResolvedRange) -> str:
-    """Change of the window over the selected range, honest about resets in between."""
+    """How much the window has moved. A reset inside the range narrows it, never voids it.
+
+    This used to report "6 resets in range", which reads as a statistic and is
+    really an apology: it means "the series was cut, so I cannot give you one
+    delta". The number a person wants is still available — the change over the
+    most recent segment — so give them that and say which stretch it covers.
+    """
     if len(rows) < 2:
         return "no change data in range"
     segments = split_at_resets(rows)
     if len(segments) > 1:
-        return f"{len(segments) - 1} reset{'s' if len(segments) > 2 else ''} in range"
+        recent = segments[-1]
+        if len(recent) < 2:
+            return "reset just now"
+        delta = recent[-1].pct - recent[0].pct
+        since = "the last reset" if len(segments) > 2 else "the reset"
+        return f"{delta:+.0f} pts since {since}"
     delta = rows[-1].pct - rows[0].pct
     return f"{delta:+.0f} pts in range"
 
@@ -1072,6 +1178,7 @@ def as_json(dash: Dashboard) -> dict[str, Any]:
             "state": dash.spend.state,
             "status": dash.spend.status_text,
         },
+        "budget": None if dash.budget is None else dash.budget.as_dict(),
         "notes": dash.notes,
         "diagnostics": dash.diagnostics,
         "events": dash.events,
