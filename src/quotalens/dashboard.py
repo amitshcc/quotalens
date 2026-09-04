@@ -329,13 +329,14 @@ class BudgetRowView:
 
     label: str
     left_text: str  # headroom, as a percentage
-    full_text: str  # sessions left at 100% each — the answer, and the hero column
+    full_text: str  # sessions left at 100% each — the answer, and the loud column
+    full_note: str  # what the number means when it is a boundary value
     typical_text: str  # the same at this account's median session
     typical_note: str  # what "typical" is, so it is not a mystery
     cost_text: str  # points one full session costs
     cost_note: str  # the observed spread and the sample it rests on
     reason: str  # when there is no number: the sentence, shown, not hidden
-    spent: bool
+    kind: str  # number | zero | unknown — decided here, never re-derived from the string
 
 
 @dataclass
@@ -658,11 +659,19 @@ def _budget_view(report: BudgetReport | None, now: int) -> BudgetView | None:
         return None
     rows = []
     for item in report.budgets:
-        spent = item.full_windows == 0.0
-        cost_text, cost_note, typical_note = "", "", ""
-        if spent:
-            full_text = typical_text = "none left"
+        full_note, cost_text, cost_note, typical_note = "", "", "", ""
+        if item.full_windows == 0.0:
+            # A spent limit's answer is a quantity like any other, and the quantity
+            # is zero. "none left" is the gloss, not the value: rendering the phrase
+            # in the answer column made the emptiest row the loudest thing here.
+            kind = "zero"
+            full_text = typical_text = "0"
+            full_note = "none left"
+            # Its cost is not unknown, it is unmeasurable: a limit at its cap cannot
+            # move, so no session can be observed spending it.
+            cost_text, cost_note = EM_DASH, "nothing to measure"
         elif item.known:
+            kind = "number"
             full_text = _sessions_text(item.full_windows)
             typical_text = _sessions_text(item.typical_windows)
             if item.typical_peak is not None:
@@ -670,24 +679,24 @@ def _budget_view(report: BudgetReport | None, now: int) -> BudgetView | None:
             cost_text = f"{item.cost_per_full:.0f} pts"
             if item.cost_low is not None and item.cost_high is not None:
                 # The same full session has cost between these two, because the
-                # model mix moves it. One number would hide that.
-                sessions = "session" if item.usable == 1 else "sessions"
-                cost_note = (
-                    f"{item.cost_low:.0f}–{item.cost_high:.0f}, from {item.usable} {sessions}"
-                )
+                # model mix moves it. One number would hide that. Kept compact so
+                # the note does not set the column's width.
+                cost_note = f"{item.cost_low:.0f}–{item.cost_high:.0f} · n={item.usable}"
         else:
+            kind = "unknown"
             full_text = typical_text = ""
         rows.append(
             BudgetRowView(
                 item.label,
                 EM_DASH if item.headroom_pct is None else f"{item.headroom_pct:.0f}%",
                 full_text,
+                full_note,
                 typical_text,
                 typical_note,
                 cost_text,
                 cost_note,
                 item.reason,
-                spent,
+                kind,
             )
         )
     primary = next(

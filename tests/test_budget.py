@@ -278,6 +278,12 @@ def _panel(limits: list[WeeklyLimit], history: list[SessionWindow], now: int = N
     return _budget(dash)
 
 
+def _rows(html: str) -> list[str]:
+    import re
+
+    return re.findall(r"<tr>(?:(?!</tr>).)*</tr>", html.split("<tbody>")[1], re.S)
+
+
 def _cells(html: str) -> list[str]:
     import re
 
@@ -292,10 +298,30 @@ def test_an_unknown_budget_shows_its_reason_not_an_em_dash() -> None:
     assert "—" not in _cells(html), "the label carries an em dash; no cell may be one"
 
 
-def test_a_spent_limit_reads_none_left() -> None:
+def test_a_spent_limit_answers_zero_with_the_phrase_beside_it() -> None:
+    """The answer column is a quantity. "none left" is the gloss, not the value.
+
+    Rendering the phrase *as* the answer set it at the column's size, so the row
+    with nothing left became the loudest thing in the panel — emphasis inverted.
+    """
     html = _panel([limit(100.0, "limit:fable", subcap=True)], clean_history())
-    assert "none left" in html
+    row = next(r for r in _rows(html) if "Fable" in r)
+
+    assert '<td class="n bignum">0 <span class="far">none left</span></td>' in row
+    assert "none left" not in row.split("bignum")[1].split("</td>")[1], "once per row, not twice"
     assert "Needs" not in html
+    # Its cost is unmeasurable, not unknown, and the cell says which.
+    assert "nothing to measure" in row
+
+
+def test_every_row_has_the_same_shape(settings=None) -> None:
+    """Same cell count, same classes, whatever the row is saying."""
+    html = _panel([limit(75.0), limit(100.0, "limit:fable", subcap=True)], clean_history(10.0))
+    shaped = [r for r in _rows(html) if 'colspan="3"' not in r]
+    assert len(shaped) == 2
+    for row in shaped:
+        assert row.count("<td") == 5
+        assert row.count('class="n bignum"') == 1
 
 
 def test_a_known_budget_shows_sessions_the_typical_peak_and_the_spread() -> None:
@@ -305,7 +331,7 @@ def test_a_known_budget_shows_sessions_the_typical_peak_and_the_spread() -> None
 
     assert "25%" in cells  # what is left
     assert any("at 80% used" in c for c in cells)  # "typical" is not a mystery
-    assert any("14 pts" in c and "10–19, from 5 sessions" in c for c in cells)
+    assert any("14 pts" in c and "10–19 · n=5" in c for c in cells)  # compact: it right-aligns
     assert 'class="n bignum"' in html  # the answer is set as a readout, not body text
 
 

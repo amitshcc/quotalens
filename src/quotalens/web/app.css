@@ -157,7 +157,10 @@ tbody th a:hover{text-decoration:underline}
 .readout-box span:nth-child(2n){text-align:right}
 
 /* budget: the answer column carries a readout's weight. pointers: prose, not a table */
-.bignum{font-family:var(--font-num);font-size:var(--fs-sub);color:var(--txt)}
+/* the answer column: loud against a 12px table, but --fs-sub is reserved for
+   readouts and would outgrow --row-h. The gloss beside it stays body size. */
+.bignum{font-family:var(--font-num);font-size:var(--fs-lg);color:var(--txt)}
+.bignum .far{font-size:var(--fs-sm)}
 .budget p,.pointers p,.pointers dd{max-width:76ch}
 .budget p{margin:var(--sp-2) var(--sp-4) var(--sp-3);font-size:var(--fs-sm)}
 .pointers{padding:0 var(--sp-4) var(--sp-4)}

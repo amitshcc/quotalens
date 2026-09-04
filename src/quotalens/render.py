@@ -381,6 +381,11 @@ def _meters(dash: Dashboard) -> str:
     return f'<div class="screen meters" style="--n:{n}">{body}</div>'
 
 
+def _note(text: str) -> str:
+    """A dim gloss beside a figure. Same pairing in all three numeric columns."""
+    return f' <span class="far">{e(text)}</span>' if text else ""
+
+
 def _budget(dash: Dashboard) -> str:
     """What the weekly headroom will buy, in sessions. Under the meters, never in the hero.
 
@@ -392,7 +397,7 @@ def _budget(dash: Dashboard) -> str:
         return ""
     rows = []
     for r in view.rows:
-        if not r.full_text:
+        if r.kind == "unknown":
             # No number, and the reason is worth more than an em dash: it is the
             # difference between "we do not know yet" and "the answer is nothing".
             rows.append(
@@ -401,18 +406,12 @@ def _budget(dash: Dashboard) -> str:
                 f'<td colspan="3" class="far">{e(r.reason)}</td></tr>'
             )
             continue
-        typical = e(r.typical_text) + (
-            f' <span class="far">{e(r.typical_note)}</span>' if r.typical_note else ""
-        )
-        cost = e(r.cost_text) + (
-            f' <span class="far">({e(r.cost_note)})</span>' if r.cost_note else ""
-        )
         rows.append(
             f"<tr><td>{e(r.label)}</td>"
             f'<td class="n">{e(r.left_text)}</td>'
-            f'<td class="n bignum">{e(r.full_text)}</td>'
-            f'<td class="n">{typical}</td>'
-            f'<td class="n">{cost}</td></tr>'
+            f'<td class="n bignum">{e(r.full_text)}{_note(r.full_note)}</td>'
+            f'<td class="n">{e(r.typical_text)}{_note(r.typical_note)}</td>'
+            f'<td class="n">{e(r.cost_text)}{_note(r.cost_note)}</td></tr>'
         )
     notes = "".join(
         f'<p class="far">{e(text)}</p>' for text in (view.binding, view.constraint) if text
