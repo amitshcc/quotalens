@@ -266,6 +266,32 @@ def test_page_renders_offline_with_no_external_resources(settings, store, secret
     assert '<use href="#i-sun"' in html and '<use href="#i-moon"' in html
 
 
+def test_the_chart_is_inside_the_two_column_grid(settings, store, secrets) -> None:
+    """The sidebar starts level with the chart, not after it.
+
+    Structural, because the symptom of getting this wrong is only visible as a tall
+    empty right column: the hero, the meters and the budget stay full width, and
+    everything from the toolbar down shares the grid with the sidebar.
+    """
+    now = int(time.time())
+    _seed(store, now)  # the budget panel only renders once there are windows
+    app = create_app(settings, store, secrets)
+    app.state.qw.poller.status.state = "ok"
+    app.state.qw.poller.status.last_success_ts = now
+    with TestClient(app) as tc:
+        html = tc.get("/").text
+
+    before, inside = html.split('<div class="cols">')
+    left, side = inside.split('<aside class="side">')
+    for full_width in ("screen hero", "screen meters", "screen budget"):
+        assert full_width in before, full_width
+    for in_column in ("screen chart", "screen history", "screen pointers"):
+        assert in_column in left, in_column
+    # Source order decides the stacking below the breakpoint: chart first, sidebar last.
+    assert left.index("screen chart") < left.index("screen history")
+    assert "screen chart" not in side
+
+
 def test_never_polled_renders_em_dash_not_zero(settings, store, secrets) -> None:
     with TestClient(create_app(settings, store, secrets)) as tc:
         html = tc.get("/").text
@@ -307,7 +333,10 @@ def test_healthy_page_shows_three_windows_and_values(settings, store, secrets) -
     assert 'style="width:100.0%;background:var(--hair-firm)"' in html  # neutral: off
     assert 'stroke="var(--s1)" stroke-width="var(--trace-hero)"' in html
     assert 'stroke-dasharray="var(--dash-3)"' in html
-    assert "No local session data yet" in html  # honest empty attribution
+    # Attribution points at the tools that do it, rather than promising a milestone
+    # that MVP-SCOPE puts out indefinitely.
+    assert "claude /usage" in html and "ccusage" in html
+    assert "No local session data yet" not in html and "milestone M3" not in html
 
 
 def test_auth_failure_renders_auth_chip_and_message(settings, store, secrets) -> None:

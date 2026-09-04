@@ -262,3 +262,76 @@ def test_the_api_reports_the_same_numbers_as_the_page(settings, store, secrets) 
     assert 'basis="typical"' in metrics
     # Not enough history to cost a window, so the metric is NaN and never a zero.
     assert 'quotalens_weekly_windows_remaining{basis="full",window="seven_day"} NaN' in metrics
+
+
+# -- how the panel words it -------------------------------------------------------
+
+
+def _panel(limits: list[WeeklyLimit], history: list[SessionWindow], now: int = NOW) -> str:
+    """The rendered panel for a given budget, without going through a whole dashboard."""
+    from quotalens.dashboard import Dashboard, _budget_view
+    from quotalens.render import _budget
+
+    view = _budget_view(compute_budgets(limits, history, now), now)
+    dash = object.__new__(Dashboard)
+    dash.budget_view = view
+    return _budget(dash)
+
+
+def _cells(html: str) -> list[str]:
+    import re
+
+    return [re.sub(r"<[^>]+>", " ", c).strip() for c in re.findall(r"<td[^>]*>(.*?)</td>", html)]
+
+
+def test_an_unknown_budget_shows_its_reason_not_an_em_dash() -> None:
+    """ "—" cannot be told apart from "the answer is nothing", and those are opposites."""
+    html = _panel([limit(75.0)], clean_history(10.0, n=2))
+    assert "Needs 5 complete session windows" in html
+    assert "3 so far" in html or "2 so far" in html
+    assert "—" not in _cells(html), "the label carries an em dash; no cell may be one"
+
+
+def test_a_spent_limit_reads_none_left() -> None:
+    html = _panel([limit(100.0, "limit:fable", subcap=True)], clean_history())
+    assert "none left" in html
+    assert "Needs" not in html
+
+
+def test_a_known_budget_shows_sessions_the_typical_peak_and_the_spread() -> None:
+    history = [window(i, 80.0, cost) for i, cost in enumerate([8.0, 9.0, 11.0, 14.0, 15.0])]
+    html = _panel([limit(75.0)], history)
+    cells = _cells(html)
+
+    assert "25%" in cells  # what is left
+    assert any("at 80% used" in c for c in cells)  # "typical" is not a mystery
+    assert any("14 pts" in c and "10–19, from 5 sessions" in c for c in cells)
+    assert 'class="n bignum"' in html  # the answer is set as a readout, not body text
+
+
+def test_the_panel_says_session_not_window_in_its_own_words() -> None:
+    """The unit a person plans in is a session. `reason` is quoted from the API verbatim."""
+    html = _panel([limit(75.0)], clean_history(10.0))
+    headings = html.split("<tbody>")[0]
+    assert "session" in headings.lower() and "window" not in headings.lower()
+
+
+def test_the_note_names_whichever_of_budget_and_clock_binds() -> None:
+    plenty_of_budget = WeeklyLimit("seven_day", "Weekly", 5.0, NOW + 2 * SESSION_LENGTH_S, False)
+    html = _panel([plenty_of_budget], clean_history(10.0))
+    assert "the clock is what runs out" in html  # 9.5 sessions of budget, 2 of clock
+
+    little_budget = WeeklyLimit("seven_day", "Weekly", 95.0, NOW + 20 * SESSION_LENGTH_S, False)
+    html = _panel([little_budget], clean_history(10.0))
+    assert "the budget is what runs out" in html  # 0.5 of budget, 20 of clock
+    assert "There is time for 20.0 more sessions" in html
+
+
+def test_the_note_still_gives_the_clock_when_the_budget_is_unknown() -> None:
+    html = _panel([limit(75.0)], clean_history(10.0, n=2))
+    assert "There is time for" in html and "runs out" not in html
+
+
+def test_the_sub_cap_constraint_survives_the_rewording() -> None:
+    html = _panel([limit(93.0), limit(100.0, "limit:fable", subcap=True)], clean_history(10.0))
+    assert "none of the 7% left on Weekly — all models can be used on it" in html

@@ -7,6 +7,8 @@ from html import escape as e
 from quotalens import __version__
 from quotalens.alerts import ALERT_KIND
 from quotalens.dashboard import (
+    CHART_H,
+    CHART_W,
     PLOT_RIGHT,
     RATE_WINDOW,
     Control,
@@ -247,10 +249,13 @@ def _main(dash: Dashboard) -> str:
         + _hero(dash)
         + _meters(dash)
         + _budget(dash)
-        + _toolbar(dash)
-        + _chart(dash)
+        # The hero, the meters and the budget are full width. From the chart down
+        # the page is two columns, so the sidebar starts level with the chart
+        # instead of waiting for it to end and leaving a tall empty right column.
         + '<div class="cols">'
         + "<div>"
+        + _toolbar(dash)
+        + _chart(dash)
         + _history(dash)
         + _attribution()
         + "</div>"
@@ -276,7 +281,13 @@ def _events_block(dash: Dashboard) -> str:
         lines.append(
             f'<p class="{css}"><span class="m far">{stamp}</span> {e(str(event["detail"]))}</p>'
         )
-    return '<div class="rule"></div><dl><dt>Recent events</dt><dd></dd></dl>' + "".join(lines)
+    return (
+        '<div class="rule"></div><dl><dt>Recent events</dt><dd></dd></dl>'
+        + "".join(lines)
+        # Capped upstream at EVENT_ROWS. It is the only unbounded section, and an
+        # unbounded section at the bottom of a sidebar is a sidebar with no bottom.
+        + '<p class="far">The rest are on <code>/api/events</code>.</p>'
+    )
 
 
 def _health_strip(dash: Dashboard) -> str:
@@ -371,7 +382,7 @@ def _meters(dash: Dashboard) -> str:
 
 
 def _budget(dash: Dashboard) -> str:
-    """The weekly limits in session windows. Under the meters, never in the hero.
+    """What the weekly headroom will buy, in sessions. Under the meters, never in the hero.
 
     The hero is the session window and stays that way; this answers the other
     question, which is about the week.
@@ -379,33 +390,43 @@ def _budget(dash: Dashboard) -> str:
     view = dash.budget_view
     if view is None or not view.rows:
         return ""
-    body = "".join(
-        f"<tr{f' title={_q(r.reason)}' if r.reason else ''}>"
-        f"<td>{e(r.label)}</td>"
-        f'<td class="n">{e(r.budget_text)}</td>'
-        f'<td class="n">{e(r.clock_text)}</td>'
-        f'<td class="n">{e(r.cost_text)}'
-        + (f' <span class="far">{e(r.spread_text)}</span>' if r.spread_text else "")
-        + "</td></tr>"
-        for r in view.rows
-    )
-    note = (
-        f'<tfoot><tr><td colspan="4" class="far">{e(view.constraint)}</td></tr></tfoot>'
-        if view.constraint
-        else ""
+    rows = []
+    for r in view.rows:
+        if not r.full_text:
+            # No number, and the reason is worth more than an em dash: it is the
+            # difference between "we do not know yet" and "the answer is nothing".
+            rows.append(
+                f"<tr><td>{e(r.label)}</td>"
+                f'<td class="n">{e(r.left_text)}</td>'
+                f'<td colspan="3" class="far">{e(r.reason)}</td></tr>'
+            )
+            continue
+        typical = e(r.typical_text) + (
+            f' <span class="far">{e(r.typical_note)}</span>' if r.typical_note else ""
+        )
+        cost = e(r.cost_text) + (
+            f' <span class="far">({e(r.cost_note)})</span>' if r.cost_note else ""
+        )
+        rows.append(
+            f"<tr><td>{e(r.label)}</td>"
+            f'<td class="n">{e(r.left_text)}</td>'
+            f'<td class="n bignum">{e(r.full_text)}</td>'
+            f'<td class="n">{typical}</td>'
+            f'<td class="n">{cost}</td></tr>'
+        )
+    notes = "".join(
+        f'<p class="far">{e(text)}</p>' for text in (view.binding, view.constraint) if text
     )
     return (
         '<section class="screen budget"><table>'
-        "<caption>Weekly budget — session windows the headroom will pay for, costed from "
-        "this history</caption>"
-        '<thead><tr><th>Limit</th><th class="n">Windows of budget</th>'
-        '<th class="n">Windows of clock</th><th class="n">Cost per full window</th></tr></thead>'
-        f"<tbody>{body}</tbody>{note}</table></section>"
+        "<caption>What your remaining weekly headroom will buy, in 5-hour sessions</caption>"
+        "<thead><tr><th>Limit</th>"
+        '<th class="n">Left</th>'
+        '<th class="n">Full sessions left</th>'
+        '<th class="n">At your typical session</th>'
+        '<th class="n">Each full session costs</th></tr></thead>'
+        f"<tbody>{''.join(rows)}</tbody></table>{notes}</section>"
     )
-
-
-def _q(text: str) -> str:
-    return f'"{e(text)}"'
 
 
 def _meter(w: WindowView) -> str:
@@ -427,7 +448,10 @@ def _meter(w: WindowView) -> str:
     return (
         f'<div class="meter" data-slot="{w.slot}">'
         f'<div class="lbl">{label}{note}{state_chip}{active}</div>'
-        f'<div class="v m"{style}><span class="num">{e(w.pct_text)}</span><span class="u">%</span>'
+        # "% used" against the hero's "% left": the same window stated twice looked
+        # like two numbers disagreeing until each said which direction it counted.
+        f'<div class="v m"{style}><span class="num">{e(w.pct_text)}</span>'
+        '<span class="u">% used</span>'
         '<span class="dash">—</span></div>'
         f'<div class="bar"><i style="width:{w.bar_pct:.1f}%;background:{bar_colour}"></i></div>'
         f'<div class="foot m"><span>{e(w.resets_text)}</span><span>{e(w.delta_text)}</span></div>'
@@ -505,11 +529,13 @@ def _chart(dash: Dashboard) -> str:
     c = dash.chart
     if c.collecting_text:
         inner = (
-            f'<text x="636" y="112" class="ax" text-anchor="middle">{e(c.collecting_text)}</text>'
+            f'<text x="{CHART_W / 2:g}" y="112" class="ax" text-anchor="middle">'
+            f"{e(c.collecting_text)}</text>"
         )
     elif not c.has_data:
         inner = (
-            '<text x="636" y="112" class="ax" text-anchor="middle">No readings in this range</text>'
+            f'<text x="{CHART_W / 2:g}" y="112" class="ax" text-anchor="middle">'
+            "No readings in this range</text>"
         )
     else:
         idle = "".join(
@@ -569,7 +595,7 @@ def _chart(dash: Dashboard) -> str:
     return (
         '<section class="screen chart" aria-label="All windows, selected range">'
         f'<script type="application/json" id="chart-data">{c.data_json}</script>'
-        '<svg id="chart" viewBox="0 0 1272 216" role="img" '
+        f'<svg id="chart" viewBox="0 0 {CHART_W} {CHART_H}" role="img" '
         'aria-label="Utilisation of all quota windows over the selected range">'
         f'<g class="trace">{inner}</g>'
         '<g id="hover" hidden><line class="xh" y1="14" y2="196"/></g>'
@@ -683,15 +709,32 @@ def _spark(r: SessionRowView) -> str:
 
 
 def _attribution() -> str:
+    """Where attribution actually lives, since it is not going to live here.
+
+    ``docs/MVP-SCOPE.md`` puts per-project attribution out indefinitely, and its own
+    recommendation is to link to both tools instead. An empty table promising a
+    milestone that is not coming is the worst of both: it occupies the slot and
+    delivers nothing.
+    """
     return (
-        '<section class="screen"><table>'
-        "<caption>Attribution — local Claude Code sessions, last 24h</caption>"
-        '<thead><tr><th>Project</th><th>Model</th><th class="n">Turns</th><th class="n">In</th>'
-        '<th class="n">Out</th><th class="n">Cache rd</th><th class="n">Burn</th>'
-        '<th class="n">Last</th>'
-        '</tr></thead><tbody><tr><td colspan="8" class="empty">No local session data yet. '
-        "Per-project attribution reads Claude Code's local logs; that scanner is milestone M3."
-        "</td></tr></tbody></table></section>"
+        '<section class="screen pointers">'
+        '<p class="cap">Where the quota went</p>'
+        "<p>QuotaLens tracks <em>how much</em> is left and how fast it is going. "
+        "For <em>what spent it</em>, two tools already do it better:</p>"
+        "<dl>"
+        "<dt><code>claude /usage</code></dt>"
+        "<dd>Attributes recent usage to skills, subagents, plugins, MCP servers and "
+        "scheduled tasks, over the last 24 hours or 7 days. It is computed from this "
+        "machine's local session history, so it excludes anything you ran on another "
+        "device or on claude.ai, and it is gone when the terminal closes.</dd>"
+        "<dt><code>ccusage</code></dt>"
+        "<dd>Per-project token attribution, read from Claude Code's local transcript "
+        "logs.</dd>"
+        "</dl>"
+        '<p class="far">QuotaLens does not duplicate either. Quota is pooled across '
+        "every surface you use, so a local log can show that a project correlates with "
+        "a climb, but it cannot attribute pooled quota to that project.</p>"
+        "</section>"
     )
 
 

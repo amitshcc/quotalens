@@ -15,7 +15,7 @@ from itertools import pairwise
 from typing import Any
 
 from quotalens.alerts import ALERT_KIND, CLEARED_KIND, standing
-from quotalens.budget import BudgetReport, WeeklyLimit, compute_budgets
+from quotalens.budget import Budget, BudgetReport, WeeklyLimit, compute_budgets
 from quotalens.burn import BurnResult, burn_rate, min_trusted_span, split_at_resets
 from quotalens.config import Settings
 from quotalens.parse import SpendReading, humanize
@@ -51,7 +51,11 @@ from quotalens.views import (
 )
 
 HERO_HOURS = 5
-CHART_W, CHART_H = 1272, 216
+# The chart lives in the left column of a two-column grid: 1320 page, 20 gutters,
+# a 288 sidebar, a 24 gap and 16 of section padding either side leaves 936. The
+# viewBox matches that, so the SVG renders about 1:1 and is neither letterboxed
+# by `meet` nor distorted by stretching it to a fixed height.
+CHART_W, CHART_H = 936, 216
 CHART_L, CHART_R, CHART_T, CHART_B = 44, 122, 14, 20
 PLOT_RIGHT = CHART_W - CHART_R  # the right edge of the plotting area, in chart units
 HERO_W, HERO_H = 1272, 108
@@ -59,6 +63,7 @@ LABEL_GAP = 13.0
 MAX_POINTS_PER_SERIES = 600  # longer ranges are bucketed, keeping the last sample per bucket
 FORCE_NOTE_TTL_S = 15
 HISTORY_ROWS = 20
+EVENT_ROWS = 6  # the sidebar's only unbounded section; the rest are on /api/events
 SPARK_POINTS = 40
 THIN_COVERAGE_PCT = 25.0  # under this coverage a window is a guess
 PARTIAL_COVERAGE_PCT = 80.0  # under this the row says how much was observed
@@ -309,21 +314,28 @@ class SpendView:
 
 @dataclass
 class BudgetRowView:
-    """One weekly limit, in windows, with every number already a string."""
+    """One weekly limit as a row of sessions, with every number already a string.
+
+    The unit here is a *session*, never a "window": nobody reads "0.4 windows of
+    budget" as "you can run a third of another session".
+    """
 
     label: str
-    budget_text: str  # "0.5 full · 0.6 typical", "none left", or an em dash
-    reason: str  # why there is no number, for the row's title
-    clock_text: str
-    cost_text: str
-    spread_text: str
+    left_text: str  # headroom, as a percentage
+    full_text: str  # sessions left at 100% each — the answer, and the hero column
+    typical_text: str  # the same at this account's median session
+    typical_note: str  # what "typical" is, so it is not a mystery
+    cost_text: str  # points one full session costs
+    cost_note: str  # the observed spread and the sample it rests on
+    reason: str  # when there is no number: the sentence, shown, not hidden
     spent: bool
 
 
 @dataclass
 class BudgetView:
     rows: list[BudgetRowView]
-    constraint: str
+    binding: str  # which of budget and clock runs out first, in words
+    constraint: str  # how a spent sub-cap limits the headroom that is left
 
 
 @dataclass
@@ -489,7 +501,7 @@ def build_dashboard(
         diagnostics.append(f"Payload blocks without a reset time, not charted: {keys}.")
     notes = _transient_notes(status, now)
 
-    events = [e.as_dict() for e in store.recent_events(limit=6)]
+    events = [e.as_dict() for e in store.recent_events(limit=EVENT_ROWS)]
     alert_standing = _alert_standing(store)
     counts = store.counts()
     size = store.db_size_bytes()
@@ -537,7 +549,7 @@ def build_dashboard(
         lookback_s=lookback_s,
         history=history,
         budget=budget,
-        budget_view=_budget_view(budget),
+        budget_view=_budget_view(budget, now),
         cooldown_s=cooldown_s,
         events=events,
         alert_standing=alert_standing,
@@ -607,43 +619,74 @@ def weekly_limits(rows: list[QuotaRow], withheld: bool = False) -> list[WeeklyLi
     return out
 
 
-def _windows_text(value: float | None) -> str:
-    return EM_DASH if value is None else f"{value:.1f}"
+def _sessions_text(value: float | None) -> str:
+    return "" if value is None else f"{value:.1f}"
 
 
-def _budget_view(report: BudgetReport | None) -> BudgetView | None:
-    """Pre-format the budget for the page. The derivation decides; this only words it."""
+def _binding_note(item: Budget, now: int) -> str:
+    """Which of the two constraints runs out first. That is the finding, not the numbers."""
+    if item.clock_windows is None or item.reset_ts is None:
+        return ""
+    when_text = when(local(item.reset_ts), now)
+    time_for = f"There is time for {item.clock_windows:.1f} more sessions before this resets "
+    if item.full_windows is None:
+        return f"{time_for}{when_text}."
+    budget_for = f"and budget for {item.full_windows:.1f}"
+    verdict = (
+        "the clock is what runs out"
+        if item.clock_windows < item.full_windows
+        else "the budget is what runs out"
+    )
+    return f"{time_for}{when_text}, {budget_for} — {verdict}."
+
+
+def _budget_view(report: BudgetReport | None, now: int) -> BudgetView | None:
+    """Word the budget for the page. The derivation decides; this only names things.
+
+    Every unknown carries its reason into the cell. "—" cannot be told apart from
+    "the answer is nothing", and those are opposite facts to plan against.
+    """
     if report is None or not report.budgets:
         return None
     rows = []
     for item in report.budgets:
         spent = item.full_windows == 0.0
+        cost_text, cost_note, typical_note = "", "", ""
         if spent:
-            budget_text = "none left"
+            full_text = typical_text = "none left"
         elif item.known:
-            budget_text = (
-                f"{item.full_windows:.1f} full · {_windows_text(item.typical_windows)} typical"
-            )
+            full_text = _sessions_text(item.full_windows)
+            typical_text = _sessions_text(item.typical_windows)
+            if item.typical_peak is not None:
+                typical_note = f"at {item.typical_peak:.0f}% used"
+            cost_text = f"{item.cost_per_full:.0f} pts"
+            if item.cost_low is not None and item.cost_high is not None:
+                # The same full session has cost between these two, because the
+                # model mix moves it. One number would hide that.
+                sessions = "session" if item.usable == 1 else "sessions"
+                cost_note = (
+                    f"{item.cost_low:.0f}–{item.cost_high:.0f}, from {item.usable} {sessions}"
+                )
         else:
-            budget_text = EM_DASH
-        cost = EM_DASH if item.cost_per_full is None else f"{item.cost_per_full:.1f} pts"
-        spread = ""
-        if item.cost_low is not None and item.cost_high is not None and not spent:
-            # The same 100% window has cost between these two, because the model
-            # mix moves it. One number would hide that.
-            spread = f"{item.cost_low:.1f}–{item.cost_high:.1f}"
+            full_text = typical_text = ""
         rows.append(
             BudgetRowView(
                 item.label,
-                budget_text,
+                EM_DASH if item.headroom_pct is None else f"{item.headroom_pct:.0f}%",
+                full_text,
+                typical_text,
+                typical_note,
+                cost_text,
+                cost_note,
                 item.reason,
-                _windows_text(item.clock_windows),
-                cost,
-                spread,
                 spent,
             )
         )
-    return BudgetView(rows, report.constraint)
+    primary = next(
+        (b for b in report.budgets if not b.subcap and b.clock_windows is not None),
+        None,
+    )
+    return BudgetView(rows, _binding_note(primary, now) if primary else "", report.constraint)
 
 
 def _change_over_range(rows: list[QuotaRow], rng: ResolvedRange) -> str:

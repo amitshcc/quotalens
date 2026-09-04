@@ -121,14 +121,19 @@ data".
 fact under the weekly meters in the unit the work actually arrives in:
 
 ```
-Limit                 Windows of budget        Windows of clock   Cost per full window
-Weekly — all models   0.5 full · 0.6 typical   13.6               11.6 pts  9.6–14.8
-Weekly — Fable        none left                13.6               —
-Weekly — Fable is spent, so none of the 6% left on Weekly — all models can be used on it.
+Limit                 Left   Full sessions left   At your typical session   Each full session costs
+Weekly — all models     6%                  0.5   0.5  at 89% used         12 pts  (10–15, from 6 sessions)
+Weekly — Fable          0%            none left   none left
+
+There is time for 13.6 more sessions before this resets Mon 09:30, and budget
+for 0.5 — the budget is what runs out.
+Weekly — Fable is spent, so none of the 6% left on Weekly — all models can be
+used on it.
 ```
 
-Budget beside clock is the whole story in one line: half a window of budget
-against thirteen windows of wall clock means rationing, not racing.
+The note under the table says which of the two constraints binds, because that
+is the finding: half a session of budget against thirteen sessions of wall clock
+means rationing, not racing.
 
 **The cost of a window is measured, not assumed.** Every complete session window
 in your history carries both its own consumption and what it cost each weekly
@@ -139,9 +144,11 @@ it — in one real history the same 100% window cost between 9.6 and 14.8 points
 Windows that would poison the ratio are excluded, strictly: one still running,
 one only partially observed, one the weekly limit reset inside, one too small to
 divide, and one where the limit was already at its cap and so could not move.
-Below five usable windows it prints an em dash and says how many it has, because
-a confident "3.2 windows left" drawn from two observations is worse than no
-number — you would plan a week around it.
+Below five usable sessions it prints the reason in the cell instead of a number:
+*"Needs 5 complete session windows to estimate the cost of one; 3 so far."* An em
+dash cannot be told apart from "the answer is nothing", and those are opposite
+facts to plan against. It does not lower the threshold to make a number appear —
+a confident "3.2 sessions left" drawn from two observations is worse than none.
 
 It is on `/api/budget` and in `/metrics` as `quotalens_weekly_windows_remaining`,
 `quotalens_weekly_window_cost_points` and
