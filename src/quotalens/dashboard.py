@@ -15,6 +15,7 @@ from datetime import datetime
 from itertools import pairwise
 from typing import Any
 
+from quotalens import retention
 from quotalens.alerts import ALERT_KIND, CLEARED_KIND, standing
 from quotalens.boost import BOOST_KIND, boosted_windows
 from quotalens.budget import Budget, BudgetReport, WeeklyLimit, compute_budgets
@@ -406,6 +407,14 @@ class Dashboard:
 # -- builders -------------------------------------------------------------------
 
 
+def _database_row(size: int | None, period: str | None) -> str:
+    """Size, then the retention period governing it."""
+    shown = f"{size / 1_048_576:.1f} MB" if size is not None else "in memory"
+    if period is None:
+        return shown
+    return f"{shown} · {retention.option(period).label}"
+
+
 def _display_host(host: str) -> str:
     """What the footer calls the bind address.
 
@@ -591,7 +600,10 @@ def build_dashboard(
         "No session": f"{chart.idle_minutes} min in range",
         "Poll interval": f"{settings.poll_interval_s}s",
         "Samples stored": f"{counts['quota']:,}",
-        "Database": f"{size / 1_048_576:.1f} MB" if size is not None else "in memory",
+        # The retention period rides along with the size so the setting is visible
+        # without opening the panel: a growing number next to "1 year" explains
+        # itself, a growing number alone does not.
+        "Database": _database_row(size, settings.retention),
         "Oldest sample": (f"{day_month(local(oldest))} {clock(oldest)}" if oldest else "none"),
         "Last poll": clock(status.last_attempt_ts) if status.last_attempt_ts else "never",
         "Next poll": clock(status.next_poll_ts) if status.next_poll_ts else "pending",

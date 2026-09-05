@@ -155,6 +155,10 @@ class Settings:
     user_agent: str | None = DEFAULT_USER_AGENT
     impersonate: str = DEFAULT_IMPERSONATE
     poll_enabled: bool = True
+    # None until the first run writes one. That is not a missing default: it is how
+    # "this database predates the setting, so prune nothing yet" is represented.
+    # See quotalens.retention.initial_retention.
+    retention: str | None = None
 
     def with_overrides(self, **kwargs: object) -> Settings:
         """Return a copy with the given non-``None`` fields replaced."""
@@ -202,6 +206,14 @@ def validate(settings: Settings) -> Settings:
         raise SettingsError("sample retention must keep at least 100 samples")
     if settings.webhook_url and not settings.webhook_url.startswith(("http://", "https://")):
         raise SettingsError("the webhook URL must be http:// or https://")
+    if settings.retention is not None:
+        from quotalens.retention import RETENTION_BY_KEY
+
+        if settings.retention not in RETENTION_BY_KEY:
+            raise SettingsError(
+                f"retention must be one of {', '.join(RETENTION_BY_KEY)}, "
+                f"got {settings.retention!r}"
+            )
     return settings
 
 
@@ -271,6 +283,14 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "str",
         "where threshold crossings are POSTed (opt-in)",
         lambda _p: DEFAULT_WEBHOOK_URL,
+    ),
+    ConfigKey(
+        "retention",
+        "retention",
+        "RETENTION",
+        "str",
+        "how long detail rows are kept: 1week, 1month, 3months, 6months, 1year",
+        lambda _p: None,  # unset until the first run decides; see retention.initial_retention
     ),
     ConfigKey(
         "poll_enabled",

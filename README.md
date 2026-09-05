@@ -333,6 +333,34 @@ quotalens prune --dry-run    # what it would remove
 quotalens prune --keep 50000 # or set QUOTALENS_SAMPLE_KEEP
 ```
 
+### How long data is kept
+
+```sh
+quotalens config set retention 3months   # 1week, 1month, 3months, 6months, 1year
+quotalens prune --dry-run                # what that would delete, before it does
+```
+
+There is no "keep forever". The period governs the detail tables — `quota`,
+`overage` and the raw `sample` cap. **`session_window` and `event` are kept for
+two years regardless**, because they are what the weekly budget table and the
+typical-session baseline read, and a year of them is under 2,000 rows. Choosing
+"1 week" will not shorten your history list.
+
+Two things worth knowing:
+
+- **The first run after upgrading deletes nothing.** A database that predates
+  this setting is written as `1year`, the longest option, and the dashboard says
+  so. A destructive default you did not ask for is not a default.
+- **Deleting is not shrinking.** SQLite keeps the freed pages, so pruning runs
+  `VACUUM` and reports the real before and after. That needs up to twice the
+  file size in free space and takes an exclusive lock, so it runs on a schedule
+  and on a worker thread, never inside a poll.
+
+The size shown against each option in settings is **measured from your own
+database** — your poll interval, your window count — not a figure shipped with
+the tool. Under two days of history it shows an em dash, because it is not
+knowable yet.
+
 The default keeps the newest **20,000 samples, about 14 days, roughly 39 MB**,
 plus the first sample of every distinct payload shape, forever — that set is the
 endpoint-drift record and pruning it would defeat the point of keeping payloads

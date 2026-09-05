@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from quotalens.parse import QuotaReading, SpendReading
+from quotalens.retention import TS_COLUMN
 
 SCHEMA_VERSION = 5
 
@@ -224,6 +225,33 @@ class PruneResult:
         }
 
 
+@dataclass(frozen=True)
+class AgePruneResult:
+    """What a retention prune removed, and what it actually reclaimed on disk."""
+
+    removed: dict[str, int]  # per table
+    deleted: int
+    candidates: int
+    bytes_before: int | None = None
+    bytes_after: int | None = None
+
+    @property
+    def reclaimed(self) -> int | None:
+        if self.bytes_before is None or self.bytes_after is None:
+            return None
+        return max(0, self.bytes_before - self.bytes_after)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "removed": dict(self.removed),
+            "deleted": self.deleted,
+            "candidates": self.candidates,
+            "bytes_before": self.bytes_before,
+            "bytes_after": self.bytes_after,
+            "reclaimed": self.reclaimed,
+        }
+
+
 def now_ts() -> int:
     return int(time.time())
 
@@ -342,11 +370,26 @@ class Store:
                 (ts if ts is not None else now_ts(), kind, detail),
             )
 
-    def replace_sessions(self, windows: Iterable[Any]) -> None:
-        """Replace the whole session_window table in one transaction (idempotent)."""
+    def replace_sessions(self, windows: Iterable[Any], derivable_from: int | None = None) -> None:
+        """Replace the derived session windows in one transaction (idempotent).
+
+        ``derivable_from`` is the oldest ``quota`` timestamp the caller derived
+        these from. Rows starting before it are **kept**, because there are no
+        longer any quota rows to re-derive them from and this table is the only
+        remaining record of that history.
+
+        Without that guard, retention turns this into a destructive operation:
+        prune ``quota`` to a week, restart, and the full rebuild silently deletes
+        every session window older than a week -- the exact rows the two-year
+        floor exists to protect, and the ones ``compute_budgets`` needs to say
+        anything at all. Observed: 11 windows became 7 on one restart.
+        """
         rows = [_session_row(w) for w in windows]
         with self._tx() as cur:
-            cur.execute("DELETE FROM session_window")
+            if derivable_from is None:
+                cur.execute("DELETE FROM session_window")
+            else:
+                cur.execute("DELETE FROM session_window WHERE started_at >= ?", (derivable_from,))
             cur.executemany(_SESSION_UPSERT, rows)
 
     def upsert_sessions(self, windows: Iterable[Any], demote_before: int | None = None) -> int:
@@ -527,6 +570,55 @@ class Store:
             deleted=0 if dry_run else doomed,
             kept=kept,
             signatures=signatures,
+            bytes_before=before,
+            bytes_after=self.db_size_bytes(),
+        )
+
+    def row_widths(self) -> dict[str, float]:
+        """Average stored bytes per row, per table, from SQLite's own ``length()``.
+
+        ``dbstat`` is not compiled into most Python builds, so per-table page
+        usage is not directly readable. This measures the values instead and
+        :func:`retention.measure` calibrates the set against the real file size,
+        which is what makes the projection relative to a number that is true.
+        """
+        widths: dict[str, float] = {}
+        with self._tx() as cur:
+            for table in TS_COLUMN:
+                cols = [r["name"] for r in cur.execute(f"PRAGMA table_info({table})")]
+                expr = " + ".join(f"COALESCE(LENGTH(CAST({c} AS BLOB)), 0)" for c in cols)
+                row = cur.execute(f"SELECT AVG({expr}) AS w FROM {table}").fetchone()
+                widths[table] = float(row["w"] or 0.0)
+        return widths
+
+    def prune_by_age(self, cutoffs: dict[str, int], dry_run: bool = False) -> AgePruneResult:
+        """Delete rows older than each table's cutoff.
+
+        One cutoff per table, not one for the database: ``session_window`` and
+        ``event`` are load-bearing and sit on a long floor regardless of what the
+        user chose. See :mod:`quotalens.retention` for why.
+        """
+        self.checkpoint()  # or "before" counts WAL bytes this session just wrote
+        before = self.db_size_bytes()
+        removed: dict[str, int] = {}
+        with self._tx() as cur:
+            for table, cutoff in cutoffs.items():
+                column = TS_COLUMN[table]
+                doomed = cur.execute(
+                    f"SELECT COUNT(*) FROM {table} WHERE {column} < ?", (cutoff,)
+                ).fetchone()[0]
+                removed[table] = doomed
+                if not dry_run and doomed:
+                    cur.execute(f"DELETE FROM {table} WHERE {column} < ?", (cutoff,))
+        total = sum(removed.values())
+        if not dry_run and total:
+            # SQLite does not return pages to the filesystem on DELETE. Without
+            # this the file stays its old size and the report reads as a lie.
+            self.vacuum()
+        return AgePruneResult(
+            removed=removed,
+            deleted=0 if dry_run else total,
+            candidates=total,
             bytes_before=before,
             bytes_after=self.db_size_bytes(),
         )

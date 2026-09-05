@@ -14,6 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from quotalens import retention
 from quotalens.alerts import (
     ALERT_KIND,
     CLEARED_KIND,
@@ -186,6 +187,7 @@ class Poller:
         self._overage_fetched = False
         self._last_ignored: frozenset[str] = frozenset()
         self._last_prune_ts: float | None = None
+        self._pruning = False
         self._detector = ThresholdDetector(
             settings.burn_alert_pts_per_hour, firing=_alert_was_standing(store)
         )
@@ -444,13 +446,41 @@ class Poller:
         task.add_done_callback(self._webhooks.discard)
 
     def _maybe_prune(self, now: int) -> None:
-        """Bound the sample table on a schedule; a default nobody runs is not a default."""
+        """Schedule the periodic prune. A default nobody runs is not a default.
+
+        Dispatched to a worker thread rather than run here. Pruning ends in
+        ``VACUUM``, which takes an exclusive lock and rewrites the whole file --
+        on a 20 MB database that is long enough to stall the event loop, and with
+        it every dashboard request and the next poll. The reading is already
+        recorded by the time this is called, so nothing waits on the result.
+        """
         if self._last_prune_ts is not None and now - self._last_prune_ts < PRUNE_EVERY_S:
             return
+        if self._pruning:
+            return  # a previous one is still going; do not queue a second VACUUM
         self._last_prune_ts = now
+        self._pruning = True
+        task = asyncio.create_task(asyncio.to_thread(self.prune_now, now))
+        task.add_done_callback(self._prune_finished)
+
+    def _prune_finished(self, task: asyncio.Task[None]) -> None:
+        self._pruning = False
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:  # pruning must never cost a reading
+            log.warning("prune task failed: %s", self._redactor.redact(str(exc)))
+
+    def prune_now(self, now: int) -> None:
+        """Both ceilings: the sample row cap, then the retention period.
+
+        Runs on a worker thread. Also called directly when the retention period
+        changes, so that a shortened period takes effect without waiting six
+        hours -- but never on the thread serving the request that changed it.
+        """
         try:
             result = self._store.prune_samples(self._settings.sample_keep)
-        except Exception as exc:  # pruning must never cost a reading
+        except Exception as exc:
             detail = self._redactor.redact(f"{type(exc).__name__}: {exc}")
             self._store.record_event("prune_failed", detail, ts=now)
             return
@@ -460,6 +490,23 @@ class Poller:
                 "samples_pruned",
                 f"removed {result.deleted} raw samples, kept {result.kept} "
                 f"and {result.signatures} payload shapes",
+                ts=now,
+            )
+        if not self._settings.retention:
+            return  # unset: this database predates the setting and nothing is aged out
+        try:
+            aged = self._store.prune_by_age(retention.cutoffs(self._settings.retention, now))
+        except Exception as exc:
+            detail = self._redactor.redact(f"{type(exc).__name__}: {exc}")
+            self._store.record_event("prune_failed", detail, ts=now)
+            return
+        if aged.deleted:
+            detail = ", ".join(f"{n} {t}" for t, n in sorted(aged.removed.items()) if n)
+            log.info("retention prune removed %d rows (%s)", aged.deleted, detail)
+            self._store.record_event(
+                "rows_pruned",
+                f"retention {self._settings.retention}: removed {detail}; "
+                f"reclaimed {retention.format_bytes(aged.reclaimed)}",
                 ts=now,
             )
 

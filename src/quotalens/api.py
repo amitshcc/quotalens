@@ -86,7 +86,9 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        rebuild_sessions(store, int(time.time()))  # backfill from every stored sample
+        # keep_underivable: retention may have removed the quota rows behind older
+        # windows, and this table is then the only record of them.
+        rebuild_sessions(store, int(time.time()), keep_underivable=True)
         if settings.poll_enabled:
             poller.start()
         try:

@@ -28,19 +28,23 @@ from quotalens.config import (
 
 # A value that differs from every default, per kind, so "did it change?" is decidable.
 PROBE = {"int": "4321", "float": "7.5", "str": "https://example.invalid/hook", "bool": "false"}
+# Keys whose values are constrained beyond their kind need a probe that validate()
+# will accept -- the point of the test is the loader, not the validator.
+PROBE_BY_KEY = {"retention": "1week"}
 
 
 @pytest.mark.parametrize("key", CONFIG_KEYS, ids=lambda k: k.name)
 def test_every_config_key_is_actually_read_by_the_loader(key, monkeypatch, tmp_path) -> None:
     """Set it in the environment and in the file; both must reach ``Settings``."""
+    raw = PROBE_BY_KEY.get(key.name, PROBE[key.kind])
     expected = {
         "int": 4321,
         "float": 7.5,
-        "str": "https://example.invalid/hook",
+        "str": raw,
         "bool": False,
     }[key.kind]
 
-    monkeypatch.setenv(ENV_PREFIX + key.env, PROBE[key.kind])
+    monkeypatch.setenv(ENV_PREFIX + key.env, raw)
     env_resolved = resolve_settings(data_dir=tmp_path)
     assert getattr(env_resolved.settings, key.field) == expected, f"{key.env} is not read"
     assert env_resolved.sources[key.name] == "env"

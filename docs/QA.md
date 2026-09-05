@@ -322,3 +322,30 @@ carry.
       reads as supported, which is worse than absent. `tests/test_config_store.py`
       now parametrises over every config key and fails if any one of them cannot be
       set from the environment or the file.
+
+## Open: downsampling beats deleting, and is not what retention does
+
+Retention deletes old `quota` rows outright, so the period before the cutoff is
+gone — not coarser, gone. Keeping one row per 15 minutes beyond 30 days would
+hold a year of chart shape in roughly a twentieth of the rows: at a 60-second
+poll that is 96 rows a day instead of 1,440, and the chart at a month's zoom
+cannot resolve the difference anyway. Deletion loses the period entirely; the
+downsample loses only detail nobody can see at that scale.
+
+That is the better feature, and it is deliberately not this one. Half-building
+it inside the retention job — "delete, but keep every fifteenth row" — would
+make the row counts, the size estimates and the burn-rate maths all disagree
+about what a row means. It wants its own design: which columns survive an
+aggregation, what `is_active` means for a bucket, and whether the boost detector
+can still find a step in downsampled data (it looks at consecutive rows, so
+probably not without help).
+
+- 2026-09-06: retention nearly shipped destroying the history it was designed to
+      protect. `session_window` is kept on a two-year floor because
+      `compute_budgets` needs it — but `api.py` rebuilds that table from every
+      `quota` row on each start, so pruning `quota` to a week and restarting
+      silently deleted every older window. Observed on a copy of the real
+      database: 11 windows became 7 across one restart. The rebuild was treating
+      "I cannot derive this" as "this did not happen". `rebuild` now takes
+      `keep_underivable`, true at startup and false for `forget`/`rescan`, where
+      deleting the derived row is the point. Two tests pin both directions.

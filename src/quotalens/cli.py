@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import IO, Any
 
-from quotalens import __version__, service
+from quotalens import __version__, retention, service
 from quotalens.client import ClaudeClient, ClientError, has_session_key
 from quotalens.config import (
     CONFIG_KEYS,
@@ -241,24 +241,50 @@ def _profile_note(settings: Settings) -> str:
 
 
 def cmd_prune(args: argparse.Namespace, settings: Settings, secrets: SecretStore) -> int:
+    """Both ceilings: the sample row cap, and the retention period.
+
+    ``--dry-run`` covers both, because checking what a shortened retention would
+    destroy *before* committing to it is the whole reason a careful user runs
+    this by hand.
+    """
     from quotalens.store import Store
 
     keep = args.keep or settings.sample_keep
+    period = args.retention or settings.retention
+    if period is not None:
+        try:
+            retention.option(period)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+    verb = "would remove" if args.dry_run else "removed"
     store = Store(settings.db_path)
     try:
         result = store.prune_samples(keep, dry_run=args.dry_run)
+        aged = (
+            store.prune_by_age(retention.cutoffs(period, int(time.time())), dry_run=args.dry_run)
+            if period
+            else None
+        )
+        after = store.db_size_bytes()
     finally:
         store.close()
-    count = result.candidates if args.dry_run else result.deleted
-    verb = "would remove" if args.dry_run else "removed"
     print(f"{settings.db_path}")
+    count = result.candidates if args.dry_run else result.deleted
     print(f"{verb} {count} raw samples; {result.kept} kept (limit {keep})")
     print(f"payload shapes preserved: {result.signatures}")
-    if result.bytes_before is not None and result.bytes_after is not None:
+    if aged is None:
+        print("retention: not set, so nothing was aged out. `quotalens config set retention ...`")
+    else:
+        label = retention.option(period).label
+        rows = ", ".join(f"{n} {t}" for t, n in sorted(aged.removed.items()) if n) or "nothing"
+        print(f"retention {label}: {verb} {rows}")
         print(
-            f"file: {result.bytes_before / 1_048_576:.1f} MB -> "
-            f"{result.bytes_after / 1_048_576:.1f} MB"
+            f"  kept regardless: {', '.join(retention.KEPT_TABLES)} for "
+            f"{retention.FLOOR_DAYS // 365} years -- the budget table reads them"
         )
+    if result.bytes_before is not None and after is not None:
+        print(f"file: {result.bytes_before / 1_048_576:.1f} MB -> {after / 1_048_576:.1f} MB")
     return 0
 
 
@@ -394,6 +420,31 @@ def cmd_rescan(args: argparse.Namespace, settings: Settings, secrets: SecretStor
     return 0
 
 
+def _ensure_retention(
+    settings: Settings, store: Any, config_dir: Path | None
+) -> tuple[Settings, str | None]:
+    """Write the initial retention on first run, without deleting anything.
+
+    Called before the app is built so that the poller starts with the value the
+    file now holds. On a database that predates the setting this stores the
+    longest option, so the first run after an upgrade prunes nothing.
+    """
+    if settings.retention is not None:
+        return settings, None
+    path = config_path(settings.profile, config_dir)
+    oldest = store.oldest_ts()
+    now = int(time.time())
+    history_days = (now - oldest) / retention.DAY_S if oldest else None
+    value, notice = retention.initialise(
+        stored=read_config_file(path),
+        history_days=history_days,
+        write=lambda data: write_config_file(path, data),
+        record_event=store.record_event,
+        now=now,
+    )
+    return settings.with_overrides(retention=value), notice
+
+
 def cmd_serve(args: argparse.Namespace, settings: Settings, secrets: SecretStore) -> int:
     import uvicorn
 
@@ -434,6 +485,10 @@ def cmd_serve(args: argparse.Namespace, settings: Settings, secrets: SecretStore
     elif cookie is None and not isinstance(secrets, KeyringSecretStore):
         log.warning("no session cookie stored; the poller will idle until you run `quotalens auth`")
     store = Store(settings.db_path)
+    settings, notice = _ensure_retention(settings, store, args.config_dir)
+    if notice:
+        print(notice)
+        log.info("%s", notice)
     app = create_app(settings, store, secrets)
     print(f"QuotaLens {__version__}{_profile_note(settings)}")
     print(f"dashboard: http://{settings.host}:{settings.port}/")
@@ -694,6 +749,11 @@ def build_parser() -> argparse.ArgumentParser:
     st.add_argument("--port", type=int)
     prune = sub.add_parser("prune", help="bound the raw sample table")
     prune.add_argument("--keep", type=int, help=f"samples to keep (default {DEFAULT_SAMPLE_KEEP})")
+    prune.add_argument(
+        "--retention",
+        help="override the stored period for this run: "
+        + ", ".join(o.key for o in retention.RETENTION_OPTIONS),
+    )
     prune.add_argument("--dry-run", action="store_true", help="report without deleting")
     prune.add_argument("--db", type=Path, help="SQLite file path")
     forget = sub.add_parser(

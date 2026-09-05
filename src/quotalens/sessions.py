@@ -266,13 +266,23 @@ def window_sample_ts(store: Store, ends_at: int) -> list[int]:
     return sorted(found)
 
 
-def rebuild(store: Store, now: int) -> int:
-    """Recompute the whole table from every stored sample. Returns the row count.
+def rebuild(store: Store, now: int, keep_underivable: bool = False) -> int:
+    """Recompute the table from every stored quota row. Returns the row count.
 
     Startup and post-migration only: it reads every quota row.
+
+    ``keep_underivable`` decides what happens to windows that start before the
+    oldest surviving quota row, and the two callers want opposite things:
+
+    * **Startup** passes ``True``. Retention bounds ``quota``, so those windows
+      can no longer be derived and this table is the only remaining record of
+      them. A rebuild must not read "I cannot derive it" as "it did not happen".
+    * **``forget`` and ``rescan``** pass ``False``. There the caller has just
+      deleted specific rows on purpose, and the derived window built from them is
+      exactly what they are trying to be rid of.
     """
     windows = derive_sessions(_rows_by_window(store, 0), now)
-    store.replace_sessions(windows)
+    store.replace_sessions(windows, derivable_from=store.oldest_ts() if keep_underivable else None)
     return len(windows)
 
 
