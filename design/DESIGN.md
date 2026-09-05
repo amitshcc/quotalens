@@ -382,6 +382,22 @@ the poller runs every 60 seconds forever.
 If you want it under 4KB anyway, cut the attribution table into a second route
 and load its CSS there.
 
+### The enforced ceiling
+
+`tests/test_dashboard.py::test_app_css_stays_within_budget` is where this stops
+being advice. It caps minified `app.css` + `tokens.css` and fails the build over
+it. The cap has moved once:
+
+| | minified | gzipped | why |
+|---|---|---|---|
+| original | 14,000 | — | headroom over the 8,442 measured above |
+| 2026-09-05 | **16,000** | ~4.5 KB | settings panel, vendor status row, `i-settings` |
+
+Raising it is a decision that gets written down here, with the reason and the
+measurement. Editing it to make a red test green is not the same act, and the
+tell is whether a rule was deleted to fit. There is no third raise: at that
+point the answer is the second route this section already recommends.
+
 ## 12. Things this system does not do
 
 - No shadows. No radius above 3px. No gradient fills except a hatch pattern.

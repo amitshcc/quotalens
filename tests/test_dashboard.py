@@ -372,7 +372,20 @@ def test_app_css_stays_within_budget() -> None:
         text = re.sub(r"\s+", " ", text)
         return re.sub(r"\s*([{};:,])\s*", r"\1", text)
 
-    assert len(minify(css).encode()) + len(minify(tokens).encode()) < 14_000
+    # Raised from 14,000 on 2026-09-05, deliberately, to make room for the
+    # settings panel, the vendor status row and a sixth icon. The constraint
+    # behind this number is "resource use is a feature", and DESIGN.md 11 states
+    # what that actually costs: the sheet is parsed once at load and never
+    # again, whereas the poller runs every 60 seconds forever. So the number
+    # that matters is over the wire. At the raise, 13,970 minified compressed to
+    # 3,901 bytes gzipped -- about 3.6:1 -- so 16,000 minified is roughly 4.5 KB
+    # delivered, still less than one small PNG and still no webfont, framework
+    # or CDN behind it.
+    #
+    # If this needs raising a third time, do not raise it: DESIGN.md 11's own
+    # closing advice is to split a route and load its CSS there. A ceiling that
+    # only ever moves up is not a budget.
+    assert len(minify(css).encode()) + len(minify(tokens).encode()) < 16_000
     # no colour literal outside tokens.css
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b", minify(css))
 
