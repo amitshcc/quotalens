@@ -387,6 +387,23 @@ class Store:
             ).fetchall()
         return [_row_to_quota(r) for r in rows]
 
+    def latest_quota_before(self, ts: int) -> list[QuotaRow]:
+        """Most recent reading for every window strictly before ``ts``.
+
+        The chart needs it to complete a step whose earlier half falls outside the
+        selected range, which is what any range dragged across a boost looks like.
+        Indexed on (window, ts), so it costs one seek per window rather than a scan.
+        """
+        with self._tx() as cur:
+            rows = cur.execute(
+                "SELECT q.ts, q.window, q.label, q.pct, q.resets_at, q.severity, q.is_active "
+                "FROM quota q "
+                "JOIN (SELECT window, MAX(ts) AS ts FROM quota WHERE ts < ? GROUP BY window) m "
+                "ON q.window = m.window AND q.ts = m.ts ORDER BY q.window",
+                (ts,),
+            ).fetchall()
+        return [_row_to_quota(r) for r in rows]
+
     def quota_series(
         self, since_ts: int, window: str | None = None, until_ts: int | None = None
     ) -> list[QuotaRow]:

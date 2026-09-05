@@ -630,20 +630,20 @@ BOOST_MARK_PX = 18  # in the chart. Below 16 the mark is omitted, never scaled.
 BOOST_MIN_PX = 16
 
 
-def _rocket(x: float, y: float, size: int = BOOST_MARK_PX) -> str:
+def _rocket(x: float, y: float, size: int = BOOST_MARK_PX, hidden: bool = True) -> str:
     """The boost mark, inlined from the drawing rather than redrawn.
 
     Four fills inside sixteen pixels is four pixels each, so below
-    :data:`BOOST_MIN_PX` a surface gets the text alone.
+    :data:`BOOST_MIN_PX` a surface gets the text alone. ``hidden`` is False where a
+    wrapper carries the accessible name and the pointer has to find these shapes:
+    an element the mouse must hit should not be hidden from assistive tech either.
     """
     if size < BOOST_MIN_PX:
         return ""
     inner = _rocket_inner()
     scale = size / 24
-    return (
-        f'<g transform="translate({x:.1f} {y:.1f}) scale({scale:.4f})" '
-        f'aria-hidden="true">{inner}</g>'
-    )
+    aria = ' aria-hidden="true"' if hidden else ""
+    return f'<g transform="translate({x:.1f} {y:.1f}) scale({scale:.4f})"{aria}>{inner}</g>'
 
 
 @lru_cache(maxsize=1)
@@ -657,15 +657,25 @@ def _rocket_inner() -> str:
 
 
 def _boost_marks(c: ChartView) -> str:
-    """One rocket and one two-line label per boosted moment, beside its own step."""
+    """One rocket and one line per boosted moment, with the detail on hover.
+
+    The detail was a second line and it is reference material, not a label: with two
+    windows it ran past the plot edge and across the traces. It moves into a native
+    ``<title>`` on the group wrapping both the rocket and the heading, so hovering
+    either shows it, and the group carries the accessible name for anyone not using
+    a pointer at all.
+    """
     out = []
     for mark in c.boost_marks:
         top = max(20.0, mark.y - 22)
         rocket_x, text_x = mark.x + 6, mark.x + 6 + BOOST_MARK_PX + 5
+        label = f"{mark.heading}. {mark.detail}"
         out.append(
-            _rocket(rocket_x, top - BOOST_MARK_PX / 2)
+            f'<g class="boost" role="img" aria-label="{e(label)}">'
+            f"<title>{e(mark.detail)}</title>"
+            + _rocket(rocket_x, top - BOOST_MARK_PX / 2, hidden=False)
             + f'<text x="{text_x:.1f}" y="{top + 4:.1f}" class="ax bx">{e(mark.heading)}</text>'
-            + f'<text x="{text_x:.1f}" y="{top + 17:.1f}" class="ax">{e(mark.detail)}</text>'
+            + "</g>"
         )
     return "".join(out)
 

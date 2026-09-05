@@ -107,11 +107,11 @@ def compute_runway(
         # No window running, and the server said so by declining to date the block.
         # The reading itself is current: it is this account's consumption of a
         # window that is not open, which is what a fresh allowance looks like.
-        verdict = "No session running. The next message starts a fresh session window."
+        verdict = "No session is running. The next message starts a fresh session window."
         return Runway(None, 0, pct, headroom, rate, None, None, None, verdict, "")
     exhaust_ts, finish = project(pct, rate, now, reset_ts)
     sustain = sustainable_rate(headroom, remaining)
-    left = f"{headroom:.0f}% left, resets in {fmt_span(remaining)}."
+    left = f"{headroom:.0f}% left, and the window resets in {fmt_span(remaining)}."
     if rate is None:
         verdict = f"Collecting: {fmt_span(span_s)} of samples. {left}"
         finish = pct
@@ -121,10 +121,11 @@ def compute_runway(
         verdict = f"Falling over the last {fmt_span(span_s)}. {left}"
     elif exhaust_ts is not None:
         verdict = (
-            f"Exhausted at {clock(exhaust_ts)}, {fmt_span(reset_ts - exhaust_ts)} before reset."
+            f"Will run out at {clock(exhaust_ts)}, "
+            f"{fmt_span(reset_ts - exhaust_ts)} before the reset."
         )
     else:
-        verdict = f"At this rate you finish with {100 - (finish or pct):.0f}% unused."
+        verdict = f"At this rate you will finish with {100 - (finish or pct):.0f}% unused."
     comparison = ""
     if baseline and finish is not None and rate is not None:
         ratio = finish / baseline

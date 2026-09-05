@@ -71,7 +71,7 @@ def test_status_prints_the_session_window_and_countdown(tmp_path) -> None:
         "runway": {
             "reset_ts": now + 3900,
             "headroom_pct": 42.0,
-            "verdict": "At this rate you finish with 30% unused.",
+            "verdict": "At this rate you will finish with 30% unused.",
         },
         "sessions": [{"started_at": now - 14100, "ends_at": now + 3900, "is_current": True}],
     }
@@ -93,7 +93,8 @@ def test_status_prints_the_session_window_and_countdown(tmp_path) -> None:
         line.startswith("session: ") and "resets in 1h 05m, 42% headroom" in line
         for line in report.lines
     )
-    assert any(line == "verdict: At this rate you finish with 30% unused." for line in report.lines)
+    expected = "verdict: At this rate you will finish with 30% unused."
+    assert any(line == expected for line in report.lines)
 
 
 def test_median_comparison_appears_after_five_complete_windows(settings, store, secrets) -> None:
@@ -177,9 +178,9 @@ def test_projection_turns_critical_when_exhausted_before_reset(settings, store, 
         html = tc.get("/").text
         body = tc.get("/api/dashboard").json()
     assert body["runway"]["exhaust_ts"] is not None
-    assert body["burn"]["why"].startswith("Exhausted at ")
+    assert body["burn"]["why"].startswith("Will run out at ")
     assert 'class="proj" stroke="var(--st-critical)"' in html
-    assert 'class="ax cross"' in html and "exhausted " in html
+    assert 'class="ax cross"' in html and "runs out " in html
     # The projection is a rate finding and says itself in the verdict, above. It does
     # not colour the readout: that is the level, and the level here is 80% used.
     assert 'class="readout is-elevated"' in html
@@ -299,7 +300,7 @@ def test_cold_database_with_a_session_still_says_collecting(settings, store, sec
     # the lit figure and the verdict agree on the rounding
     figure = '<span class="num">78</span><span class="dash">—</span><span class="u">% left</span>'
     assert figure in html
-    assert "78% left, resets in" in body["burn"]["why"]
+    assert "78% left, and the window resets in" in body["burn"]["why"]
 
 
 def test_a_gap_that_began_before_the_range_is_still_a_gap(settings, store, secrets) -> None:

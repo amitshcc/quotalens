@@ -38,18 +38,21 @@ def test_sustainable_rate_at_zero_headroom_and_zero_time() -> None:
 def test_verdicts() -> None:
     reset = NOW + 2 * 3600 + 14 * 60
     burning = compute_runway(63, 30, 15 * 60, reset, NOW)
-    assert burning.verdict.startswith("Exhausted at ") and "before reset." in burning.verdict
+    assert burning.verdict.startswith("Will run out at ")
+    assert "before the reset." in burning.verdict
     assert burning.critical and burning.headroom_pct == 37 and burning.remaining_s == 8040
     assert burning.sustainable == round(37 / (8040 / 3600), 2)
     surviving = compute_runway(63, 5, 15 * 60, reset, NOW)
-    assert surviving.verdict == "At this rate you finish with 26% unused."
+    assert surviving.verdict == "At this rate you will finish with 26% unused."
     assert not surviving.critical
     idle = compute_runway(63, 0.0, 4 * 60, reset, NOW)
-    assert idle.verdict == "Flat for 4m. 37% left, resets in 2h 14m."
+    assert idle.verdict == "Flat for 4m. 37% left, and the window resets in 2h 14m."
     collecting = compute_runway(63, None, 3 * 60, reset, NOW)
-    assert collecting.verdict == "Collecting: 3m of samples. 37% left, resets in 2h 14m."
+    assert collecting.verdict == (
+        "Collecting: 3m of samples. 37% left, and the window resets in 2h 14m."
+    )
     none = compute_runway(63, 30, 900, None, NOW)
-    assert none.verdict.startswith("No session running") and none.remaining_s == 0
+    assert none.verdict.startswith("No session is running") and none.remaining_s == 0
     assert compute_runway(None, None, 0, reset, NOW).verdict == "No session readings yet."
 
 
@@ -64,7 +67,7 @@ def test_countdown_at_the_moment_of_reset() -> None:
     assert at_reset.pct is None and at_reset.headroom_pct is None
     assert at_reset.verdict.startswith("The session window ended at")
     one_second = compute_runway(99.5, 3600, 900, NOW + 1, NOW)  # one point per second
-    assert one_second.remaining_s == 1 and one_second.verdict.startswith("Exhausted at")
+    assert one_second.remaining_s == 1 and one_second.verdict.startswith("Will run out at")
 
 
 def test_median_comparison_suppressed_under_five_windows() -> None:

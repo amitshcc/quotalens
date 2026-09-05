@@ -136,8 +136,16 @@ def resolve_range(
         )
     if opts.range_key == "custom" and opts.custom:
         start, end = opts.custom
+        # `collecting` is about how much data exists at all, not which slice is on
+        # screen, so a custom range over a near-empty database says so like any other.
         return ResolvedRange(
-            start, end, "custom", _custom_label(start, end), False, False, data_span
+            start,
+            end,
+            "custom",
+            _custom_label(start, end),
+            False,
+            data_span < COLLECTING_UNDER_S,
+            data_span,
         )
     if opts.range_key in RANGE_PRESETS:
         seconds = RANGE_PRESETS[opts.range_key]

@@ -10,12 +10,13 @@ colour — and the crimson *is* the marker, which is why there is no pointer rul
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime
 from importlib import resources
 from pathlib import Path
 
 import pytest
 
-from quotalens.dashboard import BoostMark, ChartView, SeriesView
+from quotalens.dashboard import BoostMark, ChartView, SeriesView, build_dashboard
 from quotalens.render import BOOST_COLOUR, BOOST_MIN_PX, _boost_marks, _rocket, _series
 
 DESIGN_SOURCE = Path(__file__).resolve().parents[1] / "design" / "marks" / "boost-rocket.svg"
@@ -25,7 +26,7 @@ def _mark(**kw) -> BoostMark:
     return BoostMark(
         kw.get("x", 370.0),
         kw.get("y", 20.0),
-        "limits boosted",
+        "Limits Boosted",
         kw.get("detail", "08:09 · 98% → 7%"),
     )
 
@@ -98,21 +99,44 @@ def test_two_windows_boosting_in_one_poll_give_one_rocket_and_one_label() -> Non
     svg = _boost_marks(
         _chart([_mark(detail="08:09 · Weekly Fable 100% → 1%, Weekly all 98% → 0%")])
     )
-    assert svg.count("limits boosted") == 1
+    assert svg.count(">Limits Boosted</text>") == 1  # once drawn, once in the aria-label
     assert svg.count('circle cx="12" cy="9.6"') == 1  # the rocket's porthole, once
-    assert "Weekly Fable" in svg and "Weekly all" in svg
+    assert svg.count("<title>") == 1
+    assert svg.count('<g class="boost"') == 1
 
 
-def test_the_label_is_two_lines_beside_the_rocket_not_under_it() -> None:
-    svg = _boost_marks(_chart([_mark(x=300.0, y=40.0)]))
-    heading = re.search(r'<text x="([\d.]+)" y="([\d.]+)" class="ax bx">limits boosted</text>', svg)
-    detail = re.search(r'<text x="([\d.]+)" y="([\d.]+)" class="ax">([^<]+)</text>', svg)
-    rocket = re.search(r'<g transform="translate\(([\d.]+) ([\d.]+)\)', svg)
+def test_the_label_is_one_line_and_the_detail_is_on_hover() -> None:
+    """The detail is reference material: with two windows it ran past the plot edge."""
+    svg = _boost_marks(_chart([_mark(x=300.0, y=40.0, detail="08:09 · 98% → 7%")]))
 
-    assert heading and detail and rocket
-    assert float(heading.group(1)) == float(detail.group(1)), "both lines start at one x"
-    assert float(detail.group(2)) > float(heading.group(2)), "the detail is the second line"
-    assert float(rocket.group(1)) < float(heading.group(1)), "the rocket is to their left"
+    assert svg.count("<text") == 1, "one line only"
+    assert ">Limits Boosted</text>" in svg
+    assert "<title>08:09 · 98% → 7%</title>" in svg
+    assert "98% → 7%" not in svg.split("</title>")[1], "the detail is not also drawn"
+
+
+def test_the_group_wraps_both_the_rocket_and_the_heading() -> None:
+    """Hovering either has to show the tooltip, so both live under one <g>."""
+    svg = _boost_marks(_chart([_mark()]))
+    group = svg[svg.index('<g class="boost"') : svg.rindex("</g>")]
+
+    assert "<title>" in group
+    assert 'circle cx="12" cy="9.6"' in group  # the rocket
+    assert ">Limits Boosted</text>" in group  # and the heading
+    assert 'role="img"' in svg and 'aria-label="Limits Boosted. ' in svg
+
+
+def test_the_rocket_is_not_hidden_from_the_mouse_or_the_reader() -> None:
+    """`.trace` sets fill:none; a hidden, unfillable shape receives no hover."""
+    svg = _boost_marks(_chart([_mark()]))
+    assert 'aria-hidden="true"' not in svg, "the wrapper carries the name instead"
+
+    css = resources.files("quotalens.web").joinpath("app.css").read_text()
+    assert ".boost{pointer-events:all}" in css
+
+
+def test_the_rocket_alone_is_still_hidden_where_nothing_wraps_it() -> None:
+    assert 'aria-hidden="true"' in _rocket(0, 0, 18)
 
 
 def test_no_pointer_rule_is_drawn() -> None:
@@ -160,3 +184,142 @@ def test_the_boost_colour_appears_in_exactly_two_places() -> None:
     css = resources.files("quotalens.web").joinpath("app.css").read_text()
     tokens = resources.files("quotalens.web").joinpath("tokens.css").read_text()
     assert BOOST_COLOUR not in css and BOOST_COLOUR not in tokens
+
+
+# -- the range the mark vanished on -----------------------------------------------
+
+
+def _seeded_store(tmp_path, boost_ts: int, gap_s: int):
+    """A store whose boost sits just after a gap, the shape the real one has."""
+    from quotalens.boost import BOOST_KIND
+    from quotalens.config import settings_from_env
+    from quotalens.parse import QuotaReading
+    from quotalens.store import Store
+
+    settings = settings_from_env().with_overrides(db_path=tmp_path / "t.db")
+    store = Store(settings.db_path)
+    reset = datetime.fromtimestamp(boost_ts + 3 * 86400, UTC).isoformat()
+    for i in range(60):  # climbing to 98%, ending where the gap begins
+        store.record_quota(
+            boost_ts - gap_s - (60 - i) * 60,
+            [QuotaReading("seven_day", "Weekly — all models", 38.0 + i, reset, None, False)],
+        )
+    for i in range(60):  # and resuming after it, at 0%
+        store.record_quota(
+            boost_ts + i * 60,
+            [QuotaReading("seven_day", "Weekly — all models", float(i) / 10, reset, None, False)],
+        )
+    store.record_event(
+        BOOST_KIND, "Weekly — all models fell 98% -> 0% with no reset. Limit raised.", ts=boost_ts
+    )
+    return settings, store
+
+
+def _render(settings, store, raw_range: str, now: int) -> str:
+    from quotalens.poller import PollerStatus
+    from quotalens.render import _chart
+    from quotalens.views import parse_view
+
+    status = PollerStatus()
+    status.state, status.last_success_ts = "ok", now
+    dash = build_dashboard(
+        settings, store, status, now, 20.0, parse_view({"range": raw_range}, now)
+    )
+    return _chart(dash)
+
+
+def test_a_dragged_range_across_the_gap_still_shows_the_boost(tmp_path) -> None:
+    """The bug: the range's left edge landed inside the outage before the boost.
+
+    The boost row was then the *first* row in range with nothing to step from, so
+    the crimson drop and the mark were both silently dropped — on exactly the ranges
+    someone drags around a boost to look at it. A `_chart_view` unit test passes for
+    every range, because it never sees a range that starts inside the gap.
+    """
+    boost_ts = 1_800_000_000
+    gap_s = 6 * 3600 + 34 * 60  # the real outage
+    now = boost_ts + 6 * 3600
+    settings, store = _seeded_store(tmp_path, boost_ts, gap_s)
+    try:
+        preset = _render(settings, store, "24h", now)
+        inside_gap = _render(settings, store, f"{boost_ts - gap_s + 600}-{now}", now)
+        wide = _render(settings, store, f"{boost_ts - gap_s - 3600}-{now}", now)
+        starts_at_boost = _render(settings, store, f"{boost_ts}-{now}", now)
+        excludes = _render(settings, store, f"{boost_ts + 600}-{now}", now)
+    finally:
+        store.close()
+
+    for name, svg in (
+        ("24h preset", preset),
+        ("dragged into the gap", inside_gap),
+        ("dragged before the gap", wide),
+        ("starting at the boost", starts_at_boost),
+    ):
+        assert BOOST_COLOUR in svg, f"{name}: no crimson drop"
+        assert ">Limits Boosted</text>" in svg, f"{name}: no mark"
+
+    assert BOOST_COLOUR not in excludes, "a range after the boost must not invent one"
+    assert ">Limits Boosted</text>" not in excludes
+
+
+# -- what else a custom range was hiding ------------------------------------------
+
+
+def _runway_chart(end_offset_s: int, exhaust_offset_s: int | None = None):
+    """A chart marked up for a range ending ``end_offset_s`` from now."""
+    from quotalens.dashboard import _mark_runway
+    from quotalens.runway import Runway
+    from quotalens.views import ResolvedRange
+
+    now = 1_800_000_000
+    reset_ts = now + 3 * 3600
+    chart = object.__new__(ChartView)
+    chart.y_max, chart.now_x, chart.future = 100.0, 0.0, False
+    chart.hour_x, chart.projection, chart.projection_note = [], "", ""
+    chart.projection_critical, chart.cross = False, None
+    runway = Runway(
+        reset_ts,
+        reset_ts - now,
+        40.0,
+        60.0,
+        20.0,
+        now + exhaust_offset_s if exhaust_offset_s else None,
+        90.0,
+        20.0,
+        "",
+        "",
+    )
+    rng = ResolvedRange(now - 6 * 3600, now + end_offset_s, "custom", "custom", False, False, 0)
+    _mark_runway(chart, runway, (now - 3600, reset_ts), rng, now, False)
+    return chart
+
+
+def test_the_now_rule_is_drawn_whenever_now_is_inside_the_range() -> None:
+    """A custom range ending at now had no marker at all, so nothing said where now was."""
+    assert _runway_chart(+3600).future is True  # range runs past now
+    assert _runway_chart(0).future is True  # ends exactly at now
+    assert _runway_chart(-1800).future is False  # now is genuinely outside
+
+
+def test_a_projection_hidden_by_the_range_says_so_instead_of_vanishing() -> None:
+    """Outside the frame rather than unmeasured, and the same rule applies."""
+    inside = _runway_chart(+3 * 3600 + 60, exhaust_offset_s=3600)
+    assert inside.projection and not inside.projection_note
+
+    clipped = _runway_chart(+1800, exhaust_offset_s=3600)
+    assert not clipped.projection
+    assert "falls outside this range" in clipped.projection_note
+    assert "exhaustion" in clipped.projection_note
+
+
+def test_a_custom_range_over_a_near_empty_database_still_says_collecting() -> None:
+    """`collecting` is about how much data exists, not which slice is on screen."""
+    from quotalens.views import ViewOptions, resolve_range
+
+    now = 1_800_000_000
+    opts = ViewOptions(range_key="custom", custom=(now - 3600, now))
+    thin = resolve_range(opts, now - 300, now)
+    plenty = resolve_range(opts, now - 86400, now)
+
+    assert thin.collecting is True
+    assert plenty.collecting is False

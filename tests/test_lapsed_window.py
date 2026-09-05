@@ -111,7 +111,7 @@ def test_an_undated_reading_is_current_because_the_server_just_sent_it() -> None
     """
     open_none = compute_runway(0.0, 0.0, 900, None, NOW)
     assert open_none.pct == 0.0 and open_none.headroom_pct == 100.0
-    assert open_none.verdict.startswith("No session running")
+    assert open_none.verdict.startswith("No session is running")
 
 
 def test_the_parser_keeps_an_undated_session_value_and_records_why() -> None:
