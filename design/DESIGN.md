@@ -249,14 +249,28 @@ attribution is what you scroll to when the rate surprises you.
 
 ## 8. Icons
 
-Five, hand-drawn, inline, defined once as `<symbol>` in a hidden sprite:
-`i-alert` (critical), `i-stale`, `i-auth`, `i-rate`, `i-theme`. They are
-16×16, 1.6px stroke, `currentColor`, round caps and joins. One slot is
-deliberately unspent.
+Six, hand-drawn, inline, defined once as `<symbol>` in a hidden sprite:
+`i-alert` (critical), `i-stale`, `i-auth`, `i-rate`, `i-theme` and
+`i-settings`. They are 16×16, 1.6px stroke, `currentColor`, round caps and
+joins. **There is no unspent slot** — it went to the boost mark, below, and
+`i-settings` was added on top of the five in 2026-09 for the settings panel.
 
-The ring mark is not one of the five; it is the brand.
+`i-theme` ships as two symbols, `i-sun` and `i-moon`, because the server cannot
+know which theme the browser settled on; CSS shows the one a click would give
+you. It is one icon in this count, in two faces.
 
-**The unspent slot is now the boost mark**, and it does not follow the rules
+`i-settings` is sliders — three tracks, three knobs — not a gear. At 16px a
+gear's teeth are a different drawing language from the straight strokes and
+small circles of `i-sun` and `i-rate`, and they read as noise rather than as a
+seventh member of this set.
+
+A seventh line icon needs an argument here first. The set is small so that each
+one is learnable, and the cost of adding one is that every existing icon becomes
+slightly harder to tell apart.
+
+The ring mark is not one of the six; it is the brand.
+
+**The boost mark took the slot that used to be spare**, and it does not follow the rules
 above: `design/marks/boost-rocket.svg` is a full-colour illustration on a 24 grid,
 four fills and a stroke, not a `currentColor` line drawing. That is deliberate —
 it is the only pictorial element in the product, and it earns the exception by
