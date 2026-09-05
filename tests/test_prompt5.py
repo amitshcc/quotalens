@@ -41,7 +41,12 @@ def test_poll_note_sits_beside_the_button_not_in_the_hero(settings, store, secre
         tc.post("/api/poll")  # suppressed
         html = tc.get("/").text
     assert 'id="poll-note"' in html and "Forced poll suppressed" in html
-    assert html.index("Forced poll suppressed") > html.index('id="poll-form"')
+    # Both live in the header now, next to each other and to the clock that gives
+    # the reason to click. The note sits before the button so the two controls stay
+    # one group; what matters is that they are adjacent, not which side.
+    header = html.split("<header>")[1].split("</header>")[0]
+    assert 'id="poll-form"' in header and "Forced poll suppressed" in header
+    assert 0 < header.index('id="poll-form"') - header.index("Forced poll suppressed") < 200
     assert "hstrip" not in html
 
 

@@ -221,6 +221,8 @@ def render_app(dash: Dashboard) -> str:
 def _header(dash: Dashboard) -> str:
     fallback = f"last ok {dash.polled_text[8:]}" if dash.polled_text.startswith("last ok") else ""
     ts = dash.last_success_ts or 0
+    q = dash.view.query()
+    poll_action = "/poll" + (f"?{q}" if q else "")
     lost = (
         '<span class="chip stale" id="link"><svg class="ic" aria-hidden="true">'
         '<use href="#i-stale"/></svg>dashboard unreachable since '
@@ -232,6 +234,19 @@ def _header(dash: Dashboard) -> str:
         f"{lost}{_alert_chip(dash)}{chip(dash.chip, dash.chip_text)}"
         f'<span class="lbl m" id="polled" data-ts="{ts}" data-fallback="{e(fallback)}">'
         f"{e(dash.polled_text)}</span>"
+        # Beside the clock it sits next to its own reason: #polled says how stale
+        # this is, the button makes it fresh. A real form, so it works without JS;
+        # app.js upgrades it by delegation, which is what survives the refresh
+        # replacing this whole header.
+        + "".join(
+            f'<span class="lbl" id="poll-note" aria-live="polite">{e(note)}</span>'
+            for note in dash.notes[:1]
+        )
+        + f'<form method="post" action="{e(poll_action)}" class="ctl" id="poll-form">'
+        f'<button type="submit" id="poll" title="Force a poll now" '
+        f'data-cooldown="{dash.cooldown_s}">'
+        '<svg class="ic" aria-hidden="true"><use href="#i-rate"/></svg>'
+        '<span id="poll-label">poll now</span></button></form>'
         # Both icons ship; CSS shows the one for the theme a click would give you,
         # because the theme is settled in the browser and the server cannot know it.
         '<button id="t" type="button" aria-label="Switch theme">'
@@ -506,23 +521,18 @@ def _range_form(dash: Dashboard) -> str:
 
 
 def _toolbar(dash: Dashboard) -> str:
-    q = dash.view.query()
-    action = "/poll" + (f"?{q}" if q else "")
+    """Range, lookback and cadence. Settings about the poller, not the act of polling.
+
+    "poll now" used to live here and moved to the header: since the chart went into
+    a column it can sit below the fold, and the reason to click it — how stale this
+    is — is up there next to the clock.
+    """
     return (
         '<nav class="toolbar" aria-label="Chart controls">'
         + _range_form(dash)
         + _controls("lookback", dash.lookback_controls, "lookback")
         + '<span class="spacer"></span>'
         + _controls("refresh", dash.refresh_controls, "auto")
-        + f'<form method="post" action="{e(action)}" class="ctl" id="poll-form">'
-        '<button type="submit" id="poll" title="Force a poll now" '
-        f'data-cooldown="{dash.cooldown_s}">'
-        '<svg class="ic" aria-hidden="true"><use href="#i-rate"/></svg>'
-        '<span id="poll-label">poll now</span></button></form>'
-        + "".join(
-            f'<span class="lbl" id="poll-note" aria-live="polite">{e(note)}</span>'
-            for note in dash.notes[:1]
-        )
         + "</nav>"
     )
 

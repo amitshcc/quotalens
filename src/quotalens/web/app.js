@@ -123,8 +123,10 @@
   }
   function pollNow(form) {
     var button = form.querySelector("button");
-    if (button && button.disabled) return;
+    if (button && button.disabled) return;  // a second click while one is in flight does nothing
     if (button) button.disabled = true;
+    var label = document.getElementById("poll-label");
+    if (label) label.textContent = "polling…";  // applyCooldown puts it back either way
     fetch("/api/poll", { method: "POST" })
       .then(function (res) { return res.json(); })
       .then(function (data) {

@@ -20,6 +20,8 @@ h1,h2,h3{margin:0;font-weight:var(--w-med);font-size:var(--fs-md)}
 header{display:flex;align-items:center;height:46px;
   border-bottom:var(--hair) solid var(--hairline);background:var(--chrome)}
 header .wrap{display:flex;align-items:center;gap:var(--sp-4);width:100%;padding-bottom:0}
+/* the spacer is the only thing in the header that gives, so the clock is not clipped */
+header .wrap>:not(.spacer){flex:none}
 .brand{display:flex;align-items:center;gap:var(--sp-2);font-size:var(--fs-lg);font-weight:var(--w-med)}
 .spacer{flex:1}
 button{font:inherit;color:var(--txt-dim);background:none;border:var(--hair) solid var(--hairline);

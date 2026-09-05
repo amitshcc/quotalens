@@ -207,3 +207,45 @@ def test_range_select_form_works_without_javascript(settings, store, secrets) ->
     assert submitted.status_code == 200
     assert 'data-lookback="1h" aria-current="true"' in submitted.text
     assert 'label class="lbl" for="range"' in html  # keyboard: a labelled native select
+
+
+def test_poll_now_lives_in_the_header_beside_the_clock(settings, store, secrets) -> None:
+    """It moved out of the chart toolbar, which sits below the fold on a short viewport.
+
+    `#polled` says how stale this is and the button makes it fresh: same concern, so
+    the reason to click is next to the click. Moved, not duplicated — two controls
+    doing one thing is worse than one in an awkward place.
+    """
+    with TestClient(create_app(settings, store, secrets)) as tc:
+        html = tc.get("/?range=6h").text
+
+    header = html.split("<header>")[1].split("</header>")[0]
+    toolbar = html.split('class="toolbar"')[1].split("</nav>")[0]
+
+    assert html.count('id="poll-form"') == 1, "moved, not duplicated"
+    assert 'id="poll-form"' in header and 'id="poll-form"' not in toolbar
+    # Beside the clock, and grouped with the other header button.
+    assert header.index('id="polled"') < header.index('id="poll-form"') < header.index('id="t"')
+    # A real form with a real action, so it still works with no JavaScript at all.
+    assert '<form method="post" action="/poll?range=6h"' in header
+    assert 'type="submit"' in header
+
+
+def test_the_cadence_controls_stay_in_the_toolbar(settings, store, secrets) -> None:
+    """Only the action moved. `auto/off/10s/...` is a setting about the poller."""
+    with TestClient(create_app(settings, store, secrets)) as tc:
+        toolbar = tc.get("/").text.split('class="toolbar"')[1].split("</nav>")[0]
+
+    for key in ("off", "10s", "30s", "1m", "5m"):
+        assert f'data-refresh="{key}"' in toolbar
+    assert 'aria-label="auto"' in toolbar  # the group's own legend
+    assert 'data-lookback="15m"' in toolbar and 'id="range-form"' in toolbar
+
+
+def test_the_form_still_redirects_for_a_browser_without_javascript(
+    settings, store, secrets
+) -> None:
+    with TestClient(create_app(settings, store, secrets)) as tc:
+        posted = tc.post("/poll?range=6h", follow_redirects=False)
+    assert posted.status_code == 303
+    assert posted.headers["location"] == "/?range=6h"
