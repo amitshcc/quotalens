@@ -12,8 +12,8 @@ from quotalens.config import (
     SettingsError,
     default_db_path,
     default_port,
-    normalise_profile,
     load_settings,
+    normalise_profile,
 )
 from quotalens.secrets import KEYRING_USERNAME, keyring_username
 

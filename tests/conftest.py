@@ -16,8 +16,8 @@ from urllib.parse import urlparse
 
 import pytest
 
-from quotalens.client import ClaudeClient, RawResponse, TransportError
 from quotalens import config as config_mod
+from quotalens.client import ClaudeClient, RawResponse, TransportError
 from quotalens.config import Settings
 from quotalens.secrets import MemorySecretStore, Redactor
 from quotalens.store import Store
