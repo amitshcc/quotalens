@@ -159,6 +159,10 @@ class Settings:
     # "this database predates the setting, so prune nothing yet" is represented.
     # See quotalens.retention.initial_retention.
     retention: str | None = None
+    # Off by default, matching the webhook's opt-in posture in alerts.py: a tool
+    # that pushes to your desktop without being asked has overstepped.
+    notify: bool = False
+    notify_thresholds: str = "50,75,90"
 
     def with_overrides(self, **kwargs: object) -> Settings:
         """Return a copy with the given non-``None`` fields replaced."""
@@ -291,6 +295,22 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "str",
         "how long detail rows are kept: 1week, 1month, 3months, 6months, 1year",
         lambda _p: None,  # unset until the first run decides; see retention.initial_retention
+    ),
+    ConfigKey(
+        "notify",
+        "notify",
+        "NOTIFY",
+        "bool",
+        "desktop notification when a window crosses a threshold",
+        lambda _p: False,
+    ),
+    ConfigKey(
+        "notify_thresholds",
+        "notify_thresholds",
+        "NOTIFY_THRESHOLDS",
+        "str",
+        "percentages that trigger a notification, comma separated",
+        lambda _p: "50,75,90",
     ),
     ConfigKey(
         "poll_enabled",

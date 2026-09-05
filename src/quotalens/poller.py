@@ -14,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from quotalens import retention
+from quotalens import notify, retention
 from quotalens.alerts import (
     ALERT_KIND,
     CLEARED_KIND,
@@ -188,6 +188,13 @@ class Poller:
         self._last_ignored: frozenset[str] = frozenset()
         self._last_prune_ts: float | None = None
         self._pruning = False
+        # Set by _check_boost every poll, read by the two checks after it. Declared
+        # here so a _check_boost that raised does not turn the next check into an
+        # AttributeError -- the reason line 467 was reaching for getattr.
+        self._rate_window_boosted = False
+        # Probed once at startup so the settings panel can disable the toggle
+        # *with the reason*, rather than offering a switch that does nothing.
+        self._notify_capability = notify.detect_capability()
         self._detector = ThresholdDetector(
             settings.burn_alert_pts_per_hour, firing=_alert_was_standing(store)
         )
@@ -359,6 +366,7 @@ class Poller:
         for name, check in (
             ("reset_model", self._check_reset_model),
             ("threshold", self._check_threshold),
+            ("notify", lambda n, pa: self._check_notify(n, previous, pa)),
         ):
             try:
                 check(now, parsed)
@@ -389,6 +397,50 @@ class Poller:
             if boost.window == RATE_WINDOW:
                 self._rate_window_boosted = True
 
+    def _check_notify(self, now: int, previous: list[QuotaRow], parsed: UsageParse) -> None:
+        """Desktop notification on a threshold crossing. An extra sink, never the only one.
+
+        The webhook fires from ``_check_threshold`` regardless of this; see
+        :mod:`quotalens.notify` for why that separation is load-bearing.
+        """
+        if not self._settings.notify or not self._notify_capability.available:
+            return
+        thresholds = notify.parse_thresholds(self._settings.notify_thresholds)
+        prior = {row.window: row for row in previous}
+        # One read for every window, rather than one per window per poll.
+        details = [e.detail for e in self._store.recent_events(limit=200, kind=notify.CROSSED_KIND)]
+        for reading in parsed.readings:
+            if reading.pct is None or reading.resets_at is None:
+                continue  # unknown, or a window with no reset: nothing to cross
+            if reading.window == RATE_WINDOW and self._rate_window_boosted:
+                continue  # the limit moved, not the usage; a boost is not consumption
+            was = prior.get(reading.window)
+            key = str(reading.resets_at)
+            fired = notify.fired_thresholds(details, reading.window, key)
+            previous_pct = (
+                was.pct if was is not None and was.resets_at == reading.resets_at else None
+            )
+            for level in notify.crossings(
+                pct=reading.pct,
+                previous_pct=previous_pct,
+                already_fired=fired,
+                thresholds=thresholds,
+            ):
+                crossing = notify.Crossing(
+                    window=reading.window,
+                    label=reading.label,
+                    threshold=level,
+                    pct=reading.pct,
+                    resets_at_text=_reset_clock(reading.resets_at),
+                    window_key=key,
+                )
+                # Recorded before delivery: a notification that was attempted and
+                # failed must not be retried on the next poll for the same crossing.
+                self._store.record_event(notify.CROSSED_KIND, crossing.event_detail, ts=now)
+                details.append(crossing.event_detail)
+                notify.send(crossing, self._notify_capability)
+                log.info("notified: %s", crossing.message())
+
     def _check_reset_model(self, now: int, parsed: UsageParse) -> None:
         """The session model is an inference; this is the check that it still holds."""
         current = next((r for r in parsed.readings if r.window == RATE_WINDOW), None)
@@ -416,7 +468,7 @@ class Poller:
         kind = self._detector.update(rate)
         if kind is None or rate is None:
             return
-        if kind == CLEARED_KIND and getattr(self, "_rate_window_boosted", False):
+        if kind == CLEARED_KIND and self._rate_window_boosted:
             # The rate collapsed because the limit was raised, not because anyone
             # stopped burning it. The detector's own state still clears — a later
             # crossing is a real one — but this is not a recovery to announce.
@@ -572,3 +624,15 @@ class Poller:
             return
         self._store.record_overage(now, spend)
         self.status.overage_available = True
+
+
+def _reset_clock(resets_at: str | None) -> str:
+    """Local HH:MM for a notification line; the raw string if it will not parse."""
+    from datetime import datetime
+
+    if not resets_at:
+        return "unknown"
+    try:
+        return datetime.fromisoformat(resets_at).astimezone().strftime("%H:%M")
+    except ValueError:
+        return resets_at

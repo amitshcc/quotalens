@@ -30,7 +30,7 @@ from quotalens.config import (
 PROBE = {"int": "4321", "float": "7.5", "str": "https://example.invalid/hook", "bool": "false"}
 # Keys whose values are constrained beyond their kind need a probe that validate()
 # will accept -- the point of the test is the loader, not the validator.
-PROBE_BY_KEY = {"retention": "1week"}
+PROBE_BY_KEY = {"retention": "1week", "notify_thresholds": "10,20"}
 
 
 @pytest.mark.parametrize("key", CONFIG_KEYS, ids=lambda k: k.name)
