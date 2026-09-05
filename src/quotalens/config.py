@@ -163,6 +163,10 @@ class Settings:
     # that pushes to your desktop without being asked has overstepped.
     notify: bool = False
     notify_thresholds: str = "50,75,90"
+    # On by default: it is one small GET per vendor every five minutes and it
+    # answers "is it them or me". Off must stop the requests, not hide the row.
+    status_row: bool = True
+    status_vendors: str = "claude,gemini,openai"
 
     def with_overrides(self, **kwargs: object) -> Settings:
         """Return a copy with the given non-``None`` fields replaced."""
@@ -311,6 +315,22 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "str",
         "percentages that trigger a notification, comma separated",
         lambda _p: "50,75,90",
+    ),
+    ConfigKey(
+        "status_row",
+        "status_row",
+        "STATUS_ROW",
+        "bool",
+        "show each vendor's own status page state in the side panel",
+        lambda _p: True,
+    ),
+    ConfigKey(
+        "status_vendors",
+        "status_vendors",
+        "STATUS_VENDORS",
+        "str",
+        "which vendors the status row covers, comma separated",
+        lambda _p: "claude,gemini,openai",
     ),
     ConfigKey(
         "poll_enabled",

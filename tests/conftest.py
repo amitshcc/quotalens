@@ -28,6 +28,23 @@ ORG = "org-1234-5678-abcd"
 
 
 @pytest.fixture(autouse=True)
+def _no_status_network(monkeypatch):
+    """No test reaches a vendor status page, for the same reason none reaches the API.
+
+    ``create_app`` starts the status watcher, and its first check is due
+    immediately -- so without this the suite makes real outbound requests to
+    three third parties and CI depends on their uptime. Rows render in the
+    "unable to check" state, which is the state most worth exercising anyway.
+    """
+    from quotalens import status as status_mod
+
+    def refuse(url, timeout_s=status_mod.CHECK_TIMEOUT_S):
+        raise AssertionError(f"a test tried to reach {url}")
+
+    monkeypatch.setattr(status_mod, "fetch", refuse)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_config(tmp_path_factory, monkeypatch):
     """Point ``default_data_dir()`` at a scratch directory for every test.
 

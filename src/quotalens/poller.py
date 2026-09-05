@@ -194,7 +194,7 @@ class Poller:
         self._rate_window_boosted = False
         # Probed once at startup so the settings panel can disable the toggle
         # *with the reason*, rather than offering a switch that does nothing.
-        self._notify_capability = notify.detect_capability()
+        self.notify_capability = notify.detect_capability()
         self._detector = ThresholdDetector(
             settings.burn_alert_pts_per_hour, firing=_alert_was_standing(store)
         )
@@ -397,13 +397,25 @@ class Poller:
             if boost.window == RATE_WINDOW:
                 self._rate_window_boosted = True
 
+    def adopt(self, settings: Settings) -> None:
+        """Take a new settings value without restarting.
+
+        The poller reads ``self._settings`` fresh on every tick, so replacing the
+        whole frozen value is enough for the interval, the sample cap, the
+        webhook, the notification thresholds and the retention period to be live
+        on the next poll -- which is what the settings panel claims per field.
+        The port and the database path are not here on purpose: neither can move
+        under a running server.
+        """
+        self._settings = settings
+
     def _check_notify(self, now: int, previous: list[QuotaRow], parsed: UsageParse) -> None:
         """Desktop notification on a threshold crossing. An extra sink, never the only one.
 
         The webhook fires from ``_check_threshold`` regardless of this; see
         :mod:`quotalens.notify` for why that separation is load-bearing.
         """
-        if not self._settings.notify or not self._notify_capability.available:
+        if not self._settings.notify or not self.notify_capability.available:
             return
         thresholds = notify.parse_thresholds(self._settings.notify_thresholds)
         prior = {row.window: row for row in previous}
@@ -438,7 +450,7 @@ class Poller:
                 # failed must not be retried on the next poll for the same crossing.
                 self._store.record_event(notify.CROSSED_KIND, crossing.event_detail, ts=now)
                 details.append(crossing.event_detail)
-                notify.send(crossing, self._notify_capability)
+                notify.send(crossing, self.notify_capability)
                 log.info("notified: %s", crossing.message())
 
     def _check_reset_model(self, now: int, parsed: UsageParse) -> None:

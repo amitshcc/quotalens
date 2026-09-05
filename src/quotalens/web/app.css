@@ -222,3 +222,25 @@ footer{margin-top:var(--sp-5);padding-top:var(--sp-3);border-top:var(--hair) sol
 
 @media (max-width:1000px){.meters{grid-template-columns:1fr}.cols{grid-template-columns:1fr}
   .side{border-left:0;padding-left:0}}
+
+/* vendor status: one row per vendor, the whole row is the external link */
+.vs{display:flex;justify-content:space-between;align-items:center;gap:var(--sp-3);
+  min-height:var(--row-h);font-size:var(--fs-sm);color:var(--txt-dim);text-decoration:none}
+.vs:hover{text-decoration:underline}
+.vst{display:inline-flex;align-items:center;gap:6px;font-family:var(--font-num)}
+.vdot{width:6px;height:6px;border-radius:50%;background:var(--st-ok)}
+
+/* settings: reuses .screen, .cap, .far and .rule; only the form grid is new */
+.fform{display:grid;gap:var(--sp-3);max-width:66ch}
+.fld{display:grid;grid-template-columns:16ch 1fr;gap:2px var(--sp-3);align-items:baseline}
+.fld label{color:var(--txt-dim);font-size:var(--fs-sm)}
+.fld input[type=text]{grid-column:2;font:inherit;font-family:var(--font-num);
+  padding:4px 6px;border:var(--hair) solid var(--hairline);background:transparent;color:var(--txt)}
+.fld .far,.fld .ferr{grid-column:2;font-size:var(--fs-xs)}
+.fld.is-bad input{border-color:var(--st-critical)}
+.ferr{color:var(--st-critical)}
+.fld code{grid-column:2;font-size:var(--fs-sm);color:var(--txt-dim);word-break:break-all}
+.ropt{display:grid;grid-template-columns:auto 12ch 1fr;gap:var(--sp-3);align-items:baseline;
+  font-size:var(--fs-sm)}
+.rsize{font-family:var(--font-num);color:var(--txt-dim)}
+.rexp{font-size:var(--fs-sm)}

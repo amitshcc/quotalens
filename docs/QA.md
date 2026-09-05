@@ -349,3 +349,21 @@ probably not without help).
       "I cannot derive this" as "this did not happen". `rebuild` now takes
       `keep_underivable`, true at startup and false for `forget`/`rescan`, where
       deleting the derived row is the point. Two tests pin both directions.
+- 2026-09-06: the settings panel labelled every field "takes effect on the next poll"
+      and that was false for all of them. `Settings` is frozen and was captured in
+      `create_app`'s closure, so saving a poll interval wrote `config.json` and changed
+      nothing until a restart — verified: /api/health still said 60 after saving 120.
+      Rather than relabel the fields, routes now read `state.settings` and the save
+      handler replaces it and calls `poller.adopt()`, so the claim is true. The port
+      and database path are deliberately excluded: neither can move under a running
+      server, which is why they are the read-only block.
+- 2026-09-06: `create_app` starts the vendor status watcher and its first check is due
+      immediately, so the whole test suite was making real outbound requests to three
+      third parties. Nothing failed — the watcher swallows errors by design — which is
+      exactly why it went unnoticed. conftest now refuses `status.fetch` for every
+      test, the same rule that already forbade reaching the provider API.
+- 2026-09-06: the vendor status feeds failed with CERTIFICATE_VERIFY_FAILED through
+      stdlib `urllib`, which uses the interpreter's trust store; this Python has none.
+      Every row would have read "unreachable" forever, blaming three vendors for a
+      local misconfiguration. Now fetched through `curl_cffi`, already a dependency
+      for the provider client and shipping its own CA bundle.

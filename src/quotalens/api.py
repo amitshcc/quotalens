@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from dataclasses import field as dc_field
 from importlib import resources
+from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import (
@@ -19,9 +24,15 @@ from fastapi.responses import (
     StreamingResponse,
 )
 
-from quotalens import __version__
+from quotalens import __version__, retention
 from quotalens.burn import burn_rate
-from quotalens.config import Settings
+from quotalens.config import (
+    Settings,
+    config_path,
+    load_settings,
+    read_config_file,
+    write_config_file,
+)
 from quotalens.dashboard import (
     as_json,
     build_dashboard,
@@ -41,14 +52,21 @@ from quotalens.metrics import CONTENT_TYPE as METRICS_CONTENT_TYPE
 from quotalens.metrics import collect as collect_metrics
 from quotalens.metrics import render as render_metrics
 from quotalens.poller import ClientFactory, Poller, spend_as_dict
-from quotalens.render import favicon_svg, render_app, render_page
+from quotalens.render import favicon_svg, render_app, render_page, render_settings_page
 from quotalens.secrets import Redactor, SecretStore, global_redactor
 from quotalens.sessions import rebuild as rebuild_sessions
+from quotalens.settings_view import apply_form, build_view, shrink_impact
 from quotalens.state import collector_state
+from quotalens.status import StatusWatcher, selected_vendors
 from quotalens.store import Store
 from quotalens.views import ViewOptions, parse_view
 
 log = logging.getLogger(__name__)
+
+# How often the watcher wakes to ask whether a check is due. Short enough
+# that shutdown is prompt, and the due() check is what enforces the real
+# 5-minute interval.
+STATUS_TICK_S = 5
 
 MAX_SERIES_HOURS = 24 * 90
 MAX_LOOKBACK_MIN = 24 * 60
@@ -67,10 +85,55 @@ def _static_bytes(name: str) -> bytes:
 
 @dataclass
 class AppState:
+    """The live objects a request reads.
+
+    ``settings`` is mutable *here* and frozen everywhere else: the panel replaces
+    the whole value, and every route reads it through this rather than closing
+    over the one captured at startup. Without that, saving a poll interval wrote
+    the file and changed nothing until a restart, while the panel said it took
+    effect on the next poll -- which was the wrong half of "state which settings
+    are live and which need a restart".
+    """
+
     settings: Settings
     store: Store
     poller: Poller
     redactor: Redactor
+    watcher: StatusWatcher | None = None
+    # Strong references to fire-and-forget tasks; without them the event loop
+    # only holds a weak one and a prune can be collected part-way through.
+    background: set[asyncio.Task[None]] = dc_field(default_factory=set)
+
+
+async def _form(request: Request) -> dict[str, str]:
+    """Parse an urlencoded form body without ``python-multipart``.
+
+    ``request.form()`` pulls in a fifth runtime dependency for one form. An HTML
+    ``<form>`` with no ``enctype`` always posts ``application/x-www-form-urlencoded``,
+    and the stdlib already parses that, so the dependency buys nothing here.
+    """
+    body = (await request.body()).decode("utf-8", errors="replace")
+    return dict(parse_qsl(body, keep_blank_values=True))
+
+
+async def _watch_status(watcher: StatusWatcher) -> None:
+    """The vendor status feeds, on their own timer.
+
+    A separate task from the poller on purpose. A status check must never delay,
+    block or fail a quota poll -- that is the one job this tool has -- so the
+    fetch runs in a worker thread and nothing on the request path ever waits on
+    it. The dashboard reads the cache, which is always instant.
+    """
+    while True:
+        try:
+            now = int(time.time())
+            if watcher.due(now):
+                await asyncio.to_thread(watcher.check_all, now)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # never take the app down for a third party's status page
+            log.debug("status watcher iteration failed", exc_info=True)
+        await asyncio.sleep(STATUS_TICK_S)
 
 
 def create_app(
@@ -80,9 +143,16 @@ def create_app(
     *,
     redactor: Redactor | None = None,
     client_factory: ClientFactory | None = None,
+    # Where config.json lives. None means the default data directory; a scratch
+    # instance passes its own so the panel cannot write the real one.
+    config_dir: Path | None = None,
 ) -> FastAPI:
     redactor = redactor or global_redactor()
     poller = Poller(settings, store, secrets, redactor, client_factory=client_factory)
+    watcher = StatusWatcher(
+        enabled=settings.status_row,
+        vendors=selected_vendors(settings.status_vendors),
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -91,9 +161,13 @@ def create_app(
         rebuild_sessions(store, int(time.time()), keep_underivable=True)
         if settings.poll_enabled:
             poller.start()
+        status_task = asyncio.create_task(_watch_status(watcher))
         try:
             yield
         finally:
+            status_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await status_task
             await poller.stop()
 
     app = FastAPI(
@@ -103,7 +177,7 @@ def create_app(
         docs_url="/api/docs",
         redoc_url=None,
     )
-    state = AppState(settings, store, poller, redactor)
+    state = AppState(settings, store, poller, redactor, watcher)
     app.state.qw = state
 
     @app.exception_handler(Exception)
@@ -121,9 +195,11 @@ def create_app(
             state.store,
             state.poller.status,
             int(time.time()),
-            settings.burn_alert_pts_per_hour,
+            state.settings.burn_alert_pts_per_hour,
             view,
             cooldown_s=state.poller.cooldown_remaining(),
+            # From the in-memory cache only: rendering never waits on a network call.
+            vendor_status=watcher.rows(),
         )
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
@@ -155,6 +231,80 @@ def create_app(
             "last_success_ts": after,
             "sample_ts": after if accepted and after != before else None,
         }
+
+    @app.get("/settings", response_class=HTMLResponse, include_in_schema=False)
+    def settings_page() -> HTMLResponse:
+        view = build_view(state.settings, state.store, state.poller.notify_capability)
+        return HTMLResponse(render_settings_page(view), headers={"Cache-Control": "no-store"})
+
+    @app.post("/settings", include_in_schema=False)
+    async def settings_save(request: Request) -> Response:
+        """Validate server-side, then redirect. No client-side state layer."""
+        form = await _form(request)
+        errors, values = apply_form(
+            state.settings, form, config_path(state.settings.profile, config_dir)
+        )
+        if not errors:
+            state.settings = load_settings(
+                state.settings.profile, data_dir=config_dir
+            ).with_overrides(db_path=state.settings.db_path)
+            state.poller.adopt(state.settings)
+            watcher.enabled = state.settings.status_row
+            watcher.vendors = selected_vendors(state.settings.status_vendors)
+        if errors:
+            # Redisplay what was typed with the real message beside the field,
+            # rather than clamping a bad value and saying nothing.
+            view = build_view(
+                state.settings,
+                state.store,
+                state.poller.notify_capability,
+                errors=errors,
+                values=values,
+            )
+            return HTMLResponse(render_settings_page(view), status_code=400)
+        return RedirectResponse(url="/settings?saved=1", status_code=303)
+
+    @app.post("/settings/retention", include_in_schema=False)
+    async def settings_retention(request: Request) -> Response:
+        """Shortening retention is irreversible, so it needs its own confirm."""
+        form = await _form(request)
+        chosen = str(form.get("retention") or "")
+        try:
+            retention.option(chosen)
+        except ValueError as exc:
+            view = build_view(
+                state.settings,
+                state.store,
+                state.poller.notify_capability,
+                errors={"retention": str(exc)},
+            )
+            return HTMLResponse(render_settings_page(view), status_code=400)
+
+        impact = shrink_impact(state.store, state.settings.retention, chosen)
+        if impact and not form.get("confirm"):
+            rows, span = impact
+            view = build_view(state.settings, state.store, state.poller.notify_capability)
+            view = replace(
+                view,
+                shrink_rows=rows,
+                shrink_span=span,
+                values={**view.values, "retention": chosen},
+            )
+            return HTMLResponse(render_settings_page(view), status_code=400)
+
+        path = config_path(state.settings.profile, config_dir)
+        stored = read_config_file(path)
+        stored["retention"] = chosen
+        write_config_file(path, stored)
+        state.settings = state.settings.with_overrides(retention=chosen)
+        state.poller.adopt(state.settings)
+        # Never inside the request the panel is waiting on: VACUUM takes an
+        # exclusive lock and rewrites the file. Held in app.state so the task is
+        # not garbage collected mid-prune.
+        task = asyncio.create_task(asyncio.to_thread(state.poller.prune_now, int(time.time())))
+        state.background.add(task)
+        task.add_done_callback(state.background.discard)
+        return RedirectResponse(url="/settings?saved=1", status_code=303)
 
     @app.post("/poll", include_in_schema=False)
     async def force_poll_form(request: Request) -> RedirectResponse:
@@ -232,7 +382,7 @@ def create_app(
         stream = csv_stream if fmt == "csv" else json_stream
         unmasked = bool(raw)
         media = "text/csv; charset=utf-8" if fmt == "csv" else "application/json"
-        name = filename(spec, fmt, settings.profile)
+        name = filename(spec, fmt, state.settings.profile)
         headers = {"Content-Disposition": f'attachment; filename="{name}"'}
         if spec.raw or (spec.mask and unmasked):
             headers["X-QuotaLens-Warning"] = RAW_WARNING
@@ -248,7 +398,7 @@ def create_app(
         never_polled = poller_status.state == "starting" and not counts["quota"]
         overall = "never_polled" if never_polled else poller_status.state
         now = int(time.time())
-        collector = collector_state(poller_status, settings.poll_interval_s, now)
+        collector = collector_state(poller_status, state.settings.poll_interval_s, now)
         return {
             "status": overall,
             "version": __version__,
@@ -261,12 +411,12 @@ def create_app(
                 "message": collector.message,
             },
             "poller": poller_status.as_dict(),
-            "poll_interval_s": settings.poll_interval_s,
+            "poll_interval_s": state.settings.poll_interval_s,
             "store": {"db_path": str(state.store.path), "rows": counts},
             "diagnostics": poller_status.diagnostics(),
             "recent_events": events,
             "note": (
-                f"Uses undocumented {settings.provider.host} endpoints; a parse_failed "
+                f"Uses undocumented {state.settings.provider.host} endpoints; a parse_failed "
                 "or shape_drift event means the response shape changed. "
                 "Run `quotalens probe`."
             ),
@@ -287,7 +437,7 @@ def create_app(
         readings = []
         for r in rows:
             lapsed = window_has_lapsed(r, now)
-            stale = window_is_stale(r, settings.poll_interval_s, now)
+            stale = window_is_stale(r, state.settings.poll_interval_s, now)
             current = not lapsed and not stale
             reading = {**r.as_dict(), "display": display_label(r.window, r.label)}
             reading.update(

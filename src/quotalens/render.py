@@ -7,9 +7,9 @@ from functools import lru_cache
 from html import escape as e
 from importlib import resources
 
-from quotalens import __version__
+from quotalens import __version__, retention, status
 from quotalens.alerts import ALERT_KIND
-from quotalens.config import CLAUDE, Provider
+from quotalens.config import CLAUDE, MIN_POLL_INTERVAL_S, Provider
 from quotalens.dashboard import (
     CHART_H,
     CHART_W,
@@ -24,6 +24,8 @@ from quotalens.dashboard import (
     clock,
 )
 from quotalens.runway import fmt_span
+from quotalens.settings_view import SettingsView
+from quotalens.status import VendorStatus
 from quotalens.views import AUTO, RANGE_KEYS
 
 ICONS = (
@@ -41,6 +43,13 @@ ICONS = (
     'M11.5 4.5 12.7 3.3M4.5 4.5 3.3 3.3M11.5 11.5l1.2 1.2M4.5 11.5l-1.2 1.2"/></symbol>'
     '<symbol id="i-moon" viewBox="0 0 16 16">'
     '<path d="M9.9 2.7a5.6 5.6 0 1 0 3.4 8.9A5.6 5.6 0 0 1 9.9 2.7Z"/></symbol>'
+    # Sliders, not a gear: three tracks and three knobs is the same vocabulary as
+    # i-sun and i-rate -- straight strokes and small circles -- where a gear's
+    # teeth are a different drawing language at 16px and read as noise.
+    '<symbol id="i-settings" viewBox="0 0 16 16">'
+    '<path d="M2 4.4h3.1M8.3 4.4H14M2 8h6.3M11.5 8H14M2 11.6h2.2M7.4 11.6H14"/>'
+    '<circle cx="6.7" cy="4.4" r="1.6"/><circle cx="9.9" cy="8" r="1.6"/>'
+    '<circle cx="5.8" cy="11.6" r="1.6"/></symbol>'
     '<pattern id="gap" width="6" height="6" patternUnits="userSpaceOnUse" '
     'patternTransform="rotate(-45)"><line x1="0" y1="0" x2="0" y2="6" '
     'stroke="var(--st-stale)" stroke-width="1.2" opacity=".45"/></pattern>'
@@ -201,6 +210,27 @@ def chip(kind: str, text: str) -> str:
     )
 
 
+def render_settings_page(view: SettingsView) -> str:
+    """The same shell, so the settings page inherits the theme and the tokens."""
+    return (
+        '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">\n'
+        "<title>QuotaLens settings</title>\n"
+        '<link rel="icon" href="/favicon.svg" type="image/svg+xml">\n'
+        '<link rel="stylesheet" href="/static/tokens.css">\n'
+        '<link rel="stylesheet" href="/static/app.css">\n'
+        '<script src="/static/app.js"></script>\n'
+        "</head>\n<body>\n" + ICONS + '\n<div id="app"><div class="wrap">'
+        '<header><div class="wrap"><a href="/" id="back">QuotaLens</a>'
+        '<span class="spacer"></span>'
+        '<button id="t" type="button" aria-label="Switch theme">'
+        '<svg class="ic ic-sun" aria-hidden="true"><use href="#i-sun"/></svg>'
+        '<svg class="ic ic-moon" aria-hidden="true"><use href="#i-moon"/></svg>'
+        "theme</button></div></header>" + render_settings(view) + "</div></div>\n"
+        "</body>\n</html>\n"
+    )
+
+
 def render_page(dash: Dashboard) -> str:
     return (
         '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
@@ -253,6 +283,10 @@ def _header(dash: Dashboard) -> str:
         '<span id="poll-label">poll now</span></button></form>'
         # Both icons ship; CSS shows the one for the theme a click would give you,
         # because the theme is settled in the browser and the server cannot know it.
+        # No el-link: that class is the SPA's "re-render this fragment in place"
+        # list, and /settings is a page, not a fragment of this one.
+        '<a href="/settings" id="settings-link" title="Settings">'
+        '<svg class="ic" aria-hidden="true"><use href="#i-settings"/></svg>settings</a>'
         '<button id="t" type="button" aria-label="Switch theme">'
         '<svg class="ic ic-sun" aria-hidden="true"><use href="#i-sun"/></svg>'
         '<svg class="ic ic-moon" aria-hidden="true"><use href="#i-moon"/></svg>theme</button>'
@@ -851,7 +885,56 @@ def _side(dash: Dashboard) -> str:
         diag = '<div class="rule"></div><dl><dt>Diagnostics</dt><dd></dd></dl>' + "".join(
             f'<p class="far">{e(d)}</p>' for d in dash.diagnostics
         )
-    return f'<aside class="side"><dl>{rows}</dl>{spend}{diag}{_events_block(dash)}</aside>'
+    return (
+        f'<aside class="side"><dl>{rows}</dl>{spend}'
+        f"{_status_rows(dash.vendor_status)}{diag}{_events_block(dash)}</aside>"
+    )
+
+
+def _status_rows(rows: list[VendorStatus]) -> str:
+    """One line per vendor: name, chip or dot, state word. The whole row links out.
+
+    Not in the header: the header carries this machine's collector state, and a
+    vendor being down is a different class of fact from our own poller failing.
+
+    The states reuse `chip()` rather than inventing four coloured circles, so
+    each keeps the second channel DESIGN.md 5 already gave it -- filled for
+    elevated, outlined plus i-alert for critical, dashed and hatched for stale --
+    and the row stays legible to a red-green dichromat.
+
+    `--st-ok` appears only as a small dot beside the word "ok", which is the one
+    use tokens.css licenses. If space ever runs short, the dot goes and the word
+    stays: the word is the channel that works for everyone.
+
+    The link is present in all four states, and matters most where we have
+    nothing. "Unable to check" is not a dead end -- it is a row that says so and
+    a click to the page that can answer. For Gemini that link *is* the feature.
+    """
+    if not rows:
+        return ""
+    out = []
+    for row in rows:
+        if row.state == status.OK:
+            mark = f'<span class="vdot"></span>{e(row.word)}'
+        elif row.state == status.DEGRADED:
+            mark = chip("elevated", row.word)
+        elif row.state == status.OUTAGE:
+            mark = chip("critical", row.word)
+        elif row.state == status.UNKNOWN:
+            mark = chip("stale", row.word) + f'<span class="far">{e(row.detail)}</span>'
+        else:
+            mark = e(row.word)
+        out.append(
+            # Carries no class the SPA click handler delegates on -- see the
+            # comment on that handler in app.js. This link is meant to leave.
+            # rel=noopener noreferrer: a third-party page gets no handle on the
+            # tab it was opened from.
+            f'<a class="vs" href="{e(row.vendor.page_url)}" target="_blank" '
+            f'rel="noopener noreferrer external" title="{e(row.title)}">'
+            f"<span>{e(row.vendor.display_name)}</span>"
+            f'<span class="vst">{mark}</span></a>'
+        )
+    return '<div class="rule"></div><p class="cap">Vendor status</p>' + "".join(out)
 
 
 def _footer(dash: Dashboard) -> str:
@@ -860,4 +943,195 @@ def _footer(dash: Dashboard) -> str:
         f'<span><span class="far">Address</span> {e(dash.footer["bind"])}</span>'
         f'<span><span class="far">Database</span> {e(dash.footer["db"])}</span>'
         f"<span>QuotaLens {e(__version__)}</span></footer>"
+    )
+
+
+def _field(
+    key: str,
+    label: str,
+    value: str,
+    *,
+    note: str,
+    error: str = "",
+    kind: str = "text",
+    effect: str = "live",
+) -> str:
+    """One labelled input, its note, and its error if the server refused it.
+
+    ``effect`` says whether the value is picked up live or needs a restart.
+    Guessing is worse than either, so every field states one.
+    """
+    when = "takes effect on the next poll" if effect == "live" else "needs a restart"
+    err = f'<span class="ferr">{e(error)}</span>' if error else ""
+    if kind == "checkbox":
+        box = (
+            f'<input type="checkbox" name="{e(key)}" id="f-{e(key)}" value="1"'
+            f"{' checked' if value == '1' else ''}>"
+        )
+    else:
+        box = f'<input type="text" name="{e(key)}" id="f-{e(key)}" value="{e(value)}">'
+    return (
+        f'<div class="fld{" is-bad" if error else ""}">'
+        f'<label for="f-{e(key)}">{e(label)}</label>{box}'
+        f'<span class="far">{e(note)} · {when}</span>{err}</div>'
+    )
+
+
+def _readonly(label: str, value: str, why: str) -> str:
+    """A setting the panel deliberately does not offer, and the reason."""
+    return (
+        f'<div class="fld is-ro"><label>{e(label)}</label>'
+        f'<code>{e(value)}</code><span class="far">{e(why)}</span></div>'
+    )
+
+
+def render_settings(view: SettingsView) -> str:
+    """The settings page: a real form that works with JavaScript switched off.
+
+    Everything on this dashboard is a form first and enhanced afterwards, and
+    this does not get to be the exception. It posts, the server validates with
+    the same ``validate()`` the CLI runs, and it redirects back -- so a refusal
+    shows the real message beside the field rather than clamping the value and
+    saying nothing.
+    """
+    err = view.errors
+    body = [
+        '<section class="screen"><p class="cap">Collector</p><form method="post" '
+        'action="/settings" class="fform">',
+        _field(
+            "interval",
+            "Poll interval",
+            view.values["interval"],
+            note=f"seconds; minimum {MIN_POLL_INTERVAL_S}, because polling faster "
+            "invites rate limiting",
+            error=err.get("interval", ""),
+        ),
+        _field(
+            "lookback",
+            "Burn lookback",
+            view.values["lookback"],
+            note="minutes of history the burn rate is measured over",
+            error=err.get("lookback", ""),
+        ),
+        _field(
+            "burn_alert",
+            "Burn alert threshold",
+            view.values["burn_alert"],
+            note="points per hour",
+            error=err.get("burn_alert", ""),
+        ),
+        _field(
+            "sample_keep",
+            "Raw payloads kept",
+            view.values["sample_keep"],
+            note="a row cap on the drift record, independent of retention",
+            error=err.get("sample_keep", ""),
+        ),
+        _field(
+            "webhook_url",
+            "Webhook URL",
+            view.values["webhook_url"],
+            note="opt-in; one POST per crossing, no account identifier, no cookie",
+            error=err.get("webhook_url", ""),
+        ),
+        '<p class="cap">Notifications</p>',
+    ]
+    if view.notify_capability.available:
+        body.append(
+            _field(
+                "notify",
+                "Desktop notification",
+                view.values["notify"],
+                note="when a window crosses a threshold",
+                kind="checkbox",
+            )
+        )
+    else:
+        body.append(
+            _readonly(
+                "Desktop notification",
+                "unavailable",
+                # Disabled with the reason, never an on switch that does nothing.
+                f"{view.notify_capability.reason} The webhook still fires.",
+            )
+        )
+    body += [
+        _field(
+            "notify_thresholds",
+            "Thresholds",
+            view.values["notify_thresholds"],
+            note="percentages, comma separated",
+            error=err.get("notify_thresholds", ""),
+        ),
+        '<p class="cap">Vendor status</p>',
+        _field(
+            "status_row",
+            "Show vendor status",
+            view.values["status_row"],
+            note="one plain GET per vendor every 5 minutes; off stops the requests",
+            kind="checkbox",
+        ),
+        _field(
+            "status_vendors",
+            "Vendors",
+            view.values["status_vendors"],
+            note="comma separated: " + ", ".join(v.key for v in status.VENDORS),
+        ),
+        '<p class="cap">Set from the command line only</p>',
+        _readonly(
+            "Port",
+            str(view.port),
+            "this page is served on it, so a change here would never reach you. "
+            "Use: quotalens config set port <n>",
+        ),
+        _readonly("Database", str(view.db_path), "use: quotalens serve --db <path>"),
+        _readonly(
+            "Session cookie",
+            "in the OS keyring",
+            "never in a config file, so the file stays safe to paste into an issue. "
+            "Use: quotalens auth",
+        ),
+        '<button type="submit">Save</button></form></section>',
+        _retention_block(view),
+    ]
+    return "".join(body)
+
+
+def _retention_block(view: SettingsView) -> str:
+    """Its own block, under a rule: it is the only setting here that destroys data."""
+    current = view.values["retention"]
+    options = []
+    for est in view.estimates:
+        size = retention.format_bytes(est.bytes)
+        note = f" — {est.reason}" if est.bytes is None else ""
+        selected = " checked" if est.option.key == current else ""
+        options.append(
+            f'<label class="ropt"><input type="radio" name="retention" '
+            f'value="{e(est.option.key)}"{selected}>'
+            f"<span>{e(est.option.label)}</span>"
+            f'<span class="rsize">≈ {e(size)}{e(note)}</span></label>'
+        )
+    warn = ""
+    if view.shrink_rows is not None:
+        warn = (
+            f'<p class="ferr">This shortens retention. It would delete '
+            f"{view.shrink_rows:,} rows and roughly {e(view.shrink_span)} of history, "
+            f"permanently. Export first if you want them.</p>"
+        )
+    return (
+        '<section class="screen"><div class="rule"></div>'
+        '<p class="cap">How long data is kept</p>'
+        '<form method="post" action="/settings/retention" class="fform">'
+        + "".join(options)
+        + '<p class="far">Sizes are measured from this database’s own rates, not '
+        "shipped figures. Session windows and events are kept for two years "
+        "regardless: the weekly budget table reads them, and a year of both is "
+        "under 2,000 rows.</p>"
+        + warn
+        + '<p class="far">Raw payloads are capped separately by a row count, which '
+        "is why even the shortest period has a floor.</p>"
+        '<a class="rexp" href="/api/export/quota.csv">Export first</a>'
+        '<label class="ropt"><input type="checkbox" name="confirm" value="1">'
+        "<span>I understand this deletes data permanently</span></label>"
+        '<button type="submit">Apply retention</button></form></section>'
     )

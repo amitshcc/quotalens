@@ -265,9 +265,20 @@ def test_page_renders_offline_with_no_external_resources(settings, store, secret
         css = tc.get("/static/app.css").text
     assert "<title>QuotaLens</title>" in html
     assert "font-variant-numeric" in css
-    assert not re.search(r'(src|href)="https?://', html)
+    # No external *resource*: nothing the browser fetches to render the page.
+    # Navigable links are a different thing -- the vendor status rows point at
+    # status.claude.com on purpose -- so this checks the tags that load, and
+    # separately that every remaining external URL is an <a> the reader clicks.
+    assert not re.search(r"<(script|link|img|iframe|source)\b[^>]*https?://", html)
+    assert not re.search(r'url\(\s*["\']?https?://', html)
+    external = re.findall(r'<(\w+)[^>]*href="https?://[^"]*"', html)
+    assert set(external) <= {"a"}, external
+    # Every one of them leaves, and hands the third party no handle on this tab.
+    for anchor in re.findall(r'<a[^>]*href="https?://[^"]*"[^>]*>', html):
+        assert 'target="_blank"' in anchor
+        assert "noopener" in anchor and "noreferrer" in anchor
     assert "<img" not in html
-    assert '<symbol id="i-alert"' in html and html.count("<symbol") == 6
+    assert '<symbol id="i-alert"' in html and html.count("<symbol") == 7
     # The theme button ships both faces and CSS picks one: the server cannot know
     # which theme the browser settled on.
     assert '<use href="#i-sun"' in html and '<use href="#i-moon"' in html

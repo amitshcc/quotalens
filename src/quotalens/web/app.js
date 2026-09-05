@@ -148,6 +148,11 @@
     navigate(q ? "/?" + q : "/", true);
   }
 
+  // Every selector here is an *internal* link whose fragment we re-render in
+  // place. External rows (a.vs, the vendor status links) must never be listed:
+  // they carry target="_blank" and are meant to leave. Adding a class to this
+  // list is adding it to "the SPA swallows this click", so check what the link
+  // is for before you extend it.
   document.addEventListener("click", function (ev) {
     var target = ev.target.closest ? ev.target.closest("#t, a.rb, a.el-link, a.sess, th a[data-sort]") : null;
     if (!target) return;

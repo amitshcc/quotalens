@@ -103,6 +103,34 @@ the settings live on, so changing it from that page means the response never
 arrives. The **cookie** is a secret and belongs in the keyring. Everything else
 can be set either way.
 
+## Settings, from the dashboard
+
+The gear in the header opens `/settings`: poll interval, burn thresholds,
+retention, webhook, notifications and the vendor status row. It is a plain form
+that **works with JavaScript switched off**, validates on the server with the
+same rules the CLI uses, and shows the real error beside the field rather than
+quietly clamping a bad value. Each field says whether it takes effect on the
+next poll or needs a restart.
+
+The port, the database path and the cookie are shown read-only, with the command
+that changes each. The port is the address of the page you are looking at.
+
+## Vendor status
+
+A row per vendor in the side panel — Claude, Gemini, OpenAI — reading each
+vendor's own status page. The whole row is a link to that page, in a new tab.
+
+**This is the only outbound traffic to anyone other than your provider**: one
+plain GET per vendor every five minutes, no cookie, no identifier, no query
+string. It is on by default and `quotalens config set status_row false` turns it
+off, which stops the requests rather than hiding the row.
+
+Gemini permanently reads **"— no public status API"**. Google ships no
+machine-readable feed for AI Studio, and Google Cloud's product feed covers
+Vertex AI, which is a different surface with a different availability record.
+Showing that under a Gemini label would be a confident wrong answer, so the row
+says it does not know and the click takes you to the page that does.
+
 ## Two accounts
 
 A profile is a second account. It gets its own keyring entry, its own database,

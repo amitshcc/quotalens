@@ -1,0 +1,210 @@
+"""The vendor status row, and the settings panel that configures it."""
+
+from __future__ import annotations
+
+import re
+
+from fastapi.testclient import TestClient
+
+from quotalens import status
+from quotalens.api import create_app
+from quotalens.config import CONFIG_KEYS_BY_NAME, config_path, read_config_file
+from quotalens.settings_view import PANEL_KEYS
+
+OK_PAYLOAD = {"status": {"indicator": "none", "description": "All Systems Operational"}}
+
+
+def _form(**over: str) -> dict[str, str]:
+    base = {
+        "interval": "60",
+        "lookback": "15",
+        "burn_alert": "20.0",
+        "sample_keep": "20000",
+        "webhook_url": "",
+        "notify_thresholds": "50,75,90",
+        "status_vendors": "claude,gemini,openai",
+        "status_row": "1",
+    }
+    return {**base, **over}
+
+
+# -- the status row -------------------------------------------------------------
+
+
+def test_a_vendor_with_no_feed_makes_no_request_at_all() -> None:
+    """Not a request that fails and is reported as unreachable: a different claim."""
+    asked: list[str] = []
+    watcher = status.StatusWatcher()
+    watcher.check_all(1000, fetcher=lambda url: asked.append(url) or OK_PAYLOAD)
+    assert not any("aistudio" in url for url in asked)
+    gemini = next(r for r in watcher.rows() if r.vendor.key == "gemini")
+    assert gemini.state == status.UNKNOWN and gemini.detail == status.NO_API_REASON
+
+
+def test_an_unrecognised_indicator_is_unknown_not_healthy() -> None:
+    """Guessing healthy from a shape we do not understand is the one fatal error."""
+    state, why = status.parse_statuspage({"status": {"indicator": "brand_new"}})
+    assert state == status.UNKNOWN and "brand_new" in why
+    assert status.parse_statuspage({})[0] == status.UNKNOWN
+    assert status.parse_statuspage("nonsense")[0] == status.UNKNOWN
+
+
+def test_the_four_indicators_map_to_the_design_states() -> None:
+    assert status.INDICATOR_STATE["none"] == status.OK
+    assert status.INDICATOR_STATE["minor"] == status.DEGRADED
+    assert status.INDICATOR_STATE["major"] == status.INDICATOR_STATE["critical"] == status.OUTAGE
+    assert status.INDICATOR_STATE["maintenance"] == status.MAINTENANCE
+
+
+def test_one_dropped_packet_is_not_an_outage() -> None:
+    watcher = status.StatusWatcher()
+    watcher.check_all(1000, fetcher=lambda _u: OK_PAYLOAD)
+    assert all(r.state == status.OK for r in watcher.rows() if r.vendor.api_url)
+
+    def drop(_url):
+        raise OSError("connection reset")
+
+    watcher.check_all(2000, fetcher=drop)  # first failure: keep the last answer
+    assert all(r.state == status.OK for r in watcher.rows() if r.vendor.api_url)
+    watcher.check_all(3000, fetcher=drop)  # second: now say we cannot tell
+    assert all(
+        r.state == status.UNKNOWN and r.detail == status.UNREACHABLE_REASON
+        for r in watcher.rows()
+        if r.vendor.api_url
+    )
+
+
+def test_turning_it_off_stops_the_requests_not_just_the_row() -> None:
+    """A user who chose a loopback-only tool is entitled to that being literal."""
+    asked: list[str] = []
+    watcher = status.StatusWatcher(enabled=False)
+    watcher.check_all(1000, fetcher=lambda url: asked.append(url) or OK_PAYLOAD)
+    assert asked == [] and watcher.rows() == [] and not watcher.due(999_999)
+
+
+def test_the_rows_render_as_links_that_leave(settings, store, secrets) -> None:
+    app = create_app(settings, store, secrets)
+    with TestClient(app) as tc:
+        html = tc.get("/").text
+    rows = re.findall(r'<a class="vs"[^>]*>', html)
+    assert len(rows) == 3
+    for row in rows:
+        assert 'target="_blank"' in row
+        assert "noopener" in row and "noreferrer" in row
+        # None of the classes app.js delegates on, or the SPA eats the click.
+        for swallowed in ("rb", "el-link", "sess"):
+            assert f'class="vs {swallowed}' not in row and f'{swallowed} vs"' not in row
+    for vendor in status.VENDORS:
+        assert f'href="{vendor.page_url}"' in html
+
+
+def test_the_unknown_row_still_links_and_says_why(settings, store, secrets) -> None:
+    """ "Unable to check" is not a dead end; for Gemini the link is the feature."""
+    app = create_app(settings, store, secrets)
+    with TestClient(app) as tc:
+        html = tc.get("/").text
+    row = re.search(r'<a class="vs"[^>]*aistudio[^>]*>(.*?)</a>', html, re.S)
+    assert row is not None
+    assert "no public status API" in row.group(1)
+    assert "—" in row.group(1)
+
+
+# -- the settings panel ---------------------------------------------------------
+
+
+def test_the_panel_saves_without_javascript(settings, store, secrets, tmp_path) -> None:
+    app = create_app(settings, store, secrets, config_dir=tmp_path)
+    with TestClient(app) as tc:
+        saved = tc.post("/settings", data=_form(interval="120"), follow_redirects=False)
+    assert saved.status_code == 303
+    assert read_config_file(config_path("", tmp_path))["interval"] == 120
+
+
+def test_a_bad_value_shows_the_real_error_and_writes_nothing(
+    settings, store, secrets, tmp_path
+) -> None:
+    """Not clamped to the floor and saved silently."""
+    app = create_app(settings, store, secrets, config_dir=tmp_path)
+    with TestClient(app) as tc:
+        page = tc.post("/settings", data=_form(interval="5"))
+    assert page.status_code == 400
+    assert "at least 30s" in page.text
+    assert 'value="5"' in page.text  # what they typed, redisplayed
+    assert read_config_file(config_path("", tmp_path)) == {}
+
+
+def test_a_saved_setting_takes_effect_without_a_restart(settings, store, secrets, tmp_path) -> None:
+    """The panel says "takes effect on the next poll"; this is that claim."""
+    app = create_app(settings, store, secrets, config_dir=tmp_path)
+    with TestClient(app) as tc:
+        assert tc.get("/api/health").json()["poll_interval_s"] == settings.poll_interval_s
+        tc.post("/settings", data=_form(interval="120"))
+        assert tc.get("/api/health").json()["poll_interval_s"] == 120
+
+
+def test_the_panel_never_offers_the_port_the_database_or_the_cookie() -> None:
+    """Each has a reason, and each is stated on the page rather than omitted."""
+    assert "port" not in PANEL_KEYS
+    assert not CONFIG_KEYS_BY_NAME["port"].panel
+    assert not {k for k in PANEL_KEYS if "cookie" in k or "db" in k}
+
+
+def test_the_read_only_block_says_why_and_how(settings, store, secrets, tmp_path) -> None:
+    app = create_app(settings, store, secrets, config_dir=tmp_path)
+    with TestClient(app) as tc:
+        html = tc.get("/settings").text
+    assert "quotalens config set port" in html
+    assert "in the OS keyring" in html
+    assert "quotalens auth" in html
+
+
+def test_every_field_states_whether_it_is_live_or_needs_a_restart(
+    settings, store, secrets, tmp_path
+) -> None:
+    """Guessing is worse than either."""
+    app = create_app(settings, store, secrets, config_dir=tmp_path)
+    with TestClient(app) as tc:
+        html = tc.get("/settings").text
+    fields = re.findall(r'<div class="fld(?! is-ro)[^"]*">(.*?)</div>', html, re.S)
+    assert fields
+    for field in fields:
+        assert "takes effect on the next poll" in field or "needs a restart" in field
+
+
+def test_the_retention_sizes_are_measured_and_labelled_as_estimates(
+    settings, store, secrets, tmp_path
+) -> None:
+    app = create_app(settings, store, secrets, config_dir=tmp_path)
+    with TestClient(app) as tc:
+        html = tc.get("/settings").text
+    assert html.count('name="retention"') == 5
+    assert "≈" in html  # never presented as exact
+    # An empty store cannot know, and says so rather than extrapolating.
+    assert "needs more history" in html or "database is empty" in html
+
+
+def test_shortening_retention_needs_a_confirm(settings, store, secrets, tmp_path) -> None:
+    import time
+
+    from quotalens.parse import QuotaReading
+
+    now = int(time.time())
+    for days in range(40):
+        store.record_quota(
+            now - days * 86_400,
+            [QuotaReading("five_hour", "Session", 50.0, None, None, True)],
+        )
+    app = create_app(settings, store, secrets, config_dir=tmp_path)
+    with TestClient(app) as tc:
+        blocked = tc.post("/settings/retention", data={"retention": "1week"})
+        assert blocked.status_code == 400
+        assert "deletes data permanently" in blocked.text or "permanently" in blocked.text
+        assert read_config_file(config_path("", tmp_path)).get("retention") is None
+
+        allowed = tc.post(
+            "/settings/retention",
+            data={"retention": "1week", "confirm": "1"},
+            follow_redirects=False,
+        )
+        assert allowed.status_code == 303
+        assert read_config_file(config_path("", tmp_path))["retention"] == "1week"

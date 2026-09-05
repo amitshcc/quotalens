@@ -43,6 +43,7 @@ from quotalens.state import (
     magnitude_state,
     worst,
 )
+from quotalens.status import VendorStatus
 from quotalens.store import QuotaRow, Store
 from quotalens.views import (
     LOOKBACKS,
@@ -401,6 +402,7 @@ class Dashboard:
     budget_view: BudgetView | None = None
     cooldown_s: int = 0  # seconds until another forced poll is allowed
     events: list[dict[str, Any]] = field(default_factory=list)
+    vendor_status: list[VendorStatus] = field(default_factory=list)
     alert_standing: bool = False  # a burn alert fired and has not cleared
 
 
@@ -434,6 +436,7 @@ def build_dashboard(
     burn_alert: float,
     view: ViewOptions | None = None,
     cooldown_s: int = 0,
+    vendor_status: list[VendorStatus] | None = None,
 ) -> Dashboard:
     view = view or ViewOptions()
     epistemic = collector_state(status, settings.poll_interval_s, now)
@@ -644,6 +647,7 @@ def build_dashboard(
         budget_view=_budget_view(budget, now),
         cooldown_s=cooldown_s,
         events=events,
+        vendor_status=list(vendor_status or []),
         alert_standing=alert_standing,
     )
 

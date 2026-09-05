@@ -489,7 +489,7 @@ def cmd_serve(args: argparse.Namespace, settings: Settings, secrets: SecretStore
     if notice:
         print(notice)
         log.info("%s", notice)
-    app = create_app(settings, store, secrets)
+    app = create_app(settings, store, secrets, config_dir=args.config_dir)
     print(f"QuotaLens {__version__}{_profile_note(settings)}")
     print(f"dashboard: http://{settings.host}:{settings.port}/")
     print(f"database:  {settings.db_path}")
