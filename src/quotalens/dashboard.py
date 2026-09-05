@@ -540,7 +540,7 @@ def build_dashboard(
         diagnostics.append(f"Payload blocks without a reset time, not charted: {keys}.")
     notes = _transient_notes(status, now)
 
-    events = [e.as_dict() for e in store.recent_events(limit=EVENT_ROWS)]
+    events = _event_rows(store, EVENT_ROWS)
     alert_standing = _alert_standing(store)
     counts = store.counts()
     size = store.db_size_bytes()
@@ -600,6 +600,40 @@ def _alert_standing(store: Store) -> bool:
     latest = store.recent_events(limit=1, kind=ALERT_KIND)
     cleared = store.recent_events(limit=1, kind=CLEARED_KIND)
     return standing(latest[0].ts if latest else None, cleared[0].ts if cleared else None)
+
+
+def collapse_events(events: list[Any]) -> list[dict[str, Any]]:
+    """Merge runs of the identical event into one row carrying a count.
+
+    Four lines saying "usage payload has blocks without resets_at" is not four
+    facts, and repeats crowd out the events that only happen once. Only *consecutive*
+    identical events merge, so anything that happened in between still separates
+    them and keeps its own place in the order.
+    """
+    rows: list[dict[str, Any]] = []
+    for event in events:
+        row = event.as_dict()
+        last = rows[-1] if rows else None
+        if last is not None and (last["kind"], last["detail"]) == (row["kind"], row["detail"]):
+            last["count"] += 1
+            last["first_ts"] = row["ts"]  # the list runs newest first
+            continue
+        rows.append({**row, "count": 1, "first_ts": row["ts"]})
+    return rows
+
+
+def _event_rows(store: Store, limit: int) -> list[dict[str, Any]]:
+    """The sidebar's list: repeats collapsed, and a boost never crowded off it.
+
+    A boost happens perhaps once a quarter and the list turns over in an hour, so
+    without the pin the one event worth keeping is the one guaranteed to be gone.
+    """
+    rows = collapse_events(store.recent_events(limit=limit * 8))
+    shown = rows[:limit]
+    boost = next((r for r in rows if r["kind"] == BOOST_KIND), None)
+    if boost is not None and boost not in shown:
+        shown = sorted([*shown[: limit - 1], boost], key=lambda r: -int(r["ts"]))
+    return shown
 
 
 def _transient_notes(status: PollerStatus, now: int) -> list[str]:
