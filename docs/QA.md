@@ -259,3 +259,12 @@ inference from source: write down what was on screen or in the DOM.
       raise cannot be recovered and the window has to be excluded rather than adjusted.
 - 2026-09-05: a boost on the session window collapses the burn rate, which would have
       fired a "fell back below threshold" recovery that nobody earned.
+- 2026-09-05: boost detection shipped and the dashboard still showed nothing, because
+      detection runs on ingest and the boost had already happened: no event row, so all
+      four surfaces rendered empty. The previous round's "replay" wrote events into a
+      throwaway copy inside a test harness and proved only the detector. `quotalens
+      rescan` backfills from stored readings; check a *running app* on a copy of the
+      real database, not a harness.
+- 2026-09-05: even once recorded, the boost was not in the sidebar — six slots taken by
+      burn-rate crossings. Collapsing consecutive identical events was not enough here
+      because those six were all distinct, so the newest boost is pinned into the list.

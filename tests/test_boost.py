@@ -223,3 +223,121 @@ def test_a_boost_records_an_event_and_no_alert_fires(settings, store, secrets) -
     with TestClient(app) as client:
         events = client.get("/api/events").json()
     assert any(e["kind"] == BOOST_KIND for e in events["events"])
+
+
+# -- the sidebar, where a rare event has to survive a noisy hour -------------------
+
+
+def _event(ts: int, kind: str, detail: str):
+    from quotalens.store import EventRow
+
+    return EventRow(ts, kind, detail)
+
+
+def test_consecutive_identical_events_collapse_with_a_count() -> None:
+    """Four lines saying the same thing is not four facts."""
+    from quotalens.dashboard import collapse_events
+
+    rows = collapse_events(
+        [_event(NOW - i * 60, "unrecognised_block", "nimbus_quill") for i in range(4)]
+    )
+    assert len(rows) == 1
+    assert rows[0]["count"] == 4
+    assert rows[0]["ts"] == NOW and rows[0]["first_ts"] == NOW - 180
+
+
+def test_events_that_are_not_consecutive_do_not_merge() -> None:
+    from quotalens.dashboard import collapse_events
+
+    rows = collapse_events(
+        [
+            _event(NOW, "unrecognised_block", "nimbus_quill"),
+            _event(NOW - 60, "burn_alert", "crossed"),
+            _event(NOW - 120, "unrecognised_block", "nimbus_quill"),
+        ]
+    )
+    assert [r["kind"] for r in rows] == ["unrecognised_block", "burn_alert", "unrecognised_block"]
+    assert [r["count"] for r in rows] == [1, 1, 1]
+
+
+def test_a_boost_between_two_repeats_is_not_swallowed() -> None:
+    from quotalens.dashboard import collapse_events
+
+    rows = collapse_events(
+        [
+            _event(NOW, "unrecognised_block", "nimbus_quill"),
+            _event(NOW - 60, BOOST_KIND, "Weekly fell 98% -> 0% with no reset. Limit raised."),
+            _event(NOW - 120, "unrecognised_block", "nimbus_quill"),
+        ]
+    )
+    assert [r["kind"] for r in rows][1] == BOOST_KIND
+    assert len(rows) == 3
+
+
+def test_a_boost_is_pinned_when_a_noisy_hour_would_push_it_off(settings, store) -> None:
+    """It happens perhaps once a quarter, and this list turns over in an hour."""
+    from quotalens.dashboard import EVENT_ROWS, _event_rows
+
+    store.record_event(BOOST_KIND, "Weekly fell 98% -> 0% with no reset. Limit raised.", ts=NOW)
+    for i in range(EVENT_ROWS * 3):  # each distinct, so nothing collapses it away
+        store.record_event("burn_alert", f"crossed at {i}", ts=NOW + 60 + i * 60)
+
+    shown = _event_rows(store, EVENT_ROWS)
+    assert len(shown) == EVENT_ROWS
+    assert any(r["kind"] == BOOST_KIND for r in shown)
+    assert [int(r["ts"]) for r in shown] == sorted((int(r["ts"]) for r in shown), reverse=True)
+
+
+def test_the_pin_costs_nothing_when_the_boost_is_recent(settings, store) -> None:
+    from quotalens.dashboard import EVENT_ROWS, _event_rows
+
+    for i in range(3):
+        store.record_event("burn_alert", f"crossed at {i}", ts=NOW - 600 + i * 60)
+    store.record_event(BOOST_KIND, "Weekly fell 98% -> 0%. Limit raised.", ts=NOW)
+
+    shown = _event_rows(store, EVENT_ROWS)
+    assert shown[0]["kind"] == BOOST_KIND
+    assert len(shown) == 4  # nothing dropped to make room
+
+
+# -- backfill ---------------------------------------------------------------------
+
+
+def test_backfill_finds_the_boost_and_is_safe_to_run_twice(settings, store) -> None:
+    from quotalens.boost import backfill
+
+    reset = WEEK_RESET
+    for i in range(5):
+        store.record_quota(
+            NOW - (5 - i) * 60, [QuotaReading("seven_day", "Weekly", 90.0 + i, reset)]
+        )
+    store.record_quota(NOW, [QuotaReading("seven_day", "Weekly", 0.0, WEEK_RESET_JITTERED)])
+
+    first = backfill(store)
+    assert [b.window for b in first] == ["seven_day"]
+    assert first[0].from_pct == 94.0 and first[0].to_pct == 0.0
+
+    assert backfill(store) == [], "a second run must not write a duplicate"
+    assert len(store.recent_events(limit=50, kind=BOOST_KIND)) == 1
+
+
+def test_backfill_skips_a_reading_the_parser_had_to_recover(settings, store) -> None:
+    """A `shape_drift` event marks that instant as unverified, so it makes no claim."""
+    from quotalens.boost import SHAPE_DRIFT_KIND, backfill
+
+    store.record_quota(NOW - 60, [QuotaReading("seven_day", "Weekly", 98.0, WEEK_RESET)])
+    store.record_quota(NOW, [QuotaReading("seven_day", "Weekly", 0.0, WEEK_RESET_JITTERED)])
+    store.record_event(SHAPE_DRIFT_KIND, "parsed via generic fallback", ts=NOW)
+
+    assert backfill(store) == []
+
+
+def test_backfill_on_a_database_with_no_boosts_writes_nothing(settings, store) -> None:
+    from quotalens.boost import backfill
+
+    for i in range(10):
+        store.record_quota(
+            NOW - (10 - i) * 60, [QuotaReading("seven_day", "Weekly", 10.0 + i, WEEK_RESET)]
+        )
+    assert backfill(store) == []
+    assert store.recent_events(limit=10, kind=BOOST_KIND) == []

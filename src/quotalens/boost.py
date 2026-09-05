@@ -28,8 +28,10 @@ of trying to subtract one.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Container, Iterable, Sequence
 from dataclasses import dataclass
+from itertools import pairwise
+from typing import Any
 
 from quotalens.burn import resets_at_changed
 from quotalens.parse import QuotaReading
@@ -124,6 +126,61 @@ def detect_boosts(
         if boost is not None:
             found.append(boost)
     return found
+
+
+SHAPE_DRIFT_KIND = "shape_drift"  # written at the instant a payload needed the fallback
+
+
+def _as_reading(row: QuotaRow) -> QuotaReading:
+    """A stored row in the shape the detector takes. The adapter, and nothing else."""
+    return QuotaReading(row.window, row.label, row.pct, row.resets_at, row.severity, row.is_active)
+
+
+def scan_history(rows: Sequence[QuotaRow], untrusted_ts: Container[int]) -> list[Boost]:
+    """Every boost visible in stored readings, using the same rule as the live path.
+
+    The live detector compares the newest stored reading with the one arriving.
+    Consecutive rows for one window *are* that pair, so this walks them and calls the
+    same function — there is no second definition of a boost for historical data.
+
+    Trust comes from the ``shape_drift`` events the poller already writes at the exact
+    instant a payload needed the generic fallback. A reading recovered that way is
+    unverified and must not become a boost, which is the rule the live path applies.
+    """
+    by_window: dict[str, list[QuotaRow]] = {}
+    for row in sorted(rows, key=lambda r: r.ts):
+        by_window.setdefault(row.window, []).append(row)
+    found: list[Boost] = []
+    for series in by_window.values():
+        for previous, current in pairwise(series):
+            boost = detect_boost(
+                previous, _as_reading(current), current.ts, current.ts not in untrusted_ts
+            )
+            if boost is not None:
+                found.append(boost)
+    return sorted(found, key=lambda b: (b.ts, b.window))
+
+
+def backfill(store: Any) -> list[Boost]:
+    """Record boosts that happened before the detector existed. Safe to run twice.
+
+    Idempotent on ``(ts, detail)``: the detail encodes the window and both values, so
+    two windows boosted in the same poll are two distinct keys, and re-running over
+    the same rows produces byte-identical details for boosts already written. Nothing
+    is deleted and nothing is updated — a boost already recorded is simply skipped.
+    """
+    untrusted = {int(e.ts) for e in store.recent_events(limit=10_000, kind=SHAPE_DRIFT_KIND)}
+    already = {
+        (int(e.ts), str(e.detail)) for e in store.recent_events(limit=10_000, kind=BOOST_KIND)
+    }
+    written = []
+    for boost in scan_history(store.quota_series(0), untrusted):
+        if (boost.ts, boost.detail()) in already:
+            continue
+        store.record_event(BOOST_KIND, boost.detail(), ts=boost.ts)
+        already.add((boost.ts, boost.detail()))
+        written.append(boost)
+    return written
 
 
 def boosted_windows(boost_ts: Sequence[int], started_at: int, ends_at: int) -> bool:

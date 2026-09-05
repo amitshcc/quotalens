@@ -256,7 +256,7 @@ def cmd_prune(args: argparse.Namespace, settings: Settings, secrets: SecretStore
 
 # Commands that take --db. Missing one means the flag is silently ignored, which
 # for a command that deletes rows would mean deleting them from the wrong file.
-DB_FLAG_COMMANDS = ("serve", "prune", "forget")
+DB_FLAG_COMMANDS = ("serve", "prune", "forget", "rescan")
 
 
 def _local_stamp(ts: int) -> str:
@@ -358,6 +358,31 @@ def cmd_forget(args: argparse.Namespace, settings: Settings, secrets: SecretStor
         print(f"session windows rebuilt from what is left: {count}")
     finally:
         store.close()
+    return 0
+
+
+def cmd_rescan(args: argparse.Namespace, settings: Settings, secrets: SecretStore) -> int:
+    """Find boosts in readings that predate the detector, and record them.
+
+    A subcommand rather than a startup pass: this is a one-off correction for
+    databases older than the feature, it is explicit about touching stored data, and
+    it does not add a scan to every start for the rest of the program's life.
+    """
+    from quotalens.boost import backfill
+    from quotalens.store import Store
+
+    store = Store(settings.db_path)
+    try:
+        written = backfill(store)
+    finally:
+        store.close()
+    print(f"{settings.db_path}")
+    if not written:
+        print("no boosts found that were not already recorded")
+        return 0
+    print(f"recorded {len(written)} boost{'s' if len(written) != 1 else ''}:")
+    for boost in written:
+        print(f"  {_local_stamp(boost.ts)}  {boost.detail()}")
     return 0
 
 
@@ -598,6 +623,11 @@ def build_parser() -> argparse.ArgumentParser:
     forget.add_argument("session", type=int, nargs="*", help="session window ids, as listed")
     forget.add_argument("--dry-run", action="store_true", help="report without deleting")
     forget.add_argument("--db", type=Path, help="SQLite file path")
+    rescan = sub.add_parser(
+        "rescan",
+        help="record quota boosts found in readings older than the detector (safe to repeat)",
+    )
+    rescan.add_argument("--db", type=Path, help="SQLite file path")
     logs = sub.add_parser("logs", help="show the log")
     logs.add_argument("-f", "--follow", action="store_true")
     logs.add_argument("-n", "--lines", type=int, default=50)
@@ -656,6 +686,7 @@ def main(argv: Sequence[str] | None = None, secrets: SecretStore | None = None) 
         "logs": cmd_logs,
         "service": cmd_service,
         "forget": cmd_forget,
+        "rescan": cmd_rescan,
     }
     try:
         return handlers[args.command](args, settings, secrets)

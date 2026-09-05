@@ -293,8 +293,11 @@ def _events_block(dash: Dashboard) -> str:
     for event in dash.events:
         css = "ev ev-alert" if event["kind"] == ALERT_KIND else "ev"
         stamp = e(clock(int(event["ts"])))
+        count = int(event.get("count", 1))
+        repeat = f' <span class="far">\u00d7{count}</span>' if count > 1 else ""
         lines.append(
-            f'<p class="{css}"><span class="m far">{stamp}</span> {e(str(event["detail"]))}</p>'
+            f'<p class="{css}"><span class="m far">{stamp}</span> '
+            f"{e(str(event['detail']))}{repeat}</p>"
         )
     return (
         '<div class="rule"></div><dl><dt>Recent events</dt><dd></dd></dl>'
@@ -571,7 +574,7 @@ def _chart(dash: Dashboard) -> str:
         # The series already shows the drop; the marker says why it dropped.
         gaps += "".join(
             f'<line x1="{x:.1f}" y1="14" x2="{x:.1f}" y2="196" class="sess"/>'
-            f'<text x="{x + 4:.1f}" y="36" class="ax">boost</text>'
+            f'<text x="{x + 4:.1f}" y="36" class="ax">limits boosted</text>'
             for x in c.boost_x
         )
         # The horizontal rules run the full width of the plot, including the part of

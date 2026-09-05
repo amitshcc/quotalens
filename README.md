@@ -169,6 +169,10 @@ The event is the record; the chart marks the moment, the affected meter says
 in is badged. A boost is information, not a state, so it takes no colour of its
 own.
 
+If your database predates this feature, `quotalens rescan` finds boosts in the
+readings already stored and records them. It is safe to run twice: a boost
+already recorded is skipped, never rewritten.
+
 **It also has to be kept out of the arithmetic.** A boost inside a session window
 makes that window's weekly change *consumption minus the raise*, and that number
 is what the cost estimate behind "full sessions left" is built from — so a boost
