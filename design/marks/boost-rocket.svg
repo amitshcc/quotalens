@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
+     role="img" aria-label="Limits boosted">
+<title>QuotaLens — limits boosted</title>
+<!-- The boost mark. Illustration, not a state: these four fills are literals and
+     must never be promoted to tokens or reused anywhere else in the product.
+     Authored upright on a 24 grid, scaled 0.85 about the centre so the exhaust
+     clears the box. Do not render below 16px — see DESIGN.md §8. -->
+<g transform="translate(12 12) scale(.85) translate(-12 -12)">
+  <path d="M12 2.1c3.3 3.5 4.9 7.9 4.9 11.8v4.1H7.1v-4.1C7.1 10 8.7 5.6 12 2.1z" fill="#E9ECF1"/>
+  <path d="M12 2.1c1.6 1.7 2.8 3.6 3.7 5.6H8.3c.9-2 2.1-3.9 3.7-5.6z" fill="#E13A54"/>
+  <path d="M7.1 11.4 3 17.9c-.4.6.1 1.4.8 1.3l3.3-.5z" fill="#E13A54"/>
+  <path d="M16.9 11.4 21 17.9c.4.6-.1 1.4-.8 1.3l-3.3-.5z" fill="#E13A54"/>
+  <rect x="7.4" y="18.1" width="9.2" height="2.3" rx="1.1" fill="#E13A54"/>
+  <rect x="8.9" y="20.9" width="6.2" height="2.1" rx="1" fill="#E13A54"/>
+  <circle cx="12" cy="9.6" r="2.7" fill="#3E4A78"/>
+  <path d="M10.2 23.8v2.2M13.8 23.8v2.2" stroke="#F7C948" stroke-width="1.8"
+        stroke-linecap="round"/>
+</g>
+</svg>

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import re
+from functools import lru_cache
 from html import escape as e
+from importlib import resources
 
 from quotalens import __version__
 from quotalens.alerts import ALERT_KIND
@@ -11,6 +14,7 @@ from quotalens.dashboard import (
     CHART_W,
     PLOT_RIGHT,
     RATE_WINDOW,
+    ChartView,
     Control,
     Dashboard,
     SeriesView,
@@ -571,12 +575,6 @@ def _chart(dash: Dashboard) -> str:
         gaps += "".join(
             f'<line x1="{x:.1f}" y1="14" x2="{x:.1f}" y2="196" class="sess"/>' for x in c.session_x
         )
-        # The series already shows the drop; the marker says why it dropped.
-        gaps += "".join(
-            f'<line x1="{x:.1f}" y1="14" x2="{x:.1f}" y2="196" class="sess"/>'
-            f'<text x="{x + 4:.1f}" y="36" class="ax">limits boosted</text>'
-            for x in c.boost_x
-        )
         # The horizontal rules run the full width of the plot, including the part of
         # the window that has not happened yet. Stopping them at "now" left the
         # chart looking cropped, in an area that is still live to the pointer; the
@@ -612,7 +610,9 @@ def _chart(dash: Dashboard) -> str:
             f'<text x="{x:.1f}" y="211" class="ax" text-anchor="middle">{e(t)}</text>'
             for x, t in c.x_ticks
         )
-        inner = gaps + grid + xt + "".join(_series(s) for s in c.series)
+        # After the traces, so the mark is never under a line, and last so it sits
+        # above the grid it stands in.
+        inner = gaps + grid + xt + "".join(_series(s) for s in c.series) + _boost_marks(c)
     return (
         '<section class="screen chart" aria-label="All windows, selected range">'
         f'<script type="application/json" id="chart-data">{c.data_json}</script>'
@@ -623,6 +623,51 @@ def _chart(dash: Dashboard) -> str:
         '<rect id="sel" class="sel" y="14" height="182" hidden/></svg>'
         '<div id="readout" class="readout-box m" hidden></div></section>'
     )
+
+
+BOOST_COLOUR = "#E13A54"  # illustration, not a state; DESIGN.md §1 and §8
+BOOST_MARK_PX = 18  # in the chart. Below 16 the mark is omitted, never scaled.
+BOOST_MIN_PX = 16
+
+
+def _rocket(x: float, y: float, size: int = BOOST_MARK_PX) -> str:
+    """The boost mark, inlined from the drawing rather than redrawn.
+
+    Four fills inside sixteen pixels is four pixels each, so below
+    :data:`BOOST_MIN_PX` a surface gets the text alone.
+    """
+    if size < BOOST_MIN_PX:
+        return ""
+    inner = _rocket_inner()
+    scale = size / 24
+    return (
+        f'<g transform="translate({x:.1f} {y:.1f}) scale({scale:.4f})" '
+        f'aria-hidden="true">{inner}</g>'
+    )
+
+
+@lru_cache(maxsize=1)
+def _rocket_inner() -> str:
+    """Everything inside the file's <svg>, minus its title and comments."""
+    raw = resources.files("quotalens.web").joinpath("boost-rocket.svg").read_text()
+    body = raw.split(">", 1)[1].rsplit("</svg>", 1)[0]
+    body = re.sub(r"<!--.*?-->", "", body, flags=re.S)
+    body = re.sub(r"<title>.*?</title>", "", body, flags=re.S)
+    return re.sub(r">\s+<", "><", body).strip()
+
+
+def _boost_marks(c: ChartView) -> str:
+    """One rocket and one two-line label per boosted moment, beside its own step."""
+    out = []
+    for mark in c.boost_marks:
+        top = max(20.0, mark.y - 22)
+        rocket_x, text_x = mark.x + 6, mark.x + 6 + BOOST_MARK_PX + 5
+        out.append(
+            _rocket(rocket_x, top - BOOST_MARK_PX / 2)
+            + f'<text x="{text_x:.1f}" y="{top + 4:.1f}" class="ax bx">{e(mark.heading)}</text>'
+            + f'<text x="{text_x:.1f}" y="{top + 17:.1f}" class="ax">{e(mark.detail)}</text>'
+        )
+    return "".join(out)
 
 
 def _gclass(tick: str) -> str:
@@ -638,6 +683,11 @@ def _series(s: SeriesView) -> str:
     dash = f' stroke-dasharray="var(--dash-{s.slot})"' if s.slot > 2 else ""
     paths = "".join(
         f'<path d="{p}" stroke="var(--s{s.slot})" stroke-width="{width}"{dash}/>' for p in s.paths
+    )
+    # The boost colour, and the only place it appears besides the rocket. Not a state
+    # and not on the palette: see DESIGN.md §1. The flat runs either side keep theirs.
+    paths += "".join(
+        f'<path d="{d}" stroke="{BOOST_COLOUR}" stroke-width="2.6" fill="none"/>' for d in s.drops
     )
     marker = (
         ""

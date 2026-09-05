@@ -32,6 +32,18 @@ Everything else in the chrome is achromatic. If a chrome element seems to need
 colour, it is either data (use a series colour) or a state (use a state
 treatment). It is never a brand accent.
 
+**The one exception: `#E13A54`, the boost colour.** It is off-palette on purpose
+and it sits beside `--st-critical`, which means something is wrong. The boost mark
+is the one place in the product where red does not mean trouble: a limit was
+raised, which is good news. It appears in exactly two places — the rocket, and the
+drop segment of a window that was boosted — and nothing else may borrow it. It is
+not a token and should not become one; promoting it would invite a third use, and
+a third use is what would make the second red ambiguous. §5's state vocabulary is
+unchanged and still closed: a boost is an event, not a state, so it has no chip
+and no place on the amber-to-red ramp. The mark must never sit in the same row as
+a `critical` chip, where two reds would do two jobs an inch apart — if a layout
+puts them together, move the mark.
+
 The mark earns its amber the same way: its arc **is** the session window, drawn
 at whatever fraction the window is currently at. That is why the mark may carry
 amber while the header it sits in may not. A mark drawn amber for decoration
@@ -243,6 +255,18 @@ Five, hand-drawn, inline, defined once as `<symbol>` in a hidden sprite:
 deliberately unspent.
 
 The ring mark is not one of the five; it is the brand.
+
+**The unspent slot is now the boost mark**, and it does not follow the rules
+above: `design/marks/boost-rocket.svg` is a full-colour illustration on a 24 grid,
+four fills and a stroke, not a `currentColor` line drawing. That is deliberate —
+it is the only pictorial element in the product, and it earns the exception by
+marking the only event that is good news.
+
+It is inlined from the file, never redrawn, never tilted, and never substituted by
+an icon font or a Unicode character. Four fills inside sixteen pixels is roughly
+four pixels each, so **below 16px it is omitted and the surface gets the text
+alone**; it is 18px beside the chart step and 20-24px in a list. Do not scale it
+down and hope, and do not add a simplified variant without saying so here.
 
 ## 9. The mark
 

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16" role="img" aria-label="QuotaLens">
+<title>QuotaLens</title><style>svg{color:var(--txt,#D5DBDB)}@media (prefers-color-scheme:light){svg:not([data-theme=dark]){--lit:#8A5B00;--txt-far:#808887}}</style>
+<circle cx="8" cy="8" r="5.5" fill="none" stroke="var(--txt-far,#626A6B)" stroke-width="3"/>
+<circle cx="8" cy="8" r="5.5" fill="none" stroke="var(--lit,#F2B33D)" stroke-width="3" stroke-dasharray="23.50 34.56" transform="rotate(-90 8 8)"/>
+</svg>
