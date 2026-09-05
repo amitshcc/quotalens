@@ -101,7 +101,7 @@ def test_two_windows_boosting_in_one_poll_give_one_rocket_and_one_label() -> Non
     )
     assert svg.count(">Limits Boosted</text>") == 1  # once drawn, once in the aria-label
     assert svg.count('circle cx="12" cy="9.6"') == 1  # the rocket's porthole, once
-    assert svg.count("<title>") == 1
+    assert svg.count("data-detail=") == 1
     assert svg.count('<g class="boost"') == 1
 
 
@@ -111,8 +111,14 @@ def test_the_label_is_one_line_and_the_detail_is_on_hover() -> None:
 
     assert svg.count("<text") == 1, "one line only"
     assert ">Limits Boosted</text>" in svg
-    assert "<title>08:09 · 98% → 7%</title>" in svg
-    assert "98% → 7%" not in svg.split("</title>")[1], "the detail is not also drawn"
+    # The detail rides in data-detail, which chart.js draws into an HTML box.
+    # A native <title> could not be screenshotted -- Chrome paints it as an OS
+    # overlay outside page capture -- so it was measured but never seen, and it
+    # followed the pointer onto the crosshair readout.
+    assert 'data-detail="08:09 · 98% → 7%"' in svg
+    assert "<title>" not in svg
+    drawn = svg.split(">", 1)[1]  # everything after the group's own attributes
+    assert "98% → 7%" not in drawn, "the detail is not also drawn"
 
 
 def test_the_group_wraps_both_the_rocket_and_the_heading() -> None:
@@ -120,9 +126,11 @@ def test_the_group_wraps_both_the_rocket_and_the_heading() -> None:
     svg = _boost_marks(_chart([_mark()]))
     group = svg[svg.index('<g class="boost"') : svg.rindex("</g>")]
 
-    assert "<title>" in group
+    assert "data-detail=" in group
     assert 'circle cx="12" cy="9.6"' in group  # the rocket
     assert ">Limits Boosted</text>" in group  # and the heading
+    # The accessible name never depended on <title>, so replacing it costs a
+    # screen reader nothing.
     assert 'role="img"' in svg and 'aria-label="Limits Boosted. ' in svg
 
 
@@ -323,3 +331,61 @@ def test_a_custom_range_over_a_near_empty_database_still_says_collecting() -> No
 
     assert thin.collecting is True
     assert plenty.collecting is False
+
+
+# -- the tooltip and the right edge ------------------------------------------------
+
+
+def test_the_group_flips_left_when_the_label_would_run_off_the_plot() -> None:
+    """A boost near the right edge pushed `Limits Boosted` past the plot and clipped."""
+    from quotalens.dashboard import PLOT_RIGHT
+    from quotalens.render import BOOST_GROUP_W
+
+    roomy = _boost_marks(_chart([_mark(x=100.0)]))
+    assert 'data-flip=""' in roomy
+    assert 'text-anchor="end"' not in roomy
+    label_x = float(re.search(r'<text x="([\d.]+)"', roomy).group(1))
+    assert label_x > 100.0, "drawn to the right of its step"
+
+    tight = _boost_marks(_chart([_mark(x=PLOT_RIGHT - BOOST_GROUP_W + 1)]))
+    assert 'data-flip="1"' in tight
+    assert 'text-anchor="end"' in tight
+    label_x = float(re.search(r'<text x="([\d.]+)"', tight).group(1))
+    assert label_x < PLOT_RIGHT - BOOST_GROUP_W + 1, "mirrored to the left of its step"
+    assert label_x > 0
+
+
+def test_the_tooltip_is_positioned_from_the_mark_not_the_pointer() -> None:
+    """Following the pointer is what put it on top of the crosshair readout."""
+    js = resources.files("quotalens.web").joinpath("chart.js").read_text()
+    body = js.split("function boostTip(", 1)[1].split("function bindBoosts", 1)[0]
+    assert "group.getBoundingClientRect()" in body, "anchored to the mark's own box"
+    assert "clientX" not in body and "clientY" not in body, "never to the pointer"
+    assert 'getAttribute("data-flip")' in body, "mirrors when the label is flipped"
+
+
+def test_the_mark_is_reachable_without_a_pointer() -> None:
+    """<title> never was, so this is the one thing the swap adds."""
+    assert 'tabindex="0"' in _boost_marks(_chart([_mark()]))
+
+
+def test_the_crosshair_is_suppressed_over_the_mark_line_and_box() -> None:
+    """Two tooltips stating two different times is the reader's problem to untangle."""
+    js = resources.files("quotalens.web").joinpath("chart.js").read_text()
+    guard = re.search(r"var over = ev\.target\.closest[^\n]*\n[^\n]*", js)
+    assert guard is not None, "onMove decides what the pointer is over"
+    assert "hide(); boostTip(over, true); return;" in js
+    # And the reverse: leaving the mark puts the tip away before the crosshair
+    # comes back, or both are on screen stating two different times.
+    assert "boostTip(null, false);" in js
+    # hide() takes the vertical rule as well as the readout: a line at one time
+    # beside a tooltip about another is the same contradiction in thinner ink.
+    body = js.split("function hide()", 1)[1].split("function fmt", 1)[0]
+    assert 'getElementById("hover")' in body and 'getElementById("readout")' in body
+
+
+def test_the_tooltip_reuses_the_readout_chrome_rather_than_a_parallel_rule() -> None:
+    css = resources.files("quotalens.web").joinpath("app.css").read_text()
+    assert ".readout-box.bt{" in css
+    assert css.count(".readout-box{") == 1, "one box style, two users"
+    assert "pointer-events:none" in css.split(".readout-box{", 1)[1].split("}", 1)[0]

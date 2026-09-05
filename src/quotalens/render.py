@@ -655,7 +655,13 @@ def _chart(dash: Dashboard) -> str:
         f'<g class="trace">{inner}</g>'
         '<g id="hover" hidden><line class="xh" y1="14" y2="196"/></g>'
         '<rect id="sel" class="sel" y="14" height="182" hidden/></svg>'
-        '<div id="readout" class="readout-box m" hidden></div></section>'
+        '<div id="readout" class="readout-box m" hidden></div>'
+        # Same chrome as the readout, but anchored to the mark rather than the
+        # pointer: an annotation about one moment should not move. aria-hidden
+        # because the group already carries this text as its accessible name --
+        # the tree showed it twice otherwise.
+        '<div id="boost-tip" class="readout-box bt" aria-hidden="true" hidden></div>'
+        "</section>"
     )
 
 
@@ -690,26 +696,51 @@ def _rocket_inner() -> str:
     return re.sub(r">\s+<", "><", body).strip()
 
 
+# The rocket, the gap, the heading, and enough room for the widest heading we
+# emit. Used to decide whether the group fits to the right of its step.
+BOOST_GROUP_W = 6 + BOOST_MARK_PX + 5 + 84
+
+
 def _boost_marks(c: ChartView) -> str:
     """One rocket and one line per boosted moment, with the detail on hover.
 
-    The detail was a second line and it is reference material, not a label: with two
-    windows it ran past the plot edge and across the traces. It moves into a native
-    ``<title>`` on the group wrapping both the rocket and the heading, so hovering
-    either shows it, and the group carries the accessible name for anyone not using
-    a pointer at all.
+    The detail is reference material, not a label: with two windows it ran past
+    the plot edge and across the traces, so it lives in a tooltip instead. That
+    tooltip used to be a native ``<title>`` and is now an HTML box drawn by
+    ``chart.js``, for three reasons -- the native one could not be screenshotted
+    (so it was measured but never seen), it followed the pointer and landed on
+    top of the crosshair readout, and it used the OS's typography in the middle
+    of a design system that controls every other pixel.
+
+    The accessible name does not depend on any of that: ``role="img"`` and
+    ``aria-label`` on the group carry the full detail whether or not a pointer
+    is involved, exactly as they did with ``<title>``.
+
+    ``data-*`` carries the anchor in *chart* units. ``chart.js`` converts to CSS
+    pixels the same way the readout does, because the SVG scales and a pixel
+    offset baked in here would drift with the window.
     """
     out = []
     for mark in c.boost_marks:
         top = max(20.0, mark.y - 22)
-        rocket_x, text_x = mark.x + 6, mark.x + 6 + BOOST_MARK_PX + 5
+        # A boost near the right edge pushed the heading past the plot and it
+        # clipped. Mirror the whole group to the left of its step instead.
+        flip = mark.x + BOOST_GROUP_W > PLOT_RIGHT
+        if flip:
+            rocket_x = mark.x - 6 - BOOST_MARK_PX
+            text_x = rocket_x - 5
+            anchor = ' text-anchor="end"'
+        else:
+            rocket_x = mark.x + 6
+            text_x = rocket_x + BOOST_MARK_PX + 5
+            anchor = ""
         label = f"{mark.heading}. {mark.detail}"
         out.append(
-            f'<g class="boost" role="img" aria-label="{e(label)}">'
-            f"<title>{e(mark.detail)}</title>"
+            f'<g class="boost" role="img" tabindex="0" aria-label="{e(label)}" '
+            f'data-detail="{e(mark.detail)}" data-flip="{"1" if flip else ""}">'
             + _rocket(rocket_x, top - BOOST_MARK_PX / 2, hidden=False)
-            + f'<text x="{text_x:.1f}" y="{top + 4:.1f}" class="ax bx">{e(mark.heading)}</text>'
-            + "</g>"
+            + f'<text x="{text_x:.1f}" y="{top + 4:.1f}" class="ax bx"{anchor}>'
+            f"{e(mark.heading)}</text>" + "</g>"
         )
     return "".join(out)
 

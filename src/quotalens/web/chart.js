@@ -16,6 +16,7 @@
     svg.addEventListener("dblclick", onReset);
     window.addEventListener("mouseup", onUp);
     window.addEventListener("mousemove", onDrag);
+    bindBoosts();
   }
 
   /* SVG elements have no .hidden property: toggle the attribute itself */
@@ -62,6 +63,24 @@
 
   function onMove(ev) {
     if (!state.data || state.drag) return;
+    // The crosshair is a continuous scrub; the boost mark is a discrete
+    // annotation about one moment. Two readings of two different times, stacked,
+    // is the reader's problem to untangle -- so only one is ever on screen. hide()
+    // takes the vertical rule as well as the box: a line at 09:02 beside a
+    // tooltip about 08:09 is the same contradiction in thinner ink.
+    //
+    // Driven from mousemove rather than the group's own mouseenter. An SVG <g>
+    // reports enter/leave through the browser's hover chain, which does not
+    // always update for grouped SVG children -- observed: the readout suppressed
+    // correctly while mouseenter never fired. mousemove is the event that is
+    // actually delivered, and one handler deciding what the pointer is over is
+    // the simpler arrangement anyway.
+    var over = ev.target.closest && ev.target.closest(".boost");
+    if (over) { hide(); boostTip(over, true); return; }
+    // ...and leaving the mark puts it away again. Without this the tip stays up
+    // while the crosshair comes back, which is the same two-tooltips-two-times
+    // collision the other way round.
+    boostTip(null, false);
     var x = toChartX(ev.clientX);
     var d = state.data;
     if (x < d.l || x > d.w - d.r) { hide(); return; }
@@ -88,7 +107,50 @@
     box.style.left = Math.min(px + 12, rect.width - box.offsetWidth - 8) + "px";
     box.style.top = Math.max(0, ev.clientY - rect.top - box.offsetHeight - 12) + "px";
   }
+  /* ---- the boost tooltip ------------------------------------------------- */
+
+  function boostTip(group, on) {
+    var tip = document.getElementById("boost-tip");
+    if (!tip || !state.svg) return;
+    if (!on) { show(tip, false); return; }
+    tip.textContent = group.getAttribute("data-detail") || "";
+    show(tip, true);
+    // Anchored to the mark's own rendered box, not to the pointer and not to
+    // chart units. The pointer version is what put it on top of the crosshair
+    // readout; chart units would need the scale factor applied to a pixel gap,
+    // which is how the first attempt clipped the label it sits under.
+    var box = group.getBoundingClientRect();
+    // The tooltip is position:absolute, so its origin is its offsetParent -- the
+    // chart <section> -- not the <svg> inside it. Measuring against the svg
+    // under-counts by the section's padding, which is why the first attempt sat
+    // on top of the label it is meant to hang below.
+    var wrap = (tip.offsetParent || state.svg).getBoundingClientRect();
+    var top = box.bottom - wrap.top + 6;
+    // Flipped marks are right-aligned, so the tooltip mirrors with the label.
+    var left = group.getAttribute("data-flip")
+      ? box.right - wrap.left - tip.offsetWidth
+      : box.left - wrap.left;
+    if (top + tip.offsetHeight > wrap.height) top = box.top - wrap.top - tip.offsetHeight - 6;
+    tip.style.left = Math.max(0, Math.min(left, wrap.width - tip.offsetWidth)) + "px";
+    tip.style.top = Math.max(0, top) + "px";
+  }
+
+  function bindBoosts() {
+    var groups = document.querySelectorAll("#chart .boost");
+    for (var i = 0; i < groups.length; i++) {
+      // Pointer hovering is handled in onMove; these two are the keyboard path.
+      // tabindex="0" is on the group, so this costs four lines and makes the
+      // detail reachable without a pointer, which <title> never was.
+      (function (g) {
+        g.addEventListener("focus", function () { boostTip(g, true); });
+        g.addEventListener("blur", function () { boostTip(g, false); });
+      })(groups[i]);
+    }
+  }
+
   function hide() {
+    var tip = document.getElementById("boost-tip");
+    if (tip) show(tip, false);
     var hover = document.getElementById("hover");
     var box = document.getElementById("readout");
     show(hover, false);

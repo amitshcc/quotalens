@@ -633,3 +633,20 @@ def test_localhost_is_a_label_not_a_setting(settings) -> None:
     assert _display_host("::1") == "localhost"
     assert _display_host("0.0.0.0") == "0.0.0.0"
     assert settings.host == "127.0.0.1"
+
+
+def test_the_boost_tooltip_does_not_repeat_itself_to_a_screen_reader(
+    settings, store, secrets
+) -> None:
+    """The boost group's aria-label already carries the detail.
+
+    Without aria-hidden the accessibility tree listed the text twice: once as the
+    group's name and once as the tooltip's own content. Verified in the tree, not
+    by reading the markup.
+    """
+    now = int(time.time())
+    _seed(store, now)
+    app = create_app(settings, store, secrets)
+    with TestClient(app) as tc:
+        html = tc.get("/").text
+    assert '<div id="boost-tip" class="readout-box bt" aria-hidden="true" hidden>' in html

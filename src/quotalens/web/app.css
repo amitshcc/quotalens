@@ -244,3 +244,4 @@ footer{margin-top:var(--sp-5);padding-top:var(--sp-3);border-top:var(--hair) sol
   font-size:var(--fs-sm)}
 .rsize{font-family:var(--font-num);color:var(--txt-dim)}
 .rexp{font-size:var(--fs-sm)}
+.readout-box.bt{grid-template-columns:1fr;white-space:nowrap}

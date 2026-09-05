@@ -367,3 +367,22 @@ probably not without help).
       Every row would have read "unreachable" forever, blaming three vendors for a
       local misconfiguration. Now fetched through `curl_cffi`, already a dependency
       for the provider client and shipping its own CA bundle.
+- 2026-09-06: hovering the boost mark produced two tooltips stating two different
+      times — the crosshair readout at the cursor's timestamp and the native `<title>`
+      at the boost's — and the readout box covered the `Limits Boosted` label, which
+      rendered as `Li`. Two interaction modes wearing the same clothes: the readout is
+      a continuous scrub, the mark is a discrete annotation. Only one is on screen now,
+      in both directions.
+- 2026-09-06: the boost group's `mouseenter` never fired under injected pointer moves,
+      while `mousemove` on the SVG did — the browser's hover chain does not reliably
+      update for grouped SVG children. The tooltip is driven from `onMove` instead, so
+      one handler decides what the pointer is over.
+- 2026-09-06: the tooltip was first positioned against `state.svg`'s rect, but it is
+      `position:absolute` inside the chart `<section>` — its offsetParent. Measuring
+      against the wrong origin under-counted by the section's padding and put the box
+      on top of the label it hangs below. Now anchored to the mark's own rendered box
+      relative to `tip.offsetParent`.
+- 2026-09-06: `_boost_marks` always drew the rocket and label to the right of the step,
+      so a boost near the right edge pushed `Limits Boosted` past the plot and clipped
+      it. The group now mirrors to the left, and the tooltip's alignment mirrors with
+      it.
