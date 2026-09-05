@@ -20,9 +20,11 @@ an em dash — someone will plan a week around it.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from statistics import median
 
+from quotalens.boost import boosted_windows
 from quotalens.runway import MIN_COMPARE_WINDOWS, SESSION_LENGTH_S
 from quotalens.sessions import SessionWindow, coverage_pct
 
@@ -127,14 +129,23 @@ def is_complete(window: SessionWindow, now: int) -> bool:
     return not window.is_current and window.ends_at <= now
 
 
-def window_costs(windows: list[SessionWindow], key: str, now: int) -> list[WindowCost]:
+def window_costs(
+    windows: list[SessionWindow],
+    key: str,
+    now: int,
+    boost_ts: Sequence[int] = (),
+) -> list[WindowCost]:
     """Every complete session window that is a fair measurement of ``key``'s cost.
 
-    Four exclusions, each for a different reason to distrust the pair of numbers:
+    Six exclusions, each a different reason to distrust the pair of numbers:
 
     * still running — the cost is not final;
     * partially observed — the badge says "3% observed"; that is not a window;
     * the weekly limit reset inside it — the delta is not a consumption at all;
+    * the limit was *boosted* inside it — the delta is consumption minus a raise,
+      and the payload never says how big the raise was, so the two cannot be
+      separated. A window that cannot be costed is honest; one costed wrong is not,
+      and a boost makes this estimate quietly optimistic in the owner's favour;
     * too small to divide — a two-point session makes the ratio mostly noise;
     * the weekly limit was already at its cap — it could not move, so zero is not
       evidence that the window was free.
@@ -144,7 +155,7 @@ def window_costs(windows: list[SessionWindow], key: str, now: int) -> list[Windo
         delta = window.deltas.get(key)
         if delta is None or not is_complete(window, now):
             continue
-        if delta.reset:
+        if delta.reset or boosted_windows(boost_ts, window.started_at, window.ends_at):
             continue
         elapsed = max(0, min(window.ends_at, now) - window.started_at)
         if coverage_pct(window.covered_s, elapsed) < MIN_COVERAGE_PCT:
@@ -159,14 +170,19 @@ def window_costs(windows: list[SessionWindow], key: str, now: int) -> list[Windo
     return out
 
 
-def compute_budget(limit: WeeklyLimit, windows: list[SessionWindow], now: int) -> Budget:
+def compute_budget(
+    limit: WeeklyLimit,
+    windows: list[SessionWindow],
+    now: int,
+    boost_ts: Sequence[int] = (),
+) -> Budget:
     """How many more session windows ``limit`` will pay for, and how long there is to spend them."""
     headroom = None if limit.pct is None else max(0.0, 100.0 - limit.pct)
     clock = None
     if limit.reset_ts is not None and limit.reset_ts > now:
         clock = (limit.reset_ts - now) / SESSION_LENGTH_S
 
-    costs = window_costs(windows, limit.key, now)
+    costs = window_costs(windows, limit.key, now, boost_ts)
     empty = Budget(
         limit.key,
         limit.label,
@@ -252,7 +268,10 @@ def constraint_note(budgets: list[Budget]) -> str:
 
 
 def compute_budgets(
-    limits: list[WeeklyLimit], windows: list[SessionWindow], now: int
+    limits: list[WeeklyLimit],
+    windows: list[SessionWindow],
+    now: int,
+    boost_ts: Sequence[int] = (),
 ) -> BudgetReport:
-    budgets = [compute_budget(limit, windows, now) for limit in limits]
+    budgets = [compute_budget(limit, windows, now, boost_ts) for limit in limits]
     return BudgetReport(budgets, constraint_note(budgets))

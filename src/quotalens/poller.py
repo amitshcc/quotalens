@@ -23,6 +23,7 @@ from quotalens.alerts import (
     post_webhook,
     standing,
 )
+from quotalens.boost import BOOST_KIND, detect_boosts
 from quotalens.burn import burn_rate as compute_burn_rate
 from quotalens.burn import min_trusted_span
 from quotalens.client import (
@@ -37,7 +38,7 @@ from quotalens.parse import ParseError, SpendReading, UsageParse, parse_spend, p
 from quotalens.secrets import Redactor, SecretStore, SecretStoreError
 from quotalens.sessions import MODEL_VIOLATION_KIND, RATE_WINDOW, reset_model_violation
 from quotalens.sessions import rebuild_recent as rebuild_recent_sessions
-from quotalens.store import Store
+from quotalens.store import QuotaRow, Store
 
 log = logging.getLogger(__name__)
 
@@ -335,8 +336,13 @@ class Poller:
         self.status.org_resolved = client.org_id is not None
         self._store.record_sample(now, "usage", usage_raw)  # keep raw even if parsing fails
         parsed = parse_usage(usage_raw)
+        # Read the previous reading before this one replaces it as newest. From the
+        # store rather than from memory, so a boost across a restart is still seen —
+        # the real one was observed across six and a half hours of downtime.
+        previous = self._store.latest_quota()
         self._store.record_quota(now, parsed.readings)
         self._note_diagnostics(parsed, now)
+        self._check_boost(now, previous, parsed)
 
         await self._poll_overage(client, now, usage_raw)
         try:
@@ -367,6 +373,20 @@ class Poller:
         log.info("poll ok: %d readings", len(parsed.readings))
         return self.schedule.on_success()
 
+    def _check_boost(self, now: int, previous: list[QuotaRow], parsed: UsageParse) -> None:
+        """Record a raised limit once, where the readings arrive.
+
+        Detected here rather than per view so every consumer — the events list, the
+        chart marker, the meter note, the history row and the budget's cost estimate —
+        reads one conclusion instead of each deciding for itself.
+        """
+        self._rate_window_boosted = False
+        for boost in detect_boosts(previous, parsed.readings, now, not parsed.fallback_used):
+            self._store.record_event(BOOST_KIND, boost.detail(), ts=now)
+            log.info("quota boost: %s", boost.detail())
+            if boost.window == RATE_WINDOW:
+                self._rate_window_boosted = True
+
     def _check_reset_model(self, now: int, parsed: UsageParse) -> None:
         """The session model is an inference; this is the check that it still holds."""
         current = next((r for r in parsed.readings if r.window == RATE_WINDOW), None)
@@ -393,6 +413,12 @@ class Poller:
         self.status.burn_rate = rate
         kind = self._detector.update(rate)
         if kind is None or rate is None:
+            return
+        if kind == CLEARED_KIND and getattr(self, "_rate_window_boosted", False):
+            # The rate collapsed because the limit was raised, not because anyone
+            # stopped burning it. The detector's own state still clears — a later
+            # crossing is a real one — but this is not a recovery to announce.
+            log.info("burn alert cleared by a quota boost, not by a change in rate")
             return
         current = next((r for r in parsed.readings if r.window == RATE_WINDOW), None)
         headroom = None if current is None else max(0.0, 100.0 - current.pct)

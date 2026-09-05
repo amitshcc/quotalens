@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import pairwise
 from typing import Any
 
 from quotalens.alerts import ALERT_KIND, CLEARED_KIND, standing
+from quotalens.boost import BOOST_KIND, boosted_windows
 from quotalens.budget import Budget, BudgetReport, WeeklyLimit, compute_budgets
 from quotalens.burn import BurnResult, burn_rate, min_trusted_span, split_at_resets
 from quotalens.config import Settings
@@ -270,6 +272,7 @@ class ChartView:
     data_json: str  # for the hover readout
     collecting_text: str  # non-empty on cold start instead of a grid
     session_x: list[float] = field(default_factory=list)  # session window starts
+    boost_x: list[float] = field(default_factory=list)  # a limit was raised here
     idle: list[tuple[float, float]] = field(default_factory=list)  # no window running
     idle_minutes: int = 0
     now_x: float = 0.0  # where "now" falls; beyond it the chart is the future
@@ -408,6 +411,10 @@ def build_dashboard(
     refresh_s = view.refresh_s(refresh_default)
 
     latest = store.latest_quota()
+    # One conclusion, read from the events the poller wrote, and shared by the chart,
+    # the meters, the history rows and the budget's cost estimate. Never re-derived.
+    boosts = store.recent_events(limit=200, kind=BOOST_KIND)
+    boost_ts = [int(e.ts) for e in boosts]
     order = _window_order(status, latest)
     slots = assign_slots(order)
     oldest = store.oldest_ts()
@@ -444,6 +451,7 @@ def build_dashboard(
             burn_elevated,
             now,
             settings.poll_interval_s,
+            _boost_in_current_window(boosts, row.label or row.window, row, now),
         )
         for row in sorted(latest, key=lambda r: slots[r.window])
     ]
@@ -480,6 +488,15 @@ def build_dashboard(
         range_rows, slots, labels, rng, view, gap_threshold, now, withheld, prior_ts
     )
     _mark_sessions(chart, sessions_all, rng, now)
+    # One conclusion, read from the events the poller wrote, and shared by the chart,
+    # the meters, the history rows and the budget's cost estimate.
+    # One marker per moment: two windows boosted together draw one rule, not two on
+    # top of each other with their labels overlapping.
+    chart.boost_x = [
+        CHART_L + (ts - rng.start) / max(1, rng.end - rng.start) * (CHART_W - CHART_L - CHART_R)
+        for ts in sorted(set(boost_ts))
+        if rng.start < ts < rng.end
+    ]
     _mark_runway(chart, burn.runway, session, rng, now, withheld)
     sort = view.sort_key or "recent"
     listed = (
@@ -488,7 +505,9 @@ def build_dashboard(
         else sessions_all
     )
     page = listed if view.history_all else listed[:HISTORY_ROWS]
-    history = _history_view(page, labels, slots, view, settings.poll_interval_s, now, store)
+    history = _history_view(
+        page, labels, slots, view, settings.poll_interval_s, now, store, boost_ts
+    )
     history.total = len(sessions_all)
     if len(sessions_all) > HISTORY_ROWS:
         if view.history_all:
@@ -499,7 +518,7 @@ def build_dashboard(
     # Withheld readings mean the weekly percentages are not trusted, and a budget
     # computed from an untrusted headroom is exactly the confident wrong number
     # this whole module refuses to print.
-    budget = compute_budgets(weekly_limits(latest, withheld), sessions_all, now)
+    budget = compute_budgets(weekly_limits(latest, withheld), sessions_all, now, boost_ts)
 
     # A sub-capped window is excluded: Fable at 100% is half the weekly pool spent,
     # and an account chip reading "critical" for that is simply false.
@@ -749,6 +768,31 @@ def window_is_stale(row: QuotaRow, interval_s: int, now: int) -> bool:
     return now - row.ts > STALE_AFTER_INTERVALS * max(1, interval_s)
 
 
+WEEKLY_LENGTH_S = 7 * 86400  # for bounding "is this boost inside the window on screen"
+
+
+def _boost_in_current_window(events: list[Any], label: str, row: QuotaRow, now: int) -> int | None:
+    """The most recent boost inside the window this reading belongs to, if any.
+
+    Bounded by the window rather than by a fixed age: the note is about the window
+    on screen and should disappear when that window resets, not on a timer.
+
+    Matched by the *stored* label, which is what the detector wrote into the event
+    text: "Weekly — all models" for the weekly window, "Fable" for the scoped one.
+    Matching on the display label instead silently missed Fable, whose heading reads
+    "Weekly — Fable" while its stored label does not.
+    """
+    reset = parse_iso(row.resets_at)
+    if reset is None:
+        return None
+    length = SESSION_LENGTH_S if row.window == RATE_WINDOW else WEEKLY_LENGTH_S
+    started = int(reset.timestamp()) - length
+    inside = [
+        int(e.ts) for e in events if started <= int(e.ts) <= now and str(e.detail).startswith(label)
+    ]
+    return max(inside) if inside else None
+
+
 def _window_open(row: QuotaRow, now: int) -> bool:
     reset = parse_iso(row.resets_at)
     return reset is not None and reset.timestamp() > now
@@ -785,11 +829,20 @@ def _window_view(
     burn_elevated: bool,
     now: int,
     interval_s: int = 60,
+    boost_ts: int | None = None,
 ) -> WindowView:
     label = display_label(row.window, row.label)
     subcap = is_subcapped(row.window)
     note = SUBCAP_NOTE if subcap else ""
     note_title = SUBCAP_TITLE if subcap else ""
+    if boost_ts is not None:
+        # Information, not a state: nothing is wrong with this window, something good
+        # happened to it. Two words on the label line, never a chip.
+        note = f"boosted {clock(boost_ts)}"
+        note_title = (
+            f"The limit on this window was raised at {clock(boost_ts)}: the level fell "
+            "without the window resetting. The size of the raise is not in the payload."
+        )
     lapsed = window_has_lapsed(row, now)
     if withheld or lapsed or window_is_stale(row, interval_s, now):
         return WindowView(
@@ -1138,6 +1191,7 @@ def _history_view(
     interval_s: int,
     now: int,
     store: Store | None = None,
+    boost_ts: Sequence[int] = (),
 ) -> HistoryView:
     keys = sorted(
         {k for w in windows for k in w.deltas if k.startswith("limit:")},
@@ -1153,6 +1207,15 @@ def _history_view(
         note = ""
         if abs(w.peak_pct - w.final_pct) > PEAK_FINAL_NOTE_PTS:
             note = f"Peak {fmt_pct(w.peak_pct)}%, closed at {fmt_pct(w.final_pct)}%"
+        # A boost inside the window makes its weekly delta smaller than what was
+        # consumed, so the row says so rather than letting the number read as usage.
+        boosted = boosted_windows(boost_ts, w.started_at, w.ends_at)
+        if boosted:
+            note = (
+                "A limit was raised inside this window, so the weekly change below is "
+                "consumption minus the raise. Left out of the cost estimate: the payload "
+                "does not say how large the raise was."
+            ) + (f" {note}" if note else "")
         spark = ""
         if store is not None:
             trace = store.quota_series(w.first_ts, window=RATE_WINDOW, until_ts=w.last_ts)
@@ -1169,7 +1232,13 @@ def _history_view(
                 samples=w.samples,
                 coverage_pct=coverage,
                 badge=(
-                    f"partial, {coverage:.0f}% observed" if coverage < PARTIAL_COVERAGE_PCT else ""
+                    "boosted"
+                    if boosted
+                    else (
+                        f"partial, {coverage:.0f}% observed"
+                        if coverage < PARTIAL_COVERAGE_PCT
+                        else ""
+                    )
                 ),
                 spark=spark,
                 thin=coverage < THIN_COVERAGE_PCT,
