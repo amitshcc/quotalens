@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import pairwise
@@ -258,6 +258,17 @@ class SeriesView:
     label_y: float
     hidden: bool
     toggle_href: str
+    drops: list[str] = field(default_factory=list)  # boost steps, drawn in the boost colour
+
+
+@dataclass(frozen=True)
+class BoostMark:
+    """The rocket and its two label lines, placed once for a moment that was boosted."""
+
+    x: float  # the step's own x, which is where the eye already is
+    y: float  # the top of the highest drop at this moment
+    heading: str  # "limits boosted"
+    detail: str  # "01:30 · 98% → 7%", or both windows on one line when both moved
 
 
 @dataclass
@@ -272,7 +283,7 @@ class ChartView:
     data_json: str  # for the hover readout
     collecting_text: str  # non-empty on cold start instead of a grid
     session_x: list[float] = field(default_factory=list)  # session window starts
-    boost_x: list[float] = field(default_factory=list)  # a limit was raised here
+    boost_marks: list[BoostMark] = field(default_factory=list)  # one per moment, not per window
     idle: list[tuple[float, float]] = field(default_factory=list)  # no window running
     idle_minutes: int = 0
     now_x: float = 0.0  # where "now" falls; beyond it the chart is the future
@@ -415,6 +426,13 @@ def build_dashboard(
     # the meters, the history rows and the budget's cost estimate. Never re-derived.
     boosts = store.recent_events(limit=200, kind=BOOST_KIND)
     boost_ts = [int(e.ts) for e in boosts]
+    # Which window each boost was for, matched on the stored label the detector wrote
+    # into the event. Without this the crimson step lands on every series that happens
+    # to have a sample straddling that instant, including one that rose.
+    boost_windows = {
+        row.window: [int(e.ts) for e in boosts if str(e.detail).startswith(row.label or row.window)]
+        for row in latest
+    }
     order = _window_order(status, latest)
     slots = assign_slots(order)
     oldest = store.oldest_ts()
@@ -485,18 +503,20 @@ def build_dashboard(
     if prior_ts is None and oldest is not None and oldest < rng.start:
         prior_ts = rng.start  # history reaches back past the range: the left edge counts
     chart = _chart_view(
-        range_rows, slots, labels, rng, view, gap_threshold, now, withheld, prior_ts
+        range_rows,
+        slots,
+        labels,
+        rng,
+        view,
+        gap_threshold,
+        now,
+        withheld,
+        prior_ts,
+        boost_windows,
     )
     _mark_sessions(chart, sessions_all, rng, now)
     # One conclusion, read from the events the poller wrote, and shared by the chart,
     # the meters, the history rows and the budget's cost estimate.
-    # One marker per moment: two windows boosted together draw one rule, not two on
-    # top of each other with their labels overlapping.
-    chart.boost_x = [
-        CHART_L + (ts - rng.start) / max(1, rng.end - rng.start) * (CHART_W - CHART_L - CHART_R)
-        for ts in sorted(set(boost_ts))
-        if rng.start < ts < rng.end
-    ]
     _mark_runway(chart, burn.runway, session, rng, now, withheld)
     sort = view.sort_key or "recent"
     listed = (
@@ -1023,6 +1043,30 @@ def _bucket(rows: list[QuotaRow], bucket_s: int) -> list[QuotaRow]:
     return list(kept.values())
 
 
+def _boost_detail(
+    moment: int, moved: list[tuple[str, float, float, float]], labels: dict[str, str]
+) -> str:
+    """The second label line: the time, then what moved. Named only when more than one did."""
+    when_text = clock(moment)
+    if len(moved) == 1:
+        _, before, after, _ = moved[0]
+        return f"{when_text} · {before:.0f}% → {after:.0f}%"
+    parts = [
+        f"{short_label(window, labels.get(window))} {before:.0f}% → {after:.0f}%"
+        for window, before, after, _ in moved
+    ]
+    return f"{when_text} · " + ", ".join(parts)
+
+
+def _boost_between(
+    previous: QuotaRow | None, current: QuotaRow, boost_ts: Sequence[int]
+) -> int | None:
+    """The boost moment straddled by these two samples, if any."""
+    if previous is None:
+        return None
+    return next((ts for ts in boost_ts if previous.ts < ts <= current.ts), None)
+
+
 def _chart_view(
     series_rows: dict[str, list[QuotaRow]],
     slots: dict[str, int],
@@ -1033,6 +1077,7 @@ def _chart_view(
     now: int,
     withheld: bool,
     prior_ts: int | None = None,
+    boost_ts: Mapping[str, Sequence[int]] | None = None,
 ) -> ChartView:
     start, end = rng.start, rng.end
     span = max(1, end - start)
@@ -1051,16 +1096,37 @@ def _chart_view(
     bucket_s = max(1, span // MAX_POINTS_PER_SERIES)
     series: list[SeriesView] = []
     data: list[dict[str, Any]] = []
+    steps: dict[int, list[tuple[str, float, float, float]]] = {}
     for window, rows in visible.items():
         hidden = window in view.hidden
         paths: list[str] = []
+        drops: list[str] = []
         pts_out: list[list[float]] = []
         for segment in split_at_resets(rows):
             seg = _bucket(segment, bucket_s)
-            pts = [f"{x_of(r.ts):.1f} {y_of(r.pct):.1f}" for r in seg]
-            if len(pts) == 1:
-                pts.append(pts[0])
-            paths.append("M" + " L".join(pts))
+            run: list[str] = []
+            for index, r in enumerate(seg):
+                previous = seg[index - 1] if index else None
+                moment = _boost_between(previous, r, (boost_ts or {}).get(window, ()))
+                if moment is not None and previous is not None:
+                    # The fall was instantaneous and we learned it at `r`. Break the
+                    # line rather than sloping across the hours in between: nothing
+                    # was observed there, and a diagonal would draw a decline the
+                    # owner caused instead of a step he was given.
+                    paths.append("M" + " L".join(run))
+                    drops.append(
+                        f"M{x_of(r.ts):.1f} {y_of(previous.pct):.1f} "
+                        f"L{x_of(r.ts):.1f} {y_of(r.pct):.1f}"
+                    )
+                    steps.setdefault(moment, []).append(
+                        (window, previous.pct, r.pct, y_of(previous.pct))
+                    )
+                    run = []
+                run.append(f"{x_of(r.ts):.1f} {y_of(r.pct):.1f}")
+            if len(run) == 1:
+                run.append(run[0])
+            if run:
+                paths.append("M" + " L".join(run))
             pts_out.extend([r.ts, r.pct] for r in seg)
         last = rows[-1]
         series.append(
@@ -1074,12 +1140,23 @@ def _chart_view(
                 y_of(last.pct),
                 hidden,
                 view.href(hidden=view.toggled(window)),
+                [] if hidden else drops,
             )
         )
         if not hidden:
             data.append(
                 {"key": window, "label": series[-1].label, "slot": slots[window], "pts": pts_out}
             )  # the hover readout uses the same short name as the end label
+    # One rocket and one label per moment, however many windows moved in that poll.
+    boost_marks = [
+        BoostMark(
+            x_of(moment),
+            min(top for _, _, _, top in moved),
+            "limits boosted",
+            _boost_detail(moment, moved, labels),
+        )
+        for moment, moved in sorted(steps.items())
+    ]
     _spread_labels(series)
     series.sort(key=lambda s: -s.slot)  # draw the hero trace last, on top
 
@@ -1115,6 +1192,7 @@ def _chart_view(
         gap_minutes,
         json.dumps(payload, separators=(",", ":")),
         collecting,
+        boost_marks=boost_marks,
     )
 
 

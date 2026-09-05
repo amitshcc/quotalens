@@ -268,3 +268,22 @@ inference from source: write down what was on screen or in the DOM.
 - 2026-09-05: even once recorded, the boost was not in the sidebar — six slots taken by
       burn-rate crossings. Collapsing consecutive identical events was not enough here
       because those six were all distinct, so the newest boost is pinned into the list.
+- 2026-09-05: the boost's fall rendered as a twelve-hour diagonal, because no samples
+      exist across the outage and the renderer joins the last point before a gap to the
+      first point after. It read as a gradual decline the owner caused; it was an
+      instantaneous step he was given. The series now breaks at a boost and draws the
+      fall as a vertical. General gaps are still interpolated — same class of invention,
+      logged below as its own issue.
+- 2026-09-05: the crimson step first landed on every series with a sample straddling
+      the boost instant, including the Session window, which had *risen* 0% -> 4% there.
+      Boosts are per window and the mark has to be matched to the window that moved.
+
+## Open: gaps elsewhere are still interpolated
+
+Outside a boost, a gap in collection is drawn as a straight line between the last
+sample before it and the first after. That invents a shape for hours nobody
+observed, which is the same fault the boost step just fixed. The hatched "not
+collected" band marks where it happens, so the information is on screen, but the
+trace still asserts a path through it. Deciding what a gap should look like — a
+break, a dotted bridge, something else — is a design question this change did not
+carry.
