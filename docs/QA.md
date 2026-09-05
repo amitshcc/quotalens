@@ -244,3 +244,9 @@ inference from source: write down what was on screen or in the DOM.
       coloured by `magnitude_state`, a level. Two adjacent elements, one palette, two
       meanings: at 20% used with a steep climb the hero went red while the meter stayed
       quiet, and both were behaving as designed.
+- 2026-09-05: "poll now" sat in the chart toolbar, which since the two-column layout
+      can fall below the fold on a short viewport. It is in the header now, beside
+      `#polled`: the label says how stale this is and the button makes it fresh, so
+      the reason to click is next to the click. Check after a few auto-refresh cycles —
+      the header is inside `#app` and is replaced wholesale, so the button only keeps
+      working because `app.js` delegates submit on `document` rather than binding it.
