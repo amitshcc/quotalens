@@ -9,7 +9,7 @@ import time
 import pytest
 
 from conftest import COOKIE, USAGE_DOCUMENTED
-from quotalens import cli
+from quotalens import cli, config
 from quotalens.client import AuthError
 from quotalens.secrets import MemorySecretStore
 
@@ -79,11 +79,11 @@ def test_serve_rejects_interval_below_floor(capsys) -> None:
 def test_settings_env_override(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("QUOTALENS_PORT", "9999")
     monkeypatch.setenv("QUOTALENS_DB", str(tmp_path / "x.db"))
-    settings = cli.settings_from_env()
+    settings = config.load_settings()
     assert settings.port == 9999 and settings.db_path == tmp_path / "x.db"
     monkeypatch.setenv("QUOTALENS_INTERVAL", "abc")
     with pytest.raises(cli.SettingsError):
-        cli.settings_from_env()
+        config.load_settings()
 
 
 def test_read_hidden_line_from_pipe() -> None:
@@ -135,7 +135,7 @@ def test_auth_force_stores_despite_failure(monkeypatch, capsys) -> None:
 
 def test_user_agent_flag_and_env(monkeypatch) -> None:
     monkeypatch.setenv("QUOTALENS_USER_AGENT", "EnvUA/2")
-    assert cli.settings_from_env().user_agent == "EnvUA/2"
+    assert config.load_settings().user_agent == "EnvUA/2"
     captured = {}
 
     async def fake_verify(cookie: str, settings):

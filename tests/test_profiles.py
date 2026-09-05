@@ -13,7 +13,7 @@ from quotalens.config import (
     default_db_path,
     default_port,
     normalise_profile,
-    settings_from_env,
+    load_settings,
 )
 from quotalens.secrets import KEYRING_USERNAME, keyring_username
 
@@ -47,14 +47,14 @@ def test_the_three_namespaced_defaults() -> None:
 def test_a_profile_moves_the_defaults_but_the_environment_still_wins(monkeypatch) -> None:
     for key in ("QUOTALENS_PORT", "QUOTALENS_DB", "QUOTALENS_PROFILE"):
         monkeypatch.delenv(key, raising=False)
-    work = settings_from_env("work")
+    work = load_settings("work")
     assert work.profile == "work"
     assert work.port == default_port("work") and work.db_path.name == "quotalens-work.db"
 
     monkeypatch.setenv("QUOTALENS_PROFILE", "personal")
-    assert settings_from_env().profile == "personal"
+    assert load_settings().profile == "personal"
     monkeypatch.setenv("QUOTALENS_PORT", "9999")
-    assert settings_from_env("work").port == 9999
+    assert load_settings("work").port == 9999
 
 
 def test_each_profile_owns_its_pid_log_and_runtime_files(tmp_path) -> None:

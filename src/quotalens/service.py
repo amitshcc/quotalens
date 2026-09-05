@@ -344,20 +344,58 @@ def port_in_use(host: str, port: int) -> bool:
     return False
 
 
+def port_holder(port: int) -> str | None:
+    """What is listening on ``port``, as "name (pid 1234)", or ``None``.
+
+    Best effort by design: this runs inside an error path, so every failure mode
+    -- tool absent, permission denied, unparseable output, slow -- degrades to
+    ``None`` and a message that is merely less specific. It must never raise, and
+    it must never be slow enough to be mistaken for a hang.
+    """
+    if sys.platform.startswith("win"):
+        cmd = ["netstat", "-ano", "-p", "TCP"]
+    else:
+        cmd = ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"]
+    try:
+        out = subprocess.run(  # fixed argv, no shell: `port` is an int by then
+            cmd, capture_output=True, text=True, timeout=2.0, check=False
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for line in out.splitlines()[1:]:
+        parts = line.split()
+        if sys.platform.startswith("win"):
+            # Proto Local Foreign State PID -- match the local address's port.
+            if len(parts) >= 5 and parts[1].rsplit(":", 1)[-1] == str(port):
+                return f"pid {parts[-1]}"
+        elif len(parts) >= 2:
+            return f"{parts[0]} (pid {parts[1]})"
+    return None
+
+
 def port_conflict_message(host: str, port: int, profile: str, derived: bool = False) -> str:
-    """Name the port, the profile and the flag that fixes it. Never a traceback."""
+    """Name the port, what holds it, and both ways to change it. Never a traceback."""
     who = f'the "{profile}" profile' if profile else "QuotaLens"
-    derived = (
+    derived_note = (
         f" Nothing chose {port}: it is derived from the profile name {profile!r}, so it"
         " is not obvious what else might want it."
         if derived and profile
         else ""
     )
     flag = f" --profile {profile}" if profile else ""
+    holder = port_holder(port)
+    culprit = (
+        f"It is held by {holder}."
+        if holder
+        else "Another QuotaLens instance, or something unrelated, is on it."
+    )
     return (
-        f"{host}:{port} is already in use, so {who} cannot start.{derived}\n"
-        f"Another QuotaLens instance, or something unrelated, is on it. Pick another:\n"
-        f"    quotalens{flag} start --port {port + 1}"
+        f"{host}:{port} is already in use, so {who} cannot start.{derived_note}\n"
+        f"{culprit}\n"
+        f"Use another port once:\n"
+        f"    quotalens{flag} start --port {port + 1}\n"
+        f"Or change it for good, so stop, status and restart find it too:\n"
+        f"    quotalens{flag} config set port {port + 1}"
     )
 
 
@@ -424,7 +462,11 @@ def status(
         current = fetch(f"{base}/api/quota/current")
         for reading in current.get("readings", []):
             name = reading.get("display") or reading["label"]
-            lines.append(f"  {name:<22} {reading['pct']:6.1f}%")
+            pct = reading.get("pct")
+            # A lapsed or unverified window has no percentage. DESIGN.md 5: remove
+            # the value and say why, rather than format None or print 0.0%.
+            shown = f"{pct:6.1f}%" if isinstance(pct, int | float) else "     --"
+            lines.append(f"  {name:<22} {shown}")
     except (urllib.error.URLError, OSError, ValueError, KeyError):
         lines.append("  (windows unavailable)")
     lines.append(f"log: {log_path(data_dir, profile)}")

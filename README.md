@@ -69,6 +69,40 @@ It feeds ntfy, Discord, Slack, Pushover or Home Assistant. The body:
 tell them apart. There is no organisation id, no account identifier and no
 cookie in it, by design.
 
+## Settings that survive a restart
+
+Flags and `QUOTALENS_*` variables still work and still win. What is new is a
+place to put a choice so you do not retype it:
+
+```sh
+quotalens config set port 9123     # then `start` binds there with no flag
+quotalens config get port
+quotalens config unset port
+quotalens config list              # every setting, and where its value came from
+```
+
+`config list` is the one worth knowing. It prints the merged result **and names
+the layer each value came from**, because "why is it not the port I set" is a
+precedence question:
+
+```
+file: ~/Library/Application Support/quotalens/config.json
+  port          9900    flag
+  interval      60      default
+  poll_enabled  True    default
+```
+
+Precedence, highest first: **CLI flag → `QUOTALENS_*` → `config.json` →
+built-in default.** The file lives beside the database and is profile-suffixed
+the same way (`config-work.json`). It is plain JSON, written atomically, and
+**it never contains your cookie** — that stays in the OS keyring, so the config
+file is safe to paste into an issue.
+
+Two settings are deliberately CLI-only. The **port** is the address of the page
+the settings live on, so changing it from that page means the response never
+arrives. The **cookie** is a secret and belongs in the keyring. Everything else
+can be set either way.
+
 ## Two accounts
 
 A profile is a second account. It gets its own keyring entry, its own database,

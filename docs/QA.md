@@ -307,3 +307,18 @@ carry.
       before now had no marker at all and the chart gave no cue where the present was.
 - 2026-09-05: the hero read "Exhausted at 01:34" — past tense for a projection about the
       future. Now "Will run out at 01:34, 3h 17m before the reset."
+- 2026-09-05: `quotalens status` crashed with `TypeError: unsupported format string
+      passed to NoneType.__format__` whenever any window's percentage was unknown —
+      `service.py` formatted `reading['pct']` as `%6.1f` with no None branch. Present
+      since the service command shipped (7806017); it only surfaced once a lapsed
+      session window started reporting a null percentage, which is the same shape
+      prompt 05 fixed on the dashboard. The CLI had not been given the epistemic rule
+      the page already had: unknown is removed and explained, never formatted. Now an
+      em dash.
+- 2026-09-05: `QUOTALENS_POLL_ENABLED=0` was silently ignored. `Settings.poll_enabled`
+      existed and `api.py` honoured it, but no loader ever read the environment
+      variable, so a scratch QA instance polled the live vendor on startup — twice in
+      this session's own verification runs. A declared setting that no layer can set
+      reads as supported, which is worse than absent. `tests/test_config_store.py`
+      now parametrises over every config key and fails if any one of them cannot be
+      set from the environment or the file.

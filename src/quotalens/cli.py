@@ -17,15 +17,21 @@ from typing import IO, Any
 from quotalens import __version__, service
 from quotalens.client import ClaudeClient, ClientError, has_session_key
 from quotalens.config import (
+    CONFIG_KEYS,
+    CONFIG_KEYS_BY_NAME,
     DEFAULT_SAMPLE_KEEP,
     MIN_POLL_INTERVAL_S,
     Settings,
     SettingsError,
+    config_path,
     default_data_dir,
     default_db_path,
     default_port,
-    settings_from_env,
+    parse_config_value,
+    read_config_file,
+    resolve_settings,
     validate,
+    write_config_file,
 )
 from quotalens.export import RAW_WARNING, mask_uuids
 from quotalens.parse import ParseError, parse_spend, parse_usage
@@ -560,6 +566,78 @@ def cmd_service(args: argparse.Namespace, settings: Settings, secrets: SecretSto
     return 0
 
 
+def _flags(args: argparse.Namespace) -> dict[str, object]:
+    """The config keys this invocation set on the command line.
+
+    Only what was actually typed: argparse leaves the rest ``None``, and a
+    ``None`` here means "this layer has no opinion", not "set it to nothing".
+    """
+    return {
+        "port": getattr(args, "port", None),
+        "interval": getattr(args, "interval", None),
+        "lookback": getattr(args, "lookback", None),
+        "burn_alert": getattr(args, "burn_alert", None),
+        "sample_keep": getattr(args, "keep", None),
+    }
+
+
+def cmd_config(args: argparse.Namespace, settings: Settings, secrets: SecretStore) -> int:
+    path = config_path(settings.profile, args.config_dir)
+    if args.action == "list":
+        width = max(len(k.name) for k in CONFIG_KEYS)
+        print(f"file: {path}{'' if path.exists() else '  (none yet)'}")
+        for key in CONFIG_KEYS:
+            value = getattr(settings, key.field)
+            shown = "(unset)" if value is None else str(value)
+            print(f"  {key.name:<{width}}  {shown:<28}  {args.config_sources[key.name]}")
+        return 0
+
+    if args.key not in CONFIG_KEYS_BY_NAME:
+        known = ", ".join(k.name for k in CONFIG_KEYS)
+        print(f"unknown key {args.key!r}. Known keys: {known}", file=sys.stderr)
+        return 1
+    key = CONFIG_KEYS_BY_NAME[args.key]
+    stored = read_config_file(path)
+
+    if args.action == "get":
+        source = args.config_sources[key.name]
+        value = getattr(settings, key.field)
+        print("(unset)" if value is None else value)
+        if source != "file":
+            print(f"note: this value came from the {source}, not {path}", file=sys.stderr)
+        return 0
+
+    if args.action == "unset":
+        if key.name not in stored:
+            print(f"{key.name} was not set in {path}")
+            return 0
+        del stored[key.name]
+        write_config_file(path, stored)
+        print(f"unset {key.name}; it falls back to {key.default(settings.profile)}")
+        return 0
+
+    # set: validate the whole merged result before writing, so a bad value is
+    # refused rather than stored and then refused on every later start.
+    value = parse_config_value(key, args.value, f"{key.name}")
+    try:
+        validate(settings.with_overrides(**{key.field: value}))
+    except SettingsError as exc:
+        print(f"not saved: {exc}", file=sys.stderr)
+        return 1
+    stored[key.name] = value
+    write_config_file(path, stored)
+    print(f"{key.name} = {value}   ({path})")
+    if args.config_sources[key.name] in ("flag", "env"):
+        print(
+            f"note: a {args.config_sources[key.name]} is overriding this right now, "
+            "so it will take effect once that is gone",
+            file=sys.stderr,
+        )
+    if key.name == "port":
+        print("restart for it to take effect: `quotalens restart`")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="quotalens", description="QuotaLens: local monitor for LLM subscription quota."
@@ -643,6 +721,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="install: start at every login from now on. uninstall: undo it. status: is it set up?",
     )
     svc.add_argument("--interval", type=int, help="poll interval for the installed service")
+
+    cfg = sub.add_parser("config", help="read and write the persisted settings")
+    cfg.add_argument("action", choices=["list", "get", "set", "unset"])
+    cfg.add_argument("key", nargs="?", help="one of: " + ", ".join(k.name for k in CONFIG_KEYS))
+    cfg.add_argument("value", nargs="?")
+    # `config list` accepts the same override flags the real commands do, so the
+    # precedence question ("why is it not the port I set?") is answerable with the
+    # exact invocation that surprised you.
+    cfg.add_argument("--port", type=int, help="show what this flag would resolve to")
+    cfg.add_argument("--interval", type=int, help="show what this flag would resolve to")
     return parser
 
 
@@ -652,26 +740,22 @@ def main(argv: Sequence[str] | None = None, secrets: SecretStore | None = None) 
     scratch_dir = args.data_dir is not None
     if args.data_dir is None:
         args.data_dir = default_data_dir()
+    # A scratch --data-dir gets its own config.json for the same reason it gets its
+    # own database: a QA instance must not read, and must not write, the real one.
+    config_dir = args.data_dir if scratch_dir else None
     _setup_logging(args.verbose, getattr(args, "log_file", None))
     try:
-        settings = settings_from_env(args.profile).with_overrides(user_agent=args.user_agent)
+        resolution = resolve_settings(args.profile, data_dir=config_dir, flags=_flags(args))
+        settings = resolution.settings.with_overrides(user_agent=args.user_agent)
+        args.config_sources = resolution.sources
+        args.config_dir = config_dir
         if scratch_dir and not os.environ.get("QUOTALENS_DB") and not getattr(args, "db", None):
             # A scratch data directory must never write to the real database by default.
             settings = settings.with_overrides(
                 db_path=args.data_dir / default_db_path(settings.profile).name
             )
         if args.command in DB_FLAG_COMMANDS:
-            settings = settings.with_overrides(db_path=getattr(args, "db", None))
-        if args.command == "serve":
-            settings = validate(
-                settings.with_overrides(
-                    port=args.port,
-                    poll_interval_s=args.interval,
-                    db_path=args.db,
-                    burn_lookback_min=args.lookback,
-                    burn_alert_pts_per_hour=args.burn_alert,
-                )
-            )
+            settings = validate(settings.with_overrides(db_path=getattr(args, "db", None)))
     except SettingsError as exc:
         parser.error(str(exc))
     if secrets is None:
@@ -689,6 +773,7 @@ def main(argv: Sequence[str] | None = None, secrets: SecretStore | None = None) 
         "service": cmd_service,
         "forget": cmd_forget,
         "rescan": cmd_rescan,
+        "config": cmd_config,
     }
     try:
         return handlers[args.command](args, settings, secrets)

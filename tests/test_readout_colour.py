@@ -27,7 +27,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from quotalens.api import create_app
-from quotalens.config import settings_from_env
+from quotalens.config import load_settings
 from quotalens.parse import QuotaReading
 from quotalens.secrets import MemorySecretStore
 from quotalens.store import Store
@@ -50,7 +50,7 @@ def render(
 ):
     """A session at ``pct`` used, optionally climbing, rendered through the whole app."""
     now = int(time.time())
-    settings = settings_from_env().with_overrides(
+    settings = load_settings().with_overrides(
         db_path=Path(tempfile.mkdtemp()) / "t.db", burn_alert_pts_per_hour=burn_alert
     )
     store = Store(settings.db_path)

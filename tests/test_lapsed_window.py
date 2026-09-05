@@ -26,7 +26,7 @@ from fastapi.testclient import TestClient
 
 import quotalens.api as api_module
 from quotalens.api import create_app
-from quotalens.config import settings_from_env
+from quotalens.config import load_settings
 from quotalens.dashboard import EM_DASH
 from quotalens.parse import QuotaReading, parse_usage
 from quotalens.runway import compute_runway
@@ -44,7 +44,7 @@ def iso(ts: float) -> str:
 
 def render(rows: list[tuple[int, list[QuotaReading]]], now: int = NOW, last_ok: int | None = None):
     """Render the whole page at a fixed instant, and hand back the HTML and the JSON."""
-    settings = settings_from_env().with_overrides(
+    settings = load_settings().with_overrides(
         db_path=Path(tempfile.mkdtemp()) / "t.db", poll_interval_s=INTERVAL
     )
     store = Store(settings.db_path)

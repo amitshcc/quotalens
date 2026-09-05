@@ -1,4 +1,9 @@
-"""Shared fixtures. No test may touch the network: every client uses FakeTransport."""
+"""Shared fixtures. No test may touch the network: every client uses FakeTransport.
+
+No test may read the developer's own ``config.json`` either -- see
+:func:`_isolate_config`, which is autouse for the same reason FakeTransport is
+mandatory: a suite whose result depends on the machine it runs on is not a test.
+"""
 
 from __future__ import annotations
 
@@ -12,6 +17,7 @@ from urllib.parse import urlparse
 import pytest
 
 from quotalens.client import ClaudeClient, RawResponse, TransportError
+from quotalens import config as config_mod
 from quotalens.config import Settings
 from quotalens.secrets import MemorySecretStore, Redactor
 from quotalens.store import Store
@@ -19,6 +25,22 @@ from quotalens.store import Store
 COOKIE = "sessionKey=sk-ant-sid01-SECRETSECRETSECRET-abc; lastActiveOrg=org-1234-5678-abcd"
 COOKIE_NO_ORG = "sessionKey=sk-ant-sid01-SECRETSECRETSECRET-abc"
 ORG = "org-1234-5678-abcd"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_config(tmp_path_factory, monkeypatch):
+    """Point ``default_data_dir()`` at a scratch directory for every test.
+
+    Settings now merge a persisted ``config.json``. Without this, a developer who
+    ran `quotalens config set port 9123` would see unrelated tests fail, and CI
+    would pass on a machine where the suite is broken.
+    """
+    scratch = tmp_path_factory.mktemp("data-dir")
+    monkeypatch.setattr(
+        config_mod, "default_data_dir", lambda app_name=config_mod.APP_NAME: scratch
+    )
+    return scratch
+
 
 USAGE_DOCUMENTED: dict[str, Any] = {
     "five_hour": {"utilization": 42.0, "resets_at": "2026-09-02T18:00:00+00:00"},

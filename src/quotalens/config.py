@@ -1,18 +1,35 @@
-"""Runtime settings. Environment variables (``QUOTALENS_*``) and CLI flags only.
+"""Runtime settings: CLI flags, ``QUOTALENS_*`` environment variables, ``config.json``.
 
-There is deliberately no config file: the one secret this tool holds lives in the
-OS keyring (see :mod:`quotalens.secrets`), and everything else is a handful of
-numbers that fit on a command line.
+**This module used to say there was deliberately no config file**, on the grounds
+that the one secret lives in the OS keyring and everything else is a handful of
+numbers that fit on a command line. That was right while every setting was a flag
+on a command you typed once. It stopped being right when settings had to survive
+a restart: a port you chose, notifications you turned on, a retention period. A
+flag cannot do that, so the decision is overturned here rather than worked around.
+
+Precedence, highest wins::
+
+    CLI flag  >  QUOTALENS_* environment variable  >  config.json  >  built-in default
+
+A flag still wins, so no existing invocation changes meaning.
+
+**The cookie is never in this file.** The keyring keeps the one secret, and a
+config file that can be pasted into an issue has to stay safe to paste into an
+issue.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
+import tempfile
 import zlib
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Any
 
 ENV_PREFIX = "QUOTALENS_"
 
@@ -168,32 +185,6 @@ def _env_float(name: str, default: float) -> float:
         raise SettingsError(f"{ENV_PREFIX}{name} must be a number, got {raw!r}") from exc
 
 
-def settings_from_env(profile: str | None = None) -> Settings:
-    """Build settings from the environment, falling back to the defaults above.
-
-    The profile moves three defaults: the database filename, the port and (via
-    :mod:`quotalens.secrets`) the keyring entry.
-    """
-    if profile is None:
-        profile = os.environ.get(ENV_PREFIX + "PROFILE", "")
-    profile = normalise_profile(profile)
-    db_raw = os.environ.get(ENV_PREFIX + "DB")
-    settings = Settings(
-        profile=profile,
-        port=_env_int("PORT", default_port(profile)),
-        poll_interval_s=_env_int("INTERVAL", DEFAULT_POLL_INTERVAL_S),
-        burn_lookback_min=_env_int("LOOKBACK_MINUTES", DEFAULT_BURN_LOOKBACK_MIN),
-        burn_alert_pts_per_hour=_env_float("BURN_ALERT", DEFAULT_BURN_ALERT_PTS_PER_HOUR),
-        sample_keep=_env_int("SAMPLE_KEEP", DEFAULT_SAMPLE_KEEP),
-        webhook_url=os.environ.get(ENV_PREFIX + "WEBHOOK_URL") or DEFAULT_WEBHOOK_URL,
-        db_path=Path(db_raw).expanduser() if db_raw else default_db_path(profile),
-        base_url=os.environ.get(ENV_PREFIX + "BASE_URL", DEFAULT_BASE_URL),
-        user_agent=os.environ.get(ENV_PREFIX + "USER_AGENT") or DEFAULT_USER_AGENT,
-        impersonate=os.environ.get(ENV_PREFIX + "IMPERSONATE") or DEFAULT_IMPERSONATE,
-    )
-    return validate(settings)
-
-
 def validate(settings: Settings) -> Settings:
     """Enforce the invariants that protect the user (and claude.ai) from us."""
     if settings.poll_interval_s < MIN_POLL_INTERVAL_S:
@@ -212,3 +203,228 @@ def validate(settings: Settings) -> Settings:
     if settings.webhook_url and not settings.webhook_url.startswith(("http://", "https://")):
         raise SettingsError("the webhook URL must be http:// or https://")
     return settings
+
+
+def config_path(profile: str = "", data_dir: Path | None = None) -> Path:
+    """``config.json`` beside the database, profile-suffixed exactly as it is."""
+    return (data_dir or default_data_dir()) / f"config{profile_suffix(profile)}.json"
+
+
+@dataclass(frozen=True)
+class ConfigKey:
+    """One setting that can be written to ``config.json``.
+
+    The allow-list this describes is shared by ``quotalens config set`` and the
+    settings panel on purpose: a CLI and a UI over one store, not two config
+    systems that disagree about what a key is called.
+    """
+
+    name: str  # what the user types: "port"
+    field: str  # the Settings field it fills
+    env: str  # the QUOTALENS_ suffix that overrides it
+    kind: str  # int | float | str | bool
+    help: str
+    default: Callable[[str], Any]  # takes the profile; most ignore it
+    panel: bool = True  # offered in the settings panel
+
+
+CONFIG_KEYS: tuple[ConfigKey, ...] = (
+    # The port is the address of the page the panel is served from, so changing it
+    # from that page means the form's own response never arrives. CLI only.
+    ConfigKey("port", "port", "PORT", "int", "loopback port", default_port, panel=False),
+    ConfigKey(
+        "interval",
+        "poll_interval_s",
+        "INTERVAL",
+        "int",
+        f"seconds between polls (minimum {MIN_POLL_INTERVAL_S})",
+        lambda _p: DEFAULT_POLL_INTERVAL_S,
+    ),
+    ConfigKey(
+        "lookback",
+        "burn_lookback_min",
+        "LOOKBACK_MINUTES",
+        "int",
+        "minutes of history the burn rate is measured over",
+        lambda _p: DEFAULT_BURN_LOOKBACK_MIN,
+    ),
+    ConfigKey(
+        "burn_alert",
+        "burn_alert_pts_per_hour",
+        "BURN_ALERT",
+        "float",
+        "burn rate that raises an alert, in points per hour",
+        lambda _p: DEFAULT_BURN_ALERT_PTS_PER_HOUR,
+    ),
+    ConfigKey(
+        "sample_keep",
+        "sample_keep",
+        "SAMPLE_KEEP",
+        "int",
+        "raw payloads kept, as a row cap",
+        lambda _p: DEFAULT_SAMPLE_KEEP,
+    ),
+    ConfigKey(
+        "webhook_url",
+        "webhook_url",
+        "WEBHOOK_URL",
+        "str",
+        "where threshold crossings are POSTed (opt-in)",
+        lambda _p: DEFAULT_WEBHOOK_URL,
+    ),
+    ConfigKey(
+        "poll_enabled",
+        "poll_enabled",
+        "POLL_ENABLED",
+        "bool",
+        "poll the provider at all; off makes this a viewer for existing data",
+        lambda _p: True,
+        panel=False,
+    ),
+)
+
+CONFIG_KEYS_BY_NAME = {k.name: k for k in CONFIG_KEYS}
+
+_TRUE = {"1", "true", "yes", "on"}
+_FALSE = {"0", "false", "no", "off"}
+
+
+def parse_config_value(key: ConfigKey, raw: object, where: str) -> Any:
+    """Coerce one value, or raise ``SettingsError`` naming where it came from.
+
+    ``where`` is the thing a reader can go and fix -- an env var name or a file
+    path and key. A bad value is never silently ignored and never silently
+    repaired; that is the whole reason this returns or raises and does nothing
+    in between.
+    """
+    if key.kind == "str":
+        return None if raw is None or raw == "" else str(raw)
+    if key.kind == "bool":
+        if isinstance(raw, bool):
+            return raw
+        text = str(raw).strip().lower()
+        if text in _TRUE:
+            return True
+        if text in _FALSE:
+            return False
+        raise SettingsError(f"{where} must be true or false, got {raw!r}")
+    try:
+        return int(raw) if key.kind == "int" else float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        noun = "an integer" if key.kind == "int" else "a number"
+        raise SettingsError(f"{where} must be {noun}, got {raw!r}") from exc
+
+
+def read_config_file(path: Path) -> dict[str, Any]:
+    """The stored settings, or ``{}``. Unreadable is an error; absent is not."""
+    try:
+        text = path.read_text()
+    except FileNotFoundError:
+        return {}
+    except OSError as exc:
+        raise SettingsError(f"cannot read {path}: {exc}") from exc
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise SettingsError(f"{path} is not valid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise SettingsError(f"{path} must contain a JSON object, got {type(data).__name__}")
+    return data
+
+
+def write_config_file(path: Path, data: dict[str, Any]) -> None:
+    """Atomically, via a temp file in the same directory and ``os.replace``.
+
+    The API writes this while the poller is running. A half-written config file
+    that bricks the next start is not an acceptable cost for a convenience.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".config-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            json.dump(data, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+@dataclass(frozen=True)
+class Resolution:
+    """Merged settings, plus where each value actually came from.
+
+    ``sources`` is what makes ``quotalens config list`` worth having: a port that
+    is not what you set is a precedence question, and this answers it without
+    anyone having to read this module.
+    """
+
+    settings: Settings
+    sources: dict[str, str]  # config key name -> "flag" | "env" | "file" | "default"
+
+
+def resolve_settings(
+    profile: str | None = None,
+    *,
+    data_dir: Path | None = None,
+    flags: dict[str, Any] | None = None,
+) -> Resolution:
+    """Apply the four layers in order and record which one won each key."""
+    if profile is None:
+        profile = os.environ.get(ENV_PREFIX + "PROFILE", "")
+    profile = normalise_profile(profile)
+
+    path = config_path(profile, data_dir)
+    stored = read_config_file(path)
+    unknown = sorted(set(stored) - set(CONFIG_KEYS_BY_NAME))
+    if unknown:
+        raise SettingsError(
+            f"{path} has {'keys' if len(unknown) > 1 else 'a key'} this version does not "
+            f"know: {', '.join(unknown)}. Remove {'them' if len(unknown) > 1 else 'it'} "
+            f"or run `quotalens config unset <key>`."
+        )
+
+    values: dict[str, Any] = {}
+    sources: dict[str, str] = {}
+    flags = flags or {}
+    for key in CONFIG_KEYS:
+        if flags.get(key.name) is not None:
+            values[key.field] = parse_config_value(key, flags[key.name], f"--{key.name}")
+            sources[key.name] = "flag"
+            continue
+        raw_env = os.environ.get(ENV_PREFIX + key.env)
+        if raw_env not in (None, ""):
+            values[key.field] = parse_config_value(key, raw_env, ENV_PREFIX + key.env)
+            sources[key.name] = "env"
+            continue
+        if key.name in stored:
+            values[key.field] = parse_config_value(
+                key, stored[key.name], f"{path} key {key.name!r}"
+            )
+            sources[key.name] = "file"
+            continue
+        values[key.field] = key.default(profile)
+        sources[key.name] = "default"
+
+    db_raw = os.environ.get(ENV_PREFIX + "DB")
+    settings = Settings(
+        profile=profile,
+        db_path=Path(db_raw).expanduser() if db_raw else default_db_path(profile),
+        base_url=os.environ.get(ENV_PREFIX + "BASE_URL", DEFAULT_BASE_URL),
+        user_agent=os.environ.get(ENV_PREFIX + "USER_AGENT") or DEFAULT_USER_AGENT,
+        impersonate=os.environ.get(ENV_PREFIX + "IMPERSONATE") or DEFAULT_IMPERSONATE,
+        **values,
+    )
+    return Resolution(validate(settings), sources)
+
+
+def load_settings(
+    profile: str | None = None,
+    *,
+    data_dir: Path | None = None,
+    flags: dict[str, Any] | None = None,
+) -> Settings:
+    """The merged settings. See :func:`resolve_settings` for where each came from."""
+    return resolve_settings(profile, data_dir=data_dir, flags=flags).settings

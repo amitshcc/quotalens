@@ -192,11 +192,11 @@ def test_the_boost_colour_appears_in_exactly_two_places() -> None:
 def _seeded_store(tmp_path, boost_ts: int, gap_s: int):
     """A store whose boost sits just after a gap, the shape the real one has."""
     from quotalens.boost import BOOST_KIND
-    from quotalens.config import settings_from_env
+    from quotalens.config import load_settings
     from quotalens.parse import QuotaReading
     from quotalens.store import Store
 
-    settings = settings_from_env().with_overrides(db_path=tmp_path / "t.db")
+    settings = load_settings().with_overrides(db_path=tmp_path / "t.db")
     store = Store(settings.db_path)
     reset = datetime.fromtimestamp(boost_ts + 3 * 86400, UTC).isoformat()
     for i in range(60):  # climbing to 98%, ending where the gap begins
