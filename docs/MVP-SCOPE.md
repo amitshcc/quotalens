@@ -1,5 +1,13 @@
 # QuotaLens v0.1.0 — scope
 
+> **Note added 2026-09-06.** This document plans or records work under the name
+> **v0.1.0**. That version was never tagged and never shipped: `git tag -l` was
+> empty when the first release was cut, and by then `__init__.py` and
+> `pyproject.toml` read `1.0`, so **the first public tag is `v1.0`**. The text
+> below is left unedited — it records what was scoped and decided at the time,
+> and rewriting it would falsify that record. Read every "v0.1.0" here as "the
+> release that shipped as v1.0".
+
 Decisions, not options. Reasoning and evidence live in
 [`FEATURE-REVIEW.md`](FEATURE-REVIEW.md); this file is what to build and what to
 say no to.
