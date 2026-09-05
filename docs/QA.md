@@ -287,3 +287,13 @@ collected" band marks where it happens, so the information is on screen, but the
 trace still asserts a path through it. Deciding what a gap should look like — a
 break, a dotted bridge, something else — is a design question this change did not
 carry.
+- 2026-09-05: the boost vanished on a drag-selected custom range that plainly contained
+      it. Not `parse_view` and not a stale client: `rng.key` was `custom` with the boost
+      inside, and the *server's* fragment had neither the mark nor the crimson. The
+      range's left edge landed inside the six-hour outage before the boost, so the boost
+      row was the first row in range with no preceding sample to step from. Dragging a
+      range around a boost to look at it is exactly the gesture that hid it.
+- 2026-09-05: the `now` rule was gated on `end > now`, so a custom range ending at or
+      before now had no marker at all and the chart gave no cue where the present was.
+- 2026-09-05: the hero read "Exhausted at 01:34" — past tense for a projection about the
+      future. Now "Will run out at 01:34, 3h 17m before the reset."

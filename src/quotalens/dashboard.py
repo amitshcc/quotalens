@@ -267,7 +267,7 @@ class BoostMark:
 
     x: float  # the step's own x, which is where the eye already is
     y: float  # the top of the highest drop at this moment
-    heading: str  # "limits boosted"
+    heading: str  # "Limits Boosted"
     detail: str  # "01:30 · 98% → 7%", or both windows on one line when both moved
 
 
@@ -290,6 +290,7 @@ class ChartView:
     future: bool = False
     hour_x: list[float] = field(default_factory=list)  # hourly separators in the current window
     projection: str = ""  # SVG path from now to the reset at the current rate
+    projection_note: str = ""  # why there is none, when the range hides it
     projection_critical: bool = False
     cross: tuple[float, float, str] | None = None  # the 100% crossing, if before the reset
 
@@ -449,6 +450,12 @@ def build_dashboard(
         w: [r for r in rows if rng.start <= r.ts <= min(rng.end, now)]
         for w, rows in all_rows.items()
     }
+    # The newest sample *before* the left edge, per window. A boost is a step between
+    # two samples, and dragging a range whose edge lands between them left the boost
+    # row first in range with nothing to step from — so the mark vanished on exactly
+    # the ranges someone drags around a boost. Used only to complete that step; it is
+    # never a point on the trace.
+    prior_rows = {row.window: row for row in store.latest_quota_before(rng.start)}
 
     burns = {w: burn_rate(w, all_rows.get(w, []), lookback_s, now) for w in order}
     rate_burn = burns.get(RATE_WINDOW)
@@ -513,6 +520,7 @@ def build_dashboard(
         withheld,
         prior_ts,
         boost_windows,
+        prior_rows,
     )
     _mark_sessions(chart, sessions_all, rng, now)
     # One conclusion, read from the events the poller wrote, and shared by the chart,
@@ -555,6 +563,8 @@ def build_dashboard(
     violation = store.recent_events(limit=1, kind=MODEL_VIOLATION_KIND)
     if violation:
         diagnostics.append(violation[0].detail)
+    if chart.projection_note:
+        diagnostics.append(chart.projection_note)
     if status.ignored_blocks:
         keys = ", ".join(b["key"] for b in status.ignored_blocks)
         diagnostics.append(f"Payload blocks without a reset time, not charted: {keys}.")
@@ -1078,6 +1088,7 @@ def _chart_view(
     withheld: bool,
     prior_ts: int | None = None,
     boost_ts: Mapping[str, Sequence[int]] | None = None,
+    prior_rows: Mapping[str, QuotaRow | None] | None = None,
 ) -> ChartView:
     start, end = rng.start, rng.end
     span = max(1, end - start)
@@ -1106,14 +1117,18 @@ def _chart_view(
             seg = _bucket(segment, bucket_s)
             run: list[str] = []
             for index, r in enumerate(seg):
-                previous = seg[index - 1] if index else None
+                # At the left edge the preceding sample is outside the range; it is
+                # still what the step falls from, so it stands in for one there.
+                previous = seg[index - 1] if index else (prior_rows or {}).get(window)
                 moment = _boost_between(previous, r, (boost_ts or {}).get(window, ()))
                 if moment is not None and previous is not None:
                     # The fall was instantaneous and we learned it at `r`. Break the
                     # line rather than sloping across the hours in between: nothing
                     # was observed there, and a diagonal would draw a decline the
-                    # owner caused instead of a step he was given.
-                    paths.append("M" + " L".join(run))
+                    # owner caused instead of a step he was given. At the left edge
+                    # there is no run to break yet, and the step is still drawn.
+                    if run:
+                        paths.append("M" + " L".join(run))
                     drops.append(
                         f"M{x_of(r.ts):.1f} {y_of(previous.pct):.1f} "
                         f"L{x_of(r.ts):.1f} {y_of(r.pct):.1f}"
@@ -1152,7 +1167,7 @@ def _chart_view(
         BoostMark(
             x_of(moment),
             min(top for _, _, _, top in moved),
-            "limits boosted",
+            "Limits Boosted",
             _boost_detail(moment, moved, labels),
         )
         for moment, moved in sorted(steps.items())
@@ -1217,7 +1232,10 @@ def _mark_runway(
         return CHART_T + plot_h - (pct / chart.y_max) * plot_h
 
     chart.now_x = x_of(min(now, end))
-    chart.future = end > now
+    # The `now` rule is drawn whenever now is *inside* the range, not only when the
+    # range runs past it. A custom range ending at or before now had no marker at
+    # all, so the chart gave no cue where the present was.
+    chart.future = start <= now <= end
     if session:
         chart.hour_x = [
             x_of(session[0] + k * 3600) for k in range(1, 5) if start < session[0] + k * 3600 < end
@@ -1228,7 +1246,16 @@ def _mark_runway(
         return
     target_ts = runway.exhaust_ts if runway.exhaust_ts else runway.reset_ts
     target_pct = 100.0 if runway.exhaust_ts else runway.finish_pct
-    if target_ts <= now or target_ts > end + 1:
+    if target_ts <= now:
+        return
+    if target_ts > end + 1:
+        # Outside the frame rather than unmeasured, and the same rule applies: an
+        # absent line is explained, never silently dropped.
+        what = "exhaustion" if runway.exhaust_ts else "the reset"
+        chart.projection_note = (
+            f"The projection to {what} at {clock(target_ts)} falls outside this range, "
+            "so it is not drawn. Widen the range or pick a preset to see it."
+        )
         return
     chart.projection = (
         f"M{x_of(now):.1f} {y_of(runway.pct):.1f} L{x_of(target_ts):.1f} {y_of(target_pct):.1f}"
@@ -1238,7 +1265,7 @@ def _mark_runway(
         chart.cross = (
             x_of(runway.exhaust_ts),
             y_of(100.0),
-            f"exhausted {clock(runway.exhaust_ts)}",
+            f"runs out {clock(runway.exhaust_ts)}",
         )
 
 

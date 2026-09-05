@@ -156,7 +156,7 @@ def test_a_steep_projection_does_not_colour_the_readout_on_its_own() -> None:
     assert dash["burn"]["critical"] is True  # still computed, still reported
     assert "chip" not in _hero_heading(html)  # and the rate is not the thing firing
     assert readout_class(html) == "readout"  # so no colour at all
-    assert dash["burn"]["why"].startswith("Exhausted at ")  # it says itself in words
+    assert dash["burn"]["why"].startswith("Will run out at ")  # it says itself in words
 
 
 def test_the_configured_rate_alert_still_reaches_both_together() -> None:
