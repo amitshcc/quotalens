@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+from quotalens.config import CLAUDE, Provider
 from quotalens.poller import PollerStatus
 
 ELEVATED_PCT = 75.0
@@ -67,7 +68,12 @@ def _clock(ts: int | None) -> str:
         return "an unknown time"
 
 
-def collector_state(status: PollerStatus, interval_s: int, now: int) -> Epistemic:
+def collector_state(
+    status: PollerStatus,
+    interval_s: int,
+    now: int,
+    provider: Provider = CLAUDE,
+) -> Epistemic:
     """Every health condition gets its own wording, because each needs a different action."""
     last_ok = status.last_success_ts
     error = status.last_error or ""
@@ -96,7 +102,7 @@ def collector_state(status: PollerStatus, interval_s: int, now: int) -> Epistemi
         return Epistemic(
             UNVERIFIED,
             "unparsed",
-            f"claude.ai answered but the response could not be parsed at "
+            f"{provider.host} answered but the response could not be parsed at "
             f"{_clock(status.last_error_ts)}. Run `quotalens probe` and open an issue with "
             "the output.",
             last_ok,
@@ -112,7 +118,7 @@ def collector_state(status: PollerStatus, interval_s: int, now: int) -> Epistemi
     if last_ok is None:
         return Epistemic(STALE, "no data", _never_message(status), None)
     if now - last_ok > STALE_AFTER_INTERVALS * interval_s:
-        return Epistemic(STALE, "stale", _stale_message(status, last_ok), last_ok)
+        return Epistemic(STALE, "stale", _stale_message(status, last_ok, provider), last_ok)
     return Epistemic(OK, "", _recent_condition(status, error), last_ok)
 
 
@@ -132,14 +138,17 @@ def _never_message(status: PollerStatus) -> str:
     return "No successful poll yet. " + (status.last_error or "")
 
 
-def _stale_message(status: PollerStatus, last_ok: int) -> str:
+def _stale_message(status: PollerStatus, last_ok: int, provider: Provider) -> str:
     since = f"last good sample {_clock(last_ok)}"
     if status.state == "blocked":
         return f"Blocked by Cloudflare's bot challenge; {since}. See /api/health."
     if status.state == "rate_limited":
-        return f"Rate limited by claude.ai; next attempt at {_clock(status.next_poll_ts)}; {since}."
+        return (
+            f"Rate limited by {provider.host}; "
+            f"next attempt at {_clock(status.next_poll_ts)}; {since}."
+        )
     if status.state == "error":
-        return f"claude.ai unreachable; {since}. Retrying with backoff."
+        return f"{provider.host} unreachable; {since}. Retrying with backoff."
     return f"Collector stopped ticking; {since}. Restart `quotalens serve`."
 
 

@@ -29,13 +29,12 @@ nothing left to look at: no record of when the climb started, how steep it was,
 or which five-hour session it happened in. If extra usage billing is enabled,
 you find out on your card.
 
-The other tools each hold one half and let go of it. Menu bar apps
-(ClaudeUsageBar, Usagebar, Usage4Claude) poll the account endpoint and show the
-current percentage — no history, and macOS only. `ccusage` reads Claude Code's
-local transcript logs and attributes tokens to projects — but knows nothing
-about your subscription quota, and nothing about usage from the web app, Cowork
-or scheduled tasks, because quota is pooled across all of them and local logs
-are not.
+The other tools each hold one half and let go of it. Menu bar apps poll the
+account endpoint and show the current percentage — no history, and mostly macOS
+only. Log readers parse the local transcripts and attribute tokens to projects —
+but know nothing about your subscription quota, and nothing about usage from the
+web app, Cowork or scheduled tasks, because quota is pooled across all of them
+and local logs are not.
 
 Nobody keeps the series.
 
@@ -62,8 +61,8 @@ data somewhere they can query it.
 
 ## Principles
 
-**Free, MIT, no account, no telemetry.** Same posture as ClaudeUsageBar. There
-is no server component, no signup, and nothing phones home. The only outbound
+**Free, MIT, no account, no telemetry.** There is no server component, no
+signup, and nothing phones home. The only outbound
 requests are to claude.ai.
 
 **Local by default.** Binds `127.0.0.1`. The session cookie lives in the OS
@@ -92,8 +91,7 @@ integration.
 - Not a Claude Code wrapper or a proxy. It never sits in the request path.
 - Not an API cost tracker for Console users. That is a different product with a
   documented API and existing tools; subscription quota is the underserved case.
-- Not a menu bar app. ClaudeUsageBar does that well. This is complementary, and
-  the README should say so and link to it.
+- Not a menu bar app. Several already do that well; this is complementary.
 
 ## What success looks like
 

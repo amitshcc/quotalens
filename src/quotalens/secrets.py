@@ -15,6 +15,9 @@ from collections.abc import Iterable
 from typing import Protocol
 
 KEYRING_SERVICE = "quotalens"
+# Deliberately still names the vendor: this is a *stored* key. Renaming it would
+# orphan every cookie already in a user's keyring. A second provider gets a second
+# key derived from its `Provider.key`, not a rename of this one.
 KEYRING_USERNAME = "claude.ai-session-cookie"
 
 

@@ -24,7 +24,7 @@ Claude Code's JSONL) before it. I'd move it.
 
 | | `PLAN.md` | Here | Why |
 |---|---|---|---|
-| M3 per-project attribution | pre-1.0 | **out, indefinitely** | Anthropic's `/usage` now attributes to skills, subagents, plugins, MCP servers and scheduled tasks; ccusage owns per-project at 18.3k★; and pooled quota means local logs can only show correlation. Link to both instead. |
+| M3 per-project attribution | pre-1.0 | **out, indefinitely** | Anthropic's `/usage` now attributes to skills, subagents, plugins, MCP servers and scheduled tasks, and pooled quota means local logs can only show correlation. Point at the vendor's own command instead. |
 | Retention / downsampling | post-1.0 | **in** | Unbounded `sample` growth plus an O(all-history) rebuild every poll. Not a feature; a bug in "leave it running." |
 | Desktop notifications | pre-1.0 (M4) | **out** | Three OS paths, dead under systemd-without-a-bus and in Docker — the two ways we tell people to run it. |
 | Webhook alerts | not planned | **in** | One code path, no dependency, works everywhere, right audience. |
@@ -94,11 +94,10 @@ Each of these is a decision, and the README should say so in a "what this
 doesn't do" section — with links, because pointing at the better tool is a
 feature.
 
-- **Per-project attribution.** Use [ccusage](https://github.com/ccusage/ccusage)
-  for per-project tokens and `/usage` in Claude Code for attribution to skills,
-  subagents, plugins, MCP servers and scheduled tasks.
-- **Desktop notifications.** Use
-  [ClaudeUsageBar](https://github.com/Artzainnn/ClaudeUsageBar) on macOS.
+- **Per-project attribution.** Use the vendor's own usage command — `claude
+  /usage` — for attribution to skills, subagents, plugins, MCP servers and
+  scheduled tasks.
+- **Desktop notifications.** Use the webhook.
 - **Anything but loopback.** No `--host`. The dashboard is account data with no
   authentication. If people ask, the answer is a token, not a flag.
 - **A container image.** `pipx` / `uvx` only.

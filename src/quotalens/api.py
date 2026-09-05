@@ -264,8 +264,9 @@ def create_app(
             "diagnostics": poller_status.diagnostics(),
             "recent_events": events,
             "note": (
-                "Uses undocumented claude.ai endpoints; a parse_failed or shape_drift "
-                "event means the response shape changed. Run `quotalens probe`."
+                f"Uses undocumented {settings.provider.host} endpoints; a parse_failed "
+                "or shape_drift event means the response shape changed. "
+                "Run `quotalens probe`."
             ),
         }
 

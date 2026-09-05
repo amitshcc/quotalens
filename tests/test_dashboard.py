@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from conftest import USAGE_LIVE_2026_09, make_client, make_handler
 from quotalens.api import create_app
+from quotalens.config import CLAUDE
 from quotalens.dashboard import assign_slots, build_dashboard, display_label
 from quotalens.parse import QuotaReading, SpendReading
 from quotalens.poller import Poller, PollerStatus
@@ -337,9 +338,12 @@ def test_healthy_page_shows_three_windows_and_values(settings, store, secrets) -
     assert 'style="width:100.0%;background:var(--hair-firm)"' in html  # neutral: off
     assert 'stroke="var(--s1)" stroke-width="var(--trace-hero)"' in html
     assert 'stroke-dasharray="var(--dash-3)"' in html
-    # Attribution points at the tools that do it, rather than promising a milestone
-    # that MVP-SCOPE puts out indefinitely.
-    assert "claude /usage" in html and "ccusage" in html
+    # Attribution points at the provider's own tool, rather than promising a
+    # milestone that MVP-SCOPE puts out indefinitely. One term, named from the
+    # Provider seam -- no third-party tool is recommended by name.
+    pointers = html.split('class="screen pointers"', 1)[1].split("</section>", 1)[0]
+    assert CLAUDE.usage_command in pointers and pointers.count("<dt>") == 1
+    assert "ccusage" not in html
     assert "No local session data yet" not in html and "milestone M3" not in html
 
 

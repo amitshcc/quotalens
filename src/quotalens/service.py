@@ -510,7 +510,7 @@ def launchd_plist(cmd: Sequence[str], logfile: Path, workdir: Path) -> str:
 def systemd_unit(cmd: Sequence[str], workdir: Path) -> str:
     exec_start = " ".join(_sh_quote(a) for a in cmd)
     return (
-        "[Unit]\nDescription=QuotaLens local Claude usage monitor\nAfter=network-online.target\n\n"
+        "[Unit]\nDescription=QuotaLens local LLM usage monitor\nAfter=network-online.target\n\n"
         f"[Service]\nExecStart={exec_start}\nWorkingDirectory={workdir}\n"
         "Restart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n"
     )
@@ -545,7 +545,7 @@ def windows_task_xml(cmd: Sequence[str], workdir: Path, user: str) -> str:
         '<?xml version="1.0" encoding="UTF-16"?>\n'
         '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">\n'
         "  <RegistrationInfo>\n"
-        "    <Description>QuotaLens local Claude usage monitor</Description>\n"
+        "    <Description>QuotaLens local LLM usage monitor</Description>\n"
         "  </RegistrationInfo>\n"
         "  <Triggers>\n"
         f"    <LogonTrigger>\n      <Enabled>true</Enabled>\n"

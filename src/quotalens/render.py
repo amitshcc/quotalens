@@ -9,6 +9,7 @@ from importlib import resources
 
 from quotalens import __version__
 from quotalens.alerts import ALERT_KIND
+from quotalens.config import CLAUDE, Provider
 from quotalens.dashboard import (
     CHART_H,
     CHART_W,
@@ -188,7 +189,10 @@ _CHIP = {
 _VALUE_COLOUR = {"elevated": "var(--st-elevated)", "critical": "var(--st-critical)"}
 # Visible em dash, plus the hidden twin the link-lost stylesheet reveals.
 WITHHELD = '<span class="num">—</span><span class="dash">—</span>'
-DISCLAIMER = "Unofficial. Uses undocumented claude.ai endpoints. Observes only."
+
+
+def _disclaimer(provider: Provider = CLAUDE) -> str:
+    return f"Unofficial. Uses undocumented {provider.host} endpoints. Observes only."
 
 
 def chip(kind: str, text: str) -> str:
@@ -789,30 +793,28 @@ def _spark(r: SessionRowView) -> str:
     )
 
 
-def _attribution() -> str:
+def _attribution(provider: Provider = CLAUDE) -> str:
     """Where attribution actually lives, since it is not going to live here.
 
-    ``docs/MVP-SCOPE.md`` puts per-project attribution out indefinitely, and its own
-    recommendation is to link to both tools instead. An empty table promising a
-    milestone that is not coming is the worst of both: it occupies the slot and
-    delivers nothing.
+    ``docs/MVP-SCOPE.md`` puts per-project attribution out indefinitely, so the slot
+    says what this tool does not do. It names only what the provider itself ships:
+    QuotaLens should not send its owner to a project it does not control, and a
+    second provider's own command joins this list without the prose around it
+    changing.
     """
     return (
         '<section class="screen pointers">'
         '<p class="cap">Where the quota went</p>'
         "<p>QuotaLens tracks <em>how much</em> is left and how fast it is going. "
-        "For <em>what spent it</em>, two tools already do it better:</p>"
+        "For <em>what spent it</em>, your provider's own tool does it better:</p>"
         "<dl>"
-        "<dt><code>claude /usage</code></dt>"
+        f"<dt><code>{e(provider.usage_command)}</code></dt>"
         "<dd>Attributes recent usage to skills, subagents, plugins, MCP servers and "
         "scheduled tasks, over the last 24 hours or 7 days. It is computed from this "
         "machine's local session history, so it excludes anything you ran on another "
-        "device or on claude.ai, and it is gone when the terminal closes.</dd>"
-        "<dt><code>ccusage</code></dt>"
-        "<dd>Per-project token attribution, read from Claude Code's local transcript "
-        "logs.</dd>"
+        f"device or on {e(provider.host)}, and it is gone when the terminal closes.</dd>"
         "</dl>"
-        '<p class="far">QuotaLens does not duplicate either. Quota is pooled across '
+        '<p class="far">QuotaLens does not duplicate it. Quota is pooled across '
         "every surface you use, so a local log can show that a project correlates with "
         "a climb, but it cannot attribute pooled quota to that project.</p>"
         "</section>"
@@ -859,5 +861,5 @@ def _side(dash: Dashboard) -> str:
 def _footer(dash: Dashboard) -> str:
     return (
         f"<footer><span>{e(dash.footer['bind'])}</span><span>{e(dash.footer['db'])}</span>"
-        f"<span>{DISCLAIMER}</span><span>QuotaLens {e(__version__)}</span></footer>"
+        f"<span>{e(_disclaimer())}</span><span>QuotaLens {e(__version__)}</span></footer>"
     )

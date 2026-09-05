@@ -1,5 +1,15 @@
 # QuotaLens — pre-release feature review
 
+> **Note added 2026-09-05.** This document names third-party tools
+> (`ccusage`, ClaudeUsageBar and others) because that is what the landscape and
+> the decisions looked like when it was written. Those pointers have since been
+> removed from everything a reader treats as current — the dashboard, `README.md`,
+> `VISION.md`, `PLAN.md`, `docs/MVP-SCOPE.md` and the site copy — because
+> QuotaLens should not send its owner to a project it does not control, and
+> because it is being made vendor-agnostic. The text below is left unedited: it
+> is a record of a decision made at a point in time, and rewriting it would
+> falsify that record.
+
 An outside read of the repo at `b83f579`, against the tools in this space, what
 their users ask for, and Anthropic's own documentation. Written 2026-09-03.
 

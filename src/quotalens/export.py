@@ -21,10 +21,11 @@ import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 
+from quotalens.config import CLAUDE
 from quotalens.store import Store
 
 RAW_WARNING = (
-    "Raw samples are claude.ai's own responses. They contain no cookie, but they "
+    f"Raw samples are {CLAUDE.host}'s own responses. They contain no cookie, but they "
     "do carry organisation identifiers and reset timestamps: redact before sharing."
 )
 PAGE = 500
@@ -81,7 +82,7 @@ def resolve(table: str, raw_allowed: bool) -> ExportSpec:
         raise ExportError(f"unknown table {table!r}; choose one of {', '.join(sorted(EXPORTS))}")
     if spec.raw and not raw_allowed:
         raise ExportError(
-            f"{table} holds raw claude.ai responses; pass raw=1 to export them. {RAW_WARNING}"
+            f"{table} holds raw {CLAUDE.host} responses; pass raw=1 to export them. {RAW_WARNING}"
         )
     return spec
 

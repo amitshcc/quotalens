@@ -30,6 +30,40 @@ PRUNE_EVERY_S = 6 * 3600
 # Opt-in only. One POST per threshold crossing, no account identifier in the body.
 DEFAULT_WEBHOOK_URL: str | None = None
 DEFAULT_BASE_URL = "https://claude.ai"
+
+
+@dataclass(frozen=True)
+class Provider:
+    """The one place a vendor is named.
+
+    QuotaLens watches one provider today and will watch more. This exists so that
+    adding the second is a new value here rather than a grep for "Claude" across
+    the tree: every string the owner reads on screen, in the cookie prompt, or in
+    a client error asks this instead of spelling the vendor out.
+
+    Deliberately *not* a registry. There is no config key and no flag to choose a
+    provider, because there is only one; internal names (``ClaudeClient``, the
+    parser, the store schema) stay Claude-specific until a second one is real, and
+    renaming them now would be churn with no reader.
+    """
+
+    key: str  # stable identifier, for a future config key or store column
+    display_name: str  # what the owner calls it: "Claude"
+    base_url: str
+    usage_command: str  # the vendor's own attribution tool: "claude /usage"
+
+    @property
+    def host(self) -> str:
+        """The bare host, for prose: "claude.ai", not "https://claude.ai"."""
+        return self.base_url.split("://", 1)[-1].rstrip("/")
+
+
+CLAUDE = Provider(
+    key="claude",
+    display_name="Claude",
+    base_url=DEFAULT_BASE_URL,
+    usage_command="claude /usage",
+)
 DEFAULT_HTTP_TIMEOUT_S = 20.0
 # claude.ai sits behind Cloudflare bot protection that fingerprints the TLS
 # handshake; plain Python clients are challenged even with a valid cookie. We use
@@ -99,6 +133,7 @@ class Settings:
     webhook_url: str | None = DEFAULT_WEBHOOK_URL
     db_path: Path = field(default_factory=default_db_path)
     base_url: str = DEFAULT_BASE_URL
+    provider: Provider = CLAUDE
     http_timeout_s: float = DEFAULT_HTTP_TIMEOUT_S
     user_agent: str | None = DEFAULT_USER_AGENT
     impersonate: str = DEFAULT_IMPERSONATE

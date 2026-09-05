@@ -27,7 +27,7 @@ you start; changing them later is expensive.
 | Frontend | Server-rendered HTML + vanilla JS, charts as inline SVG | No build step, no `npm install`, no CDN. The whole app stays one `pip install`. |
 | Secrets | `keyring` (Keychain / libsecret / Windows Credential Manager) | Cross-platform, no plaintext cookie on disk. |
 | Distribution | `pipx install` / `uvx`, plus a Docker image | Covers developers and homelab users. |
-| License | MIT | Matches ClaudeUsageBar, lowest friction for contributions. |
+| License | MIT | Lowest friction for contributions. |
 
 ## Architecture
 
@@ -136,7 +136,7 @@ when you can watch it climb in real time.
 
 **M3 — local attribution. Not being built** (see the note at the top). JSONL
 scanner with offset bookmarks, project breakdown, overlay on the quota timeline.
-The dashboard points at `claude /usage` and `ccusage` in this slot instead.
+The dashboard points at the vendor's own usage command in this slot instead.
 
 **M4 — alerts and export.** Burn-rate threshold detection writing to `event`,
 desktop notification (`plyer` or per-OS shell-out), CSV/JSON export,
@@ -174,7 +174,7 @@ trade-off, cap the floor at 30s, and back off on HTTP 429.
 **Terms of service.** You're reading your own account's data with your own
 credentials, which is what every tool in this space does, but say plainly in the
 README that this is unofficial, uses undocumented endpoints, is not affiliated
-with or endorsed by Anthropic, and may break. Mirror ClaudeUsageBar's disclaimer.
+with or endorsed by the vendor, and may break.
 
 **Scope creep.** The temptation is to become a general AI cost platform. The
 vision's non-goals exist to prevent that. Resist API-key cost tracking in

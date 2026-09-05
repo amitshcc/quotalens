@@ -337,16 +337,14 @@ quotalens stop && quotalens forget <id> && quotalens start
 Each of these is a decision, and in most cases something else already does it
 better. Pointing at the better tool is a feature.
 
-- **Per-project attribution.** Use [ccusage](https://github.com/ccusage/ccusage)
-  for per-project token counts, and `/usage` inside Claude Code for attribution
-  to skills, subagents, plugins, MCP servers and scheduled tasks. Quota is
-  pooled across claude.ai, Claude Code and Claude Desktop, so local logs can
-  only ever show correlation with a number they cannot see.
-- **Desktop notifications.** Use
-  [ClaudeUsageBar](https://github.com/Artzainnn/ClaudeUsageBar) on macOS. A
-  desktop notification is three OS code paths and it is dead under a systemd
-  user unit with no session bus, which is how this is meant to run. The webhook
-  is one code path that works everywhere.
+- **Per-project attribution.** Use the vendor's own usage command — `claude
+  /usage` inside Claude Code — for attribution to skills, subagents, plugins,
+  MCP servers and scheduled tasks. Quota is pooled across claude.ai, Claude Code
+  and Claude Desktop, so local logs can only ever show correlation with a number
+  they cannot see.
+- **Desktop notifications.** A desktop notification is three OS code paths and
+  it is dead under a systemd user unit with no session bus, which is how this is
+  meant to run. The webhook is one code path that works everywhere.
 - **Anything but loopback.** There is no `--host`. The dashboard is account data
   with no authentication. If you want it elsewhere, put it behind a proxy you
   already trust; if enough people ask, the answer will be a token, not a flag.

@@ -141,9 +141,10 @@ def cmd_auth(args: argparse.Namespace, settings: Settings, secrets: SecretStore)
         print(f"cannot use the keyring: {exc}", file=sys.stderr)
         return 3
     if sys.stdin.isatty():
+        host = settings.provider.host
         print(
-            "Paste your claude.ai session cookie (the full Cookie header value from a\n"
-            "request to claude.ai/settings/usage), then press Enter. Input is hidden.\n"
+            f"Paste your {host} session cookie (the full Cookie header value from a\n"
+            f"request to {host}/settings/usage), then press Enter. Input is hidden.\n"
             "Tip: `pbpaste | quotalens auth` (macOS) also works."
         )
     try:
@@ -157,10 +158,11 @@ def cmd_auth(args: argparse.Namespace, settings: Settings, secrets: SecretStore)
     global_redactor().add(cookie)
     if not has_session_key(cookie):
         print(
-            "warning: no `sessionKey=` pair found; claude.ai usually needs it. Continuing.",
+            f"warning: no `sessionKey=` pair found; {settings.provider.host} usually needs it. "
+            "Continuing.",
             file=sys.stderr,
         )
-    print("Verifying with one request to claude.ai ...")
+    print(f"Verifying with one request to {settings.provider.host} ...")
     try:
         usage, _ = asyncio.run(_verify(cookie, settings))
         readings = parse_usage(usage).readings
@@ -560,7 +562,7 @@ def cmd_service(args: argparse.Namespace, settings: Settings, secrets: SecretSto
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="quotalens", description="QuotaLens: local monitor for Claude subscription quota."
+        prog="quotalens", description="QuotaLens: local monitor for LLM subscription quota."
     )
     parser.add_argument("--version", action="version", version=f"QuotaLens {__version__}")
     parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
@@ -580,7 +582,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    auth = sub.add_parser("auth", help="store the claude.ai session cookie in the OS keyring")
+    auth = sub.add_parser("auth", help="store the provider session cookie in the OS keyring")
     auth.add_argument(
         "--force", action="store_true", help="store the cookie even if verification fails"
     )

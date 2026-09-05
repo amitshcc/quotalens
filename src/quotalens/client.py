@@ -223,6 +223,11 @@ class ClaudeClient:
             raise ValueError("cookie is empty")
         self._cookie = cookie
         self._base_url = base_url.rstrip("/")
+        # The host these errors name is the one the request actually went to, not a
+        # constant: pointed at a fake upstream, "never reached claude.ai" would be a
+        # lie. `base_url` defaults from `config.CLAUDE`, so the vendor is still named
+        # in exactly one place.
+        self._host = self._base_url.split("://", 1)[-1].rstrip("/")
         self._timeout_s = timeout_s
         self._headers = build_headers(cookie, self._base_url, user_agent)
         self._org_id: str | None = org_id_from_cookie(cookie)
@@ -258,14 +263,15 @@ class ClaudeClient:
         if is_cloudflare_challenge(response):
             raise BlockedError(
                 f"blocked by Cloudflare's bot challenge ({status}) on {path}; the request never "
-                "reached claude.ai. Try QUOTALENS_IMPERSONATE=safari or chrome, and if it "
-                "persists open an issue with `quotalens probe` output",
+                f"reached {self._host}. Try QUOTALENS_IMPERSONATE=safari or chrome, and "
+                "if it persists open an issue with `quotalens probe` output",
                 status,
             )
         if status in (401, 403):
             detail = _error_detail(response)
             raise AuthError(
-                f"claude.ai rejected the session cookie ({status}) on {path}{detail}", status
+                f"{self._host} rejected the session cookie ({status}) on {path}{detail}",
+                status,
             )
         if status == 429:
             raise RateLimitedError(f"rate limited (429) on {path}", _retry_after_seconds(response))
