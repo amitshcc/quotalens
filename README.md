@@ -154,6 +154,30 @@ It is on `/api/budget` and in `/metrics` as `quotalens_weekly_windows_remaining`
 `quotalens_weekly_window_cost_points` and
 `quotalens_weekly_clock_windows_remaining`.
 
+## When a limit is raised
+
+Anthropic can raise a limit mid-window: the level falls without the window
+resetting. QuotaLens records it, because a tool that only shows the current value
+loses the fact by the next day.
+
+```
+08:09 — Weekly — all models fell 98% -> 0% with no reset. Limit raised.
+```
+
+The event is the record; the chart marks the moment, the affected meter says
+"boosted 08:09" while that window is still running, and the History row it fell
+in is badged. A boost is information, not a state, so it takes no colour of its
+own.
+
+**It also has to be kept out of the arithmetic.** A boost inside a session window
+makes that window's weekly change *consumption minus the raise*, and that number
+is what the cost estimate behind "full sessions left" is built from — so a boost
+would quietly make the weekly budget optimistic. The payload carries no ceiling
+anywhere, only `utilization`, so the size of a raise cannot be recovered: an
+observed fall is consumption and boost together with nothing to separate them.
+The window is therefore excluded from the estimate and the History row says why.
+A window that cannot be costed is honest; one costed wrong is not.
+
 ## When a window is not running
 
 A five-hour window expires and, until the next message, no window is open. The

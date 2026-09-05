@@ -568,6 +568,12 @@ def _chart(dash: Dashboard) -> str:
         gaps += "".join(
             f'<line x1="{x:.1f}" y1="14" x2="{x:.1f}" y2="196" class="sess"/>' for x in c.session_x
         )
+        # The series already shows the drop; the marker says why it dropped.
+        gaps += "".join(
+            f'<line x1="{x:.1f}" y1="14" x2="{x:.1f}" y2="196" class="sess"/>'
+            f'<text x="{x + 4:.1f}" y="36" class="ax">boost</text>'
+            for x in c.boost_x
+        )
         # The horizontal rules run the full width of the plot, including the part of
         # the window that has not happened yet. Stopping them at "now" left the
         # chart looking cropped, in an area that is still live to the pointer; the

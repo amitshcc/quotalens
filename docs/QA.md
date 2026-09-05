@@ -250,3 +250,12 @@ inference from source: write down what was on screen or in the DOM.
       the reason to click is next to the click. Check after a few auto-refresh cycles —
       the header is inside `#app` and is replaced wholesale, so the button only keeps
       working because `app.js` delegates submit on `document` rather than binding it.
+- 2026-09-05: the weekly limit was raised mid-window — `seven_day` fell 98% -> 0% and
+      Fable 100% -> 1%, with `resets_at` moving 0.83s, i.e. not at all — and QuotaLens
+      showed nothing. Worse than nothing: a boost inside a session window makes that
+      window's weekly delta consumption *minus* the raise, and that delta feeds the
+      cost estimate behind "full sessions left", so a boost silently makes the weekly
+      budget optimistic. The payload carries no ceiling anywhere, so the size of a
+      raise cannot be recovered and the window has to be excluded rather than adjusted.
+- 2026-09-05: a boost on the session window collapses the burn rate, which would have
+      fired a "fell back below threshold" recovery that nobody earned.
