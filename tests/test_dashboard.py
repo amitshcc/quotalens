@@ -6,11 +6,13 @@ import asyncio
 import re
 import time
 from datetime import UTC, datetime
+from html import escape
 from importlib import resources
 
 from fastapi.testclient import TestClient
 
 from conftest import USAGE_LIVE_2026_09, make_client, make_handler
+from quotalens import __version__
 from quotalens.api import create_app
 from quotalens.config import CLAUDE
 from quotalens.dashboard import assign_slots, build_dashboard, display_label
@@ -578,3 +580,32 @@ def iso_utc(ts: int) -> str:
     from datetime import UTC, datetime
 
     return datetime.fromtimestamp(ts, UTC).isoformat()
+
+
+def test_page_footer_is_three_labelled_facts(settings, store, secrets) -> None:
+    now = int(time.time())
+    _seed(store, now)
+    app = create_app(settings, store, secrets)
+    with TestClient(app) as tc:
+        html = tc.get("/").text
+
+    footer = html.split("<footer>", 1)[1].split("</footer>", 1)[0]
+    # Loopback is spelled for a reader, in the view only.
+    assert f'<span class="far">Address</span> localhost:{settings.port}' in footer
+    assert "127.0.0.1" not in footer
+    assert f'<span class="far">Database</span> {escape(str(store.path))}' in footer
+    assert f"QuotaLens {__version__}" in footer
+    # The disclaimer left this surface. It has to keep being true somewhere:
+    # README, the site, and /api/health say it. Not on every page view.
+    assert "Unofficial" not in html
+    assert "Observes only" not in html
+
+
+def test_localhost_is_a_label_not_a_setting(settings) -> None:
+    """Only the footer spells it. `Settings.host` is what actually gets bound."""
+    from quotalens.dashboard import _display_host
+
+    assert _display_host("127.0.0.1") == "localhost"
+    assert _display_host("::1") == "localhost"
+    assert _display_host("0.0.0.0") == "0.0.0.0"
+    assert settings.host == "127.0.0.1"

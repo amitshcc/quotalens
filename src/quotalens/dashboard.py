@@ -406,6 +406,17 @@ class Dashboard:
 # -- builders -------------------------------------------------------------------
 
 
+def _display_host(host: str) -> str:
+    """What the footer calls the bind address.
+
+    Both loopback literals are spelled ``localhost`` for a reader; anything else
+    is shown as configured. This is a label, not a setting -- ``Settings.host``,
+    ``/metrics`` and the diagnostics still say ``127.0.0.1``, because that is
+    what is actually bound.
+    """
+    return "localhost" if host in {"127.0.0.1", "::1"} else host
+
+
 def build_dashboard(
     settings: Settings,
     store: Store,
@@ -585,7 +596,7 @@ def build_dashboard(
         "Last poll": clock(status.last_attempt_ts) if status.last_attempt_ts else "never",
         "Next poll": clock(status.next_poll_ts) if status.next_poll_ts else "pending",
     }
-    footer = {"bind": f"{settings.host}:{settings.port}", "db": str(store.path)}
+    footer = {"bind": f"{_display_host(settings.host)}:{settings.port}", "db": str(store.path)}
     return Dashboard(
         now=now,
         epistemic=epistemic,

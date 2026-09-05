@@ -191,10 +191,6 @@ _VALUE_COLOUR = {"elevated": "var(--st-elevated)", "critical": "var(--st-critica
 WITHHELD = '<span class="num">—</span><span class="dash">—</span>'
 
 
-def _disclaimer(provider: Provider = CLAUDE) -> str:
-    return f"Unofficial. Uses undocumented {provider.host} endpoints. Observes only."
-
-
 def chip(kind: str, text: str) -> str:
     if kind not in _CHIP or not text:
         return ""
@@ -860,6 +856,8 @@ def _side(dash: Dashboard) -> str:
 
 def _footer(dash: Dashboard) -> str:
     return (
-        f"<footer><span>{e(dash.footer['bind'])}</span><span>{e(dash.footer['db'])}</span>"
-        f"<span>{e(_disclaimer())}</span><span>QuotaLens {e(__version__)}</span></footer>"
+        "<footer>"
+        f'<span><span class="far">Address</span> {e(dash.footer["bind"])}</span>'
+        f'<span><span class="far">Database</span> {e(dash.footer["db"])}</span>'
+        f"<span>QuotaLens {e(__version__)}</span></footer>"
     )

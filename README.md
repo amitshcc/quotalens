@@ -15,7 +15,12 @@ macOS, Linux and Windows, each tested on every push — with one caveat about
 Windows worth reading before you rely on it, in [Platforms](#platforms). Binds
 loopback, keeps your cookie in the OS keychain, phones nothing home. MIT.
 
-Status: **v0.1.0, pre-release.**
+Unofficial. It uses undocumented claude.ai endpoints and only observes: it
+cannot raise, extend or bypass a limit. Not affiliated with or endorsed by
+Anthropic, and the endpoints may change without notice. The longer version is in
+[The Terms, stated plainly](#the-terms-stated-plainly).
+
+Status: **v1.0.**
 
 ## Quick start
 
@@ -300,15 +305,15 @@ endpoint-drift record and pruning it would defeat the point of keeping payloads
 at all. The poller prunes on the same rule every six hours, so the default
 applies whether or not you ever run the command.
 
-(Those figures are measured, not arithmetic. Before v0.1.0 the overage endpoint
-was fetched every poll too, which added a second 1.0 KB payload a minute; it is
+(Those figures are measured, not arithmetic. Earlier the overage endpoint was
+fetched every poll too, which added a second 1.0 KB payload a minute; it is
 now fetched once at startup.)
 
 ### Rows another collector wrote
 
 If a second instance ever pointed at this database, its samples are in here too,
-and the history shows session windows that were never yours. Version 0.1.0 fixed
-the cause: a scratch `--data-dir` now implies a scratch database. It cannot fix
+and the history shows session windows that were never yours. That cause is
+fixed: a scratch `--data-dir` now implies a scratch database. It cannot fix
 databases that already have the rows.
 
 ```sh
