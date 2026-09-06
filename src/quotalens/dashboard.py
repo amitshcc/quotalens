@@ -525,12 +525,33 @@ def build_dashboard(
     # The hero reads the session meter's own view: same tier, same withholding, one
     # window. Recomputing either here is how they came to say different things.
     session_view = next((w for w in windows if w.key == RATE_WINDOW), None)
+    session_row = next((r for r in latest if r.window == RATE_WINDOW), None)
+    # It used to read only the meter's *state*, for colour, and take the headroom
+    # and the verdict from `current.pct` regardless. So when the five_hour block
+    # stopped refreshing while its neighbours stayed healthy, the meter read
+    # "— (withheld) last ok 11:23" and the hero twelve pixels above said
+    # "74% left, resets in 2h 50m" from that same row.
+    #
+    # Only staleness is added here, not everything the meter withholds for. A
+    # *lapsed* window is withheld by the meter too, and passing that through
+    # would replace `compute_runway`'s "The session window ended at 19:54 and no
+    # new one has opened" with "unknown while the collector is not reporting" --
+    # which is both worse and untrue, because the collector is reporting fine.
+    # Measured on both cases before choosing.
+    # Lapsed wins where both hold: a window that ended explains its own reading
+    # stopping, and "ended at 13:59 and no new one has opened" is the more useful
+    # of two true sentences.
+    session_stale = (
+        session_row is not None
+        and window_is_stale(session_row, settings.poll_interval_s, now)
+        and not window_has_lapsed(session_row, now)
+    )
     burn = _burn_view(
         rate_burn,
-        next((r for r in latest if r.window == RATE_WINDOW), None),
+        session_row,
         all_rows.get(RATE_WINDOW, []),
         lookback_s,
-        withheld,
+        withheld or session_stale,
         burn_elevated,
         burn_alert,
         now,
@@ -542,6 +563,11 @@ def build_dashboard(
         READOUT_OFF
         if session_view is not None and session_view.withheld
         else (session_view.state if session_view else NORMAL),
+        # A bare em dash says nothing. The lapsed case has a sentence; so should
+        # this one, and it is the meter's own "last ok" time, from the same row.
+        ""
+        if withheld or not session_stale
+        else f"The session reading stopped refreshing at {clock(session_row.ts)}.",
     )
     gap_threshold = STALE_AFTER_INTERVALS * settings.poll_interval_s
     labels = {r.window: r.label for r in latest}
@@ -1019,12 +1045,13 @@ def _burn_view(
     session: tuple[int, int] | None = None,
     baseline: float | None = None,
     state: str = NORMAL,
+    withheld_why: str = "",
 ) -> BurnView:
     """The hero. ``state`` is the session meter's magnitude, passed in rather than
     recomputed, so the two elements describing one window cannot disagree on screen."""
     lookback_label = duration(lookback_s)
     if withheld:
-        why = "Session state unknown while the collector is not reporting."
+        why = withheld_why or "Session state unknown while the collector is not reporting."
         return BurnView("—", "pts/hr", why, True, False)
     if burn is None or current is None:
         return BurnView("—", "pts/hr", "No session readings yet.", True, False)

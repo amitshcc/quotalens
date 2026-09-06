@@ -241,3 +241,56 @@ def test_the_reported_state_shows_no_phantom_percentage_anywhere() -> None:
     assert 'class="idle"' in html and dash["idle_minutes"] >= 22
     assert current["readings"][0]["pct"] is None
     assert 'quotalens_quota_percent{label="5-hour",window="five_hour"} NaN' in metrics
+
+
+def test_the_hero_inherits_the_meters_withholding_not_only_its_colour() -> None:
+    """The meter read "— last ok 11:23" and the hero, twelve pixels above, said
+    "74% left, resets in 2h 50m" -- from the row the meter had just withheld.
+
+    `_burn_view` took the collector-level `withheld` and used `session_view` only
+    to pick the readout *state*; the headroom and the verdict came from
+    `current.pct` regardless. The comment above the call said the hero reads the
+    meter's own view. It now does.
+    """
+    weekly = QuotaReading("seven_day", "7-day", 96.0, iso(NOW + 3 * 86400), None, False)
+    stopped = NOW - (STALE_AFTER_INTERVALS * INTERVAL + 60)
+    rows = [
+        *[
+            (stopped - i * 60, [QuotaReading("five_hour", "5-hour", 40.0 + i, iso(NOW + 3600))])
+            for i in range(20, 0, -1)
+        ],
+        (stopped, [QuotaReading("five_hour", "5-hour", 60.0, iso(NOW + 3600), None, True), weekly]),
+        *[(NOW - i * 60, [weekly]) for i in range(5, 0, -1)],
+    ]
+    html, dash, _current, _icon, _metrics = render(rows)
+
+    assert dash["collector"]["kind"] == "ok", "the collector itself is healthy"
+    assert dash["burn"]["withheld"] is True
+    assert dash["burn"]["headroom"] == EM_DASH
+    assert dash["burn"]["text"] == EM_DASH
+    # The reset slot takes the removed-and-explained treatment, not a duration
+    # computed from a row the meter beside it has withheld.
+    assert not re.search(r"\d", hero_window_text(html)), hero_window_text(html)
+
+    # The meter's foot and the hero's sentence name the same moment. A bare em
+    # dash would have satisfied "no number" and told the reader nothing.
+    foot = " ".join(meter_footer(html))
+    assert "last ok" in foot, foot
+    when = re.search(r"last ok (\d\d:\d\d)", foot)[1]
+    assert dash["burn"]["why"] == f"The session reading stopped refreshing at {when}."
+
+
+def test_a_lapsed_window_keeps_its_own_sentence_on_the_hero() -> None:
+    """Withholding is inherited for staleness only, and this is why.
+
+    A lapsed window is withheld by the meter too. Passing that through as well
+    would replace `compute_runway`'s "The session window ended at 13:59 and no
+    new one has opened" with "unknown while the collector is not reporting" --
+    which is worse, and untrue: the collector is reporting fine.
+    """
+    ended = NOW - 22 * 60
+    _html, dash, _current, _icon, _metrics = render(session_rows(40.0, ended, until=NOW))
+    assert dash["collector"]["kind"] == "ok"
+    assert dash["burn"]["headroom"] == EM_DASH
+    assert "ended at" in dash["burn"]["why"] and "no new one has opened" in dash["burn"]["why"]
+    assert "collector is not reporting" not in dash["burn"]["why"]

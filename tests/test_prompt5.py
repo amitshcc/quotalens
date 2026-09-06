@@ -27,7 +27,12 @@ def _seed_windows(store, now: int, count: int, peak: float = 40.0) -> None:
             pct = min(peak, i * peak / 240)
             store.record_quota(start + i * 60, [QuotaReading("five_hour", "5-hour", pct, iso(end))])
     cur_end = now + 2 * 3600
-    for i in range(0, 180, 5):
+    # Up to and including `now`: the last step used to stop at i=175, leaving the
+    # newest session sample five minutes old, which is stale by the product's own
+    # three-interval rule. The hero ignored that and read the row anyway; now that
+    # it inherits the meter's withholding, a fixture that means "currently
+    # collecting" has to actually be current.
+    for i in range(0, 181, 5):
         ts = cur_end - SESSION_LENGTH_S + i * 60
         store.record_quota(ts, [QuotaReading("five_hour", "5-hour", i / 3, iso(cur_end))])
 
