@@ -1,4 +1,4 @@
-/* QuotaLens design tokens — "Bench"
+/* QuotaLens design tokens: "Bench"
    Dark is the default. Light applies only when the OS asks for it or the
    user toggles. Theme values use light-dark(light, dark), which follows
    `color-scheme`, so the whole palette is declared once.
@@ -30,7 +30,7 @@
   --w-med: 500;
   --w-bold: 600;
 
-  /* ── space — 4px grid ───────────────────────────────────────────── */
+  /* ── space: 4px grid ────────────────────────────────────────────── */
   --sp-0: 2px;  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px;
   --sp-4: 16px; --sp-5: 24px; --sp-6: 32px; --sp-7: 48px;
   --row-h: 28px;        /* comfortable table row */
@@ -38,7 +38,7 @@
   --gutter: 20px;
   --maxw: 1320px;
 
-  /* ── shape — radius is capped at 3px on purpose. no shadows. ────── */
+  /* ── shape: radius is capped at 3px on purpose. no shadows. ─────── */
   --r-1: 2px;
   --r-2: 3px;
   --hair: 1px;
@@ -86,7 +86,7 @@
   --st-auth-bg:     light-dark(rgba(90,63,176,.10), rgba(167,139,250,.14));
 
   /* ── chart series ───────────────────────────────────────────────── */
-  /* Derived from Okabe–Ito, chosen for deuteranopia. Slot 1 is always the
+  /* Derived from Okabe-Ito, chosen for deuteranopia. Slot 1 is always the
      5-hour window / burn rate, so it is the same amber as the readout.
      Colour is never the only channel: --dash-N and an end-of-line label
      are mandatory, not optional. */
@@ -104,7 +104,7 @@
   --s5-soft: light-dark(rgba(163,44,106,.13), rgba(222,121,172,.15));
   --s6-soft: light-dark(rgba(95,66,168,.13),  rgba(185,160,232,.15));
 
-  --dash-1: none;        /* solid, heaviest — the hero trace */
+  --dash-1: none;        /* solid, heaviest, the hero trace */
   --dash-2: none;        /* solid, lighter                   */
   --dash-3: 7 3;
   --dash-4: 2 3;
