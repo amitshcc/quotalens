@@ -45,6 +45,29 @@ def _no_status_network(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _testclient_speaks_to_loopback(monkeypatch):
+    """Every ``TestClient`` sends ``Host: 127.0.0.1``, because a browser must.
+
+    Starlette's default is ``http://testserver``, and `origin_guard` refuses a
+    Host it does not answer for -- which is the point of it. Fixing the client
+    rather than adding ``testserver`` to the allow-list keeps the thing under
+    test the thing that ships: a name the server does not serve is refused here
+    exactly as ``attacker.example`` is.
+
+    Patched on the class so the 78 call sites do not each have to remember, and
+    through ``monkeypatch`` so it is undone with the test.
+    """
+    from starlette.testclient import TestClient
+
+    original = TestClient.__init__
+
+    def loopback(self, *args, base_url="http://127.0.0.1", **kwargs):
+        original(self, *args, base_url=base_url, **kwargs)
+
+    monkeypatch.setattr(TestClient, "__init__", loopback)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_config(tmp_path_factory, monkeypatch):
     """Point ``default_data_dir()`` at a scratch directory for every test.
 

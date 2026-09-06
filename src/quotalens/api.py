@@ -19,12 +19,13 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import (
     HTMLResponse,
     JSONResponse,
+    PlainTextResponse,
     RedirectResponse,
     Response,
     StreamingResponse,
 )
 
-from quotalens import __version__, notify, retention, status
+from quotalens import __version__, notify, origin_guard, retention, status
 from quotalens.burn import burn_rate
 from quotalens.config import (
     CONFIG_KEYS_BY_NAME,
@@ -196,6 +197,20 @@ def create_app(
     )
     state = AppState(settings, store, poller, redactor, watcher)
     app.state.qw = state
+
+    # Before every route, and before anything reads a body: which callers may
+    # read the dashboard, and which may write to it. The rules and the adversary
+    # each one stops are in `origin_guard`; the reproductions are in
+    # docs/SECURITY-AUDIT-2026-09-06.md 2, F1-F4.
+    hosts = origin_guard.allowed_hosts(settings.host)
+
+    @app.middleware("http")
+    async def _guard(request: Request, call_next):
+        refusal = origin_guard.refuse(request.method, request.headers, hosts, settings.port)
+        if refusal is None:
+            return await call_next(request)
+        code, body = refusal
+        return PlainTextResponse(body, status_code=code)
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
