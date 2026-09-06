@@ -177,17 +177,26 @@ def test_the_read_only_block_says_why_and_how(settings, store, secrets, tmp_path
     assert "quotalens auth" in html
 
 
-def test_every_field_states_whether_it_is_live_or_needs_a_restart(
+def test_the_form_says_when_changes_apply_once_not_once_per_field(
     settings, store, secrets, tmp_path
 ) -> None:
-    """Guessing is worse than either."""
+    """Eight fields repeating "takes effect on the next poll" said nothing eight
+    times, and were the largest single source of visual weight in the dialog.
+
+    Prompt 17 made every field here live, so the form states it once. A field
+    that is genuinely different still has to say so -- which is what the second
+    assertion protects.
+    """
     app = create_app(settings, store, secrets, config_dir=tmp_path)
     with TestClient(app) as tc:
         html = tc.get("/settings").text
-    fields = re.findall(r'<div class="fld(?! is-ro)[^"]*">(.*?)</div>', html, re.S)
-    assert fields
-    for field in fields:
-        assert "takes effect on the next poll" in field or "needs a restart" in field
+    assert html.count("Changes apply from the next poll") == 1
+    assert "takes effect on the next poll" not in html
+
+    from quotalens.render import _field
+
+    assert "needs a restart" in _field("k", "L", "v", note="n", effect="restart")
+    assert "needs a restart" not in _field("k", "L", "v", note="n")
 
 
 def test_the_retention_sizes_are_measured_and_labelled_as_estimates(
@@ -276,3 +285,23 @@ def test_a_vendor_without_its_brand_file_renders_the_name_alone(settings, store,
         assert tc.get("/static/vendor/README.md").status_code == 404
     for vendor in status.VENDORS:
         assert vendor.display_name in html
+
+
+def test_saving_does_not_forget_the_flags_this_instance_was_started_with(
+    settings, store, secrets, tmp_path
+) -> None:
+    """The panel owns PANEL_KEYS and nothing else.
+
+    Reloading settings wholesale after a save dropped every CLI flag: an
+    instance started with `--port 8830` reported 8787 in the panel's own
+    read-only block, which is the single place that has to be right.
+    """
+    flagged = settings.with_overrides(port=8830)
+    app = create_app(flagged, store, secrets, config_dir=tmp_path)
+    with TestClient(app) as tc:
+        assert "8830" in tc.get("/settings").text
+        tc.post("/settings", data=_form(interval="120"), follow_redirects=False)
+        after = tc.get("/settings").text
+    assert "8830" in after, "the port survived a save"
+    assert app.state.qw.settings.port == 8830
+    assert app.state.qw.settings.poll_interval_s == 120  # and the panel key applied

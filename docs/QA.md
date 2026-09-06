@@ -423,3 +423,23 @@ current reading, no current figure) but inconsistent with its own neighbours, an
 the range-scoped figures are the ones a reader wants when the collector is down.
 Reading the last stored overage row and marking it stale would fix it; deciding
 what "stale money" should look like is a design question this change did not carry.
+- 2026-09-06: the retention radios started 40% across and `≈ 43 MB` broke into three
+      lines reading `≈`, `43`, `MB`. Not a design problem: the retention form is its own
+      `.fform`, and while `.ropt` and `.rexp` were pinned to `grid-column:2`, the two
+      explanatory paragraphs were not. They auto-placed, one landing in column 1, which
+      made that column 394px wide against column 2's 135px. Measured before the fix.
+      Three declarations put it right — span every non-control child, `nowrap` the size,
+      cap the prose at 76ch — with no layout work at all. The pinning was done element
+      by element, which is exactly how two paragraphs slipped through; it is a rule now.
+- 2026-09-06: the settings control was an `<a>` sitting beside `theme`'s `<button>`, so
+      it took the link colour and rendered as a blue smudge. Two controls doing the same
+      kind of job were two colours because of their tag names. It is a button now, with
+      the `<a>` kept for the no-JavaScript path and CSS showing exactly one — the same
+      `.go` idiom the range form already uses. Verified by computed style: both now
+      report rgb(139,148,149).
+- 2026-09-06: saving from the settings panel reloaded settings wholesale from file and
+      environment, dropping every CLI flag the instance was started with. An instance on
+      `--port 8830` reported 8787 in the panel's own read-only block — the one place that
+      has to be right — as soon as anything was saved. `db_path` had been patched back by
+      hand, which was the tell that the patch was the wrong shape. The save now adopts
+      only the keys the panel owns.

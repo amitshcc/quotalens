@@ -281,7 +281,12 @@ def test_page_renders_offline_with_no_external_resources(settings, store, secret
     for anchor in re.findall(r'<a[^>]*href="https?://[^"]*"[^>]*>', html):
         assert 'target="_blank"' in anchor
         assert "noopener" in anchor and "noreferrer" in anchor
-    assert "<img" not in html
+    # Images are allowed, but only same-origin ones: the vendor marks are served
+    # from /static/vendor/. The point of this test is that nothing is *fetched*
+    # from the network to render the page, not that <img> is banned.
+    for tag in re.findall(r"<img[^>]*>", html):
+        src = re.search(r'src="([^"]*)"', tag)
+        assert src and src.group(1).startswith("/"), tag
     assert '<symbol id="i-alert"' in html and html.count("<symbol") == 7
     # The theme button ships both faces and CSS picks one: the server cannot know
     # which theme the browser settled on.

@@ -240,9 +240,23 @@ footer{margin-top:var(--sp-5);padding-top:var(--sp-3);border-top:var(--hair) sol
 /* settings: one two-column grid for the whole form, so labels and controls line
    up across every field rather than each field making its own columns. .fld is
    display:contents so its label and control become items of that one grid. */
-.fform{display:grid;grid-template-columns:auto 1fr;gap:var(--sp-2) var(--sp-3);
-  max-width:66ch;align-items:baseline}
-.fform .cap,.fform .rule{grid-column:1/-1}
+/* --sp-4 between the columns: at this width --sp-3 let right-aligned labels
+   nearly touch their inputs. Sections get two steps where fields get one, so
+   the grouping is legible without a border (DESIGN.md 7, the 4px grid). */
+.fform{display:grid;grid-template-columns:auto 1fr;gap:var(--sp-2) var(--sp-4);
+  max-width:640px;align-items:baseline}
+.fform>.cap{margin-top:var(--sp-3)}
+.fform>.cap:first-of-type{margin-top:0}
+.lede{margin:0 0 var(--sp-2)}
+/* Every direct child that is not a label or a control spans both columns.
+   Stated as a rule rather than pinned element by element: the previous version
+   pinned .cap, .rule, .ropt and .rexp individually, and the two explanatory
+   paragraphs in the retention form were simply missed. They auto-placed, one
+   landing in column 1, which made that column 394px wide, shoved every radio
+   right and squeezed column 2 to 135px -- which is what broke "≈ 43 MB" onto
+   three lines. Measured before the fix, not guessed. */
+.fform>:not(label):not(input):not(.ropt):not(.rexp):not(button){grid-column:1/-1}
+.fform>p{max-width:76ch}
 .fld{display:contents}
 .fld label{grid-column:1;justify-self:end;color:var(--txt-dim);font-size:var(--fs-sm)}
 /* min-width:0: a grid item defaults to min-content, so help text refuses to
@@ -257,15 +271,21 @@ footer{margin-top:var(--sp-5);padding-top:var(--sp-3);border-top:var(--hair) sol
 .fld code{font-size:var(--fs-sm);color:var(--txt-dim);word-break:break-all}
 /* Radio and confirm rows sit in the control column, so their labels start where
    every other control starts rather than in the label column. */
-.ropt{grid-column:2;display:flex;align-items:baseline;gap:var(--sp-3);font-size:var(--fs-sm)}
-.ropt>span:first-of-type{min-width:9ch}
-.rsize{font-family:var(--font-num);color:var(--txt-dim)}
+/* Three columns so the sizes line up on their digits down the page, which is
+   what DESIGN.md 6 requires of tabular figures. The confirm row has one label
+   and no size, so it spans the rest. */
+.ropt{grid-column:1/-1;display:grid;grid-template-columns:auto 1fr 8ch;
+  gap:var(--sp-3);align-items:baseline;font-size:var(--fs-sm)}
+.ropt>span:only-of-type{grid-column:2/-1}
+/* One token to a reader; it must never break across lines. */
+.rsize{font-family:var(--font-num);color:var(--txt-dim);white-space:nowrap;text-align:right}
 .rexp{grid-column:2;font-size:var(--fs-sm)}
 /* A submit is the toolbar's button, not a full-bleed slab: `button` already has
    the vocabulary, but display:flex in a grid stretches it to the column. */
-.fform button{grid-column:2;justify-self:start}
+.fform button{grid-column:1/-1;justify-self:end;margin-top:var(--sp-2)}
 /* The dialog reuses .screen's surface; only the modal chrome is new. */
-dialog{padding:0;color:var(--txt);background:var(--screen);max-width:min(92vw,74ch);
+/* 74ch was a cramped column that wrapped help text mid-phrase. */
+dialog{padding:0;color:var(--txt);background:var(--screen);max-width:min(92vw,680px);
   max-height:86vh;overflow:auto;border:var(--hair) solid var(--hairline);border-radius:var(--r-2)}
 dialog::backdrop{background:var(--case);opacity:.75}
 .dhead{display:flex;align-items:center;justify-content:space-between;padding:var(--sp-3) var(--sp-4)}
@@ -277,3 +297,7 @@ dialog::backdrop{background:var(--case);opacity:.75}
 .hsc{max-height:calc(11 * var(--row-h));overflow:auto}
 .hsc thead th{position:sticky;top:0;z-index:1;background:var(--screen)}
 .cred{fill:var(--grid);pointer-events:none}
+/* Shown only when app.js has run, the mirror of `.go`. */
+.jso{display:none}
+[data-js] .jso{display:flex}
+svg .fill{fill:currentColor;stroke:none}

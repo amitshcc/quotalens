@@ -27,6 +27,7 @@ from fastapi.responses import (
 from quotalens import __version__, retention, status
 from quotalens.burn import burn_rate
 from quotalens.config import (
+    CONFIG_KEYS_BY_NAME,
     Settings,
     config_path,
     load_settings,
@@ -61,7 +62,7 @@ from quotalens.render import (
 )
 from quotalens.secrets import Redactor, SecretStore, global_redactor
 from quotalens.sessions import rebuild as rebuild_sessions
-from quotalens.settings_view import apply_form, build_view, shrink_impact
+from quotalens.settings_view import PANEL_KEYS, apply_form, build_view, shrink_impact
 from quotalens.state import collector_state
 from quotalens.status import StatusWatcher, selected_vendors
 from quotalens.store import Store
@@ -262,9 +263,17 @@ def create_app(
             state.settings, form, config_path(state.settings.profile, config_dir)
         )
         if not errors:
-            state.settings = load_settings(
-                state.settings.profile, data_dir=config_dir
-            ).with_overrides(db_path=state.settings.db_path)
+            # Adopt *only* the keys the panel owns. Reloading wholesale drops
+            # every CLI flag this instance was started with -- `--port 8830`
+            # became 8787 in the panel's own read-only block, which is the one
+            # place that has to be right. db_path was patched back by hand; the
+            # rest were not, which is the tell that the patch was the wrong
+            # shape.
+            loaded = load_settings(state.settings.profile, data_dir=config_dir)
+            fields = {k: CONFIG_KEYS_BY_NAME[k].field for k in PANEL_KEYS}
+            state.settings = state.settings.with_overrides(
+                **{field: getattr(loaded, field) for field in fields.values()}
+            )
             state.poller.adopt(state.settings)
             watcher.enabled = state.settings.status_row
             watcher.vendors = selected_vendors(state.settings.status_vendors)

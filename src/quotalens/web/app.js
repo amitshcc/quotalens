@@ -198,7 +198,7 @@
   }
 
   document.addEventListener("click", function (ev) {
-    var link = ev.target.closest && ev.target.closest("#settings-link");
+    var link = ev.target.closest && ev.target.closest("#settings-link, #settings-btn");
     if (!link) return;
     if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.button !== 0) return;
     if (openSettings()) ev.preventDefault();
