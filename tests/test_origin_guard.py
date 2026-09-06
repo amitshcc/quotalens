@@ -2,7 +2,8 @@
 
 Every case drives the real middleware through ``TestClient`` so the headers are
 explicit and the routes are the shipped ones. Reproductions and the adversary
-behind each rule: ``docs/SECURITY-AUDIT-2026-09-06.md`` 2, F1-F4.
+behind each rule: the 2026-09-06 security audit, §2, F1-F4 (kept out of the
+public repo until its findings are marked resolved).
 """
 
 from __future__ import annotations

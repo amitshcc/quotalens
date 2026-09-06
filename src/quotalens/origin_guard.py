@@ -4,7 +4,8 @@ Loopback is a *reachability* boundary, not an authentication one. Nothing off
 this machine can open a TCP connection to ``127.0.0.1:8787`` -- but a web page
 the user visits is running *on* this machine, in their browser, and the browser
 will happily connect for it. Two things follow, and this module is both answers.
-Detail and the reproductions: ``docs/SECURITY-AUDIT-2026-09-06.md`` §2, F1-F4.
+Detail and the reproductions: the 2026-09-06 security audit, §2, F1-F4 -- kept
+with the prompts in the private site repo until its findings are marked resolved.
 
 **Rule 1, the `Host` allow-list, closes reads (F4).** The server used to answer
 ``Host: attacker.example`` with real readings. That is the whole precondition

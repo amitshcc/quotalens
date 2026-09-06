@@ -200,8 +200,9 @@ def create_app(
 
     # Before every route, and before anything reads a body: which callers may
     # read the dashboard, and which may write to it. The rules and the adversary
-    # each one stops are in `origin_guard`; the reproductions are in
-    # docs/SECURITY-AUDIT-2026-09-06.md 2, F1-F4.
+    # each one stops are in `origin_guard`; the reproductions are in the
+    # 2026-09-06 security audit (§2, F1-F4), kept out of the public repo until
+    # its findings are marked resolved.
     hosts = origin_guard.allowed_hosts(settings.host)
 
     @app.middleware("http")
