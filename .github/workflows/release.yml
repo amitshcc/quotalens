@@ -8,6 +8,10 @@ name: Release
 # names an environment. A token in `secrets.*` would work and would be worse: it
 # does not expire, and it is one leaked log line from being someone else's.
 #
+# A manual dispatch can only reach TestPyPI. Pushing a tag is the only route to
+# PyPI, because that is the only condition under which the tag/__version__/wheel
+# agreement check runs.
+#
 # Before the first real tag, publish once to TestPyPI via workflow_dispatch. The
 # upload is irreversible and a filename can never be reused, even after a
 # deletion — so a bad wheel on PyPI burns `quotalens-1.0-py3-none-any.whl`
@@ -23,7 +27,12 @@ on:
         required: true
         default: testpypi
         type: choice
-        options: [testpypi, pypi]
+        # TestPyPI only. A dispatch can run from any ref, and the step that
+        # checks the tag, pyproject.toml and __version__ against each other
+        # is gated on refs/tags/v* -- so a dispatch to PyPI would be an
+        # irreversible upload with no version check at all. The tag is the
+        # only route to PyPI.
+        options: [testpypi]
 
 permissions:
   contents: read
@@ -98,9 +107,11 @@ jobs:
         with:
           repository-url: https://test.pypi.org/legacy/
 
+  # Reachable only by pushing a tag, which is also the only condition under
+  # which the version-agreement step above runs. See the dispatch input.
   pypi:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment: pypi        # add a required reviewer on this environment, so a
                              # tag alone cannot publish without you clicking
