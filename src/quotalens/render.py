@@ -1152,6 +1152,38 @@ def _select_field(key: str, label: str, value: str, error: str = "") -> str:
     )
 
 
+def _checkbox_group(view: SettingsView) -> str:
+    """One box per vendor, rendered from the registry rather than a template list.
+
+    An unsupported vendor is shown and disabled, carrying its own explanation
+    from the registry entry, so it is visible without ever being selectable or
+    submitted. The boxes are disabled outright when the parent is off -- dimming
+    them in CSS would still submit them.
+    """
+    chosen = {k.strip() for k in (view.values.get("status_vendors") or "").split(",") if k.strip()}
+    off = not view.values.get("status_row")
+    rows = []
+    for vendor in status.VENDORS:
+        blocked = (not vendor.supported) or off
+        # data-locked keeps an unsupported vendor disabled even when the
+        # parent is switched back on.
+        lock = ' data-locked="1"' if not vendor.supported else ""
+        checked = " checked" if vendor.supported and vendor.key in chosen else ""
+        rows.append(
+            f'<label class="vopt"><input type="checkbox" name="vendor_{e(vendor.key)}" '
+            f'value="1"{checked}{" disabled" if blocked else ""}'
+            f"{lock}>"
+            f"<span>{e(vendor.display_name)}</span></label>"
+            + (
+                f'<p class="far vwhy">{e(vendor.unsupported_reason)}</p>'
+                if vendor.unsupported_reason
+                else ""
+            )
+        )
+    empty = '<p class="far">With none selected, no status is shown and no requests are made.</p>'
+    return '<div class="vgrp">' + "".join(rows) + empty + "</div>"
+
+
 def _readonly(label: str, value: str, why: str) -> str:
     """A setting the panel deliberately does not offer, and the reason."""
     return (
@@ -1238,7 +1270,8 @@ def render_settings(view: SettingsView) -> str:
             error=err.get("webhook_url", ""),
             width="l",
         ),
-        '<p class="cap">Notifications</p>',
+        '<p class="cap">Desktop notifications</p>',
+        '<p class="far">Alerts fire once when a usage window crosses a configured level.</p>',
         '<div class="grp">',
     ]
     if view.notify_capability.available:
@@ -1266,29 +1299,41 @@ def render_settings(view: SettingsView) -> str:
             )
         )
     body += [
+        # The delivery status is the honest answer to "will this work here",
+        # re-detected on every render rather than frozen at startup.
+        '<div class="fld is-ro"><label>Delivery</label>'
+        f'<span class="far dstat">{e(view.delivery_status)}</span>'
+        '<span class="far">Exit code 0 means handed to the operating system, '
+        "not seen by you.</span></div>",
+        '<div class="fld is-ro"><label></label>'
+        '<button type="button" id="notify-test" class="jso">'
+        "Send test notification</button></div>",
         '<div class="dep">',
-        # Three selects rather than a comma-separated string: nothing to learn
-        # about syntax, and the stored format is unchanged -- the conversion
-        # happens once, at the form boundary, in settings_view.
-        *(
+        '<p class="cap">Usage threshold alerts</p>',
+        '<div class="trow">'
+        + "".join(
             _select_field(
                 slot,
-                f"Notification {i + 1}",
+                label,
                 view.values.get(slot, ""),
                 err.get("notify_thresholds", "") if i == 0 else "",
             )
-            for i, slot in enumerate(notify.SLOT_KEYS)
-        ),
+            for i, (slot, label) in enumerate(
+                zip(notify.SLOT_KEYS, ("First alert", "Second alert", "Final alert"), strict=True)
+            )
+        )
+        + "</div>",
         '<p class="far dnote">Notify when a usage window reaches this percentage.</p>',
         "</div></div>",
         # A panel key that is never rendered is not "left alone": an unchecked
         # box sends nothing, so apply_form read its absence as false and every
         # save silently turned credit notifications off. Observed: True on disk
         # before a save, False after one that never mentioned it.
+        '<p class="cap">Credit spending</p>',
         '<div class="grp">',
         _field(
             "notify_credits",
-            "Credit spending",
+            "Notify on spending",
             view.values["notify_credits"],
             note="notify when usage credits start being spent",
             kind="checkbox",
@@ -1304,13 +1349,8 @@ def render_settings(view: SettingsView) -> str:
             kind="checkbox",
         ),
         '<div class="dep">',
-        _field(
-            "status_vendors",
-            "Vendors",
-            view.values["status_vendors"],
-            note="comma separated: " + ", ".join(v.key for v in status.VENDORS),
-            width="m",
-        ),
+        '<p class="cap">Sources</p>',
+        _checkbox_group(view),
         "</div></div>",
         '<p class="cap">Advanced — command line only</p>',
         _readonly(

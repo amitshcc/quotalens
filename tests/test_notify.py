@@ -174,3 +174,50 @@ def test_a_stored_value_outside_the_offered_set_is_still_representable() -> None
     """Otherwise the select falls back to Disabled and the next save loses it."""
     assert notify.to_slots("10,20,30") == ["10", "20", "30"]
     assert 10 not in notify.THRESHOLD_CHOICES  # the case this guards
+
+
+# -- delivery outcome and the test probe -------------------------------------------
+
+
+def test_a_failed_delivery_is_never_recorded_as_notified() -> None:
+    """The event still suppresses a retry; the suffix stops it reading as success."""
+    detail = "five_hour@R1 crossed 50" + notify.FAILED_SUFFIX
+    assert "notified" not in detail
+    assert notify.FAILED_SUFFIX.strip() in detail
+    # And the de-dup key still matches, so the level is not attempted again.
+    assert notify.fired_thresholds([detail], "five_hour", "R1") == set()
+
+
+def test_the_status_line_never_claims_a_notification_was_seen() -> None:
+    ready = notify.delivery_status(notify.Capability(True, tool="terminal-notifier"))
+    assert ready == "Ready to send via terminal-notifier"
+    assert notify.delivery_status(notify.Capability(True, tool="osascript")).startswith(
+        "Ready to send via macOS"
+    )
+    assert notify.delivery_status(notify.Capability(False, "no session bus")) == (
+        "Unavailable: no session bus"
+    )
+    assert notify.delivery_status(
+        notify.Capability(True, tool="osascript"), "exited non-zero"
+    ).startswith("Last test could not be handed to macOS")
+    for text in (ready,):
+        assert "delivered" not in text and "seen" not in text
+
+
+def test_the_test_probe_reports_the_command_result() -> None:
+    from types import SimpleNamespace
+
+    cap = notify.Capability(True, tool="notify-send")
+    ok, reason = notify.send_test(cap, runner=lambda *a, **k: SimpleNamespace(returncode=0))
+    assert ok and reason == ""
+    bad, why = notify.send_test(cap, runner=lambda *a, **k: SimpleNamespace(returncode=1))
+    assert not bad and "non-zero" in why
+
+
+def test_the_test_probe_refuses_when_delivery_is_unavailable() -> None:
+    ok, reason = notify.send_test(notify.Capability(False, "no session bus"))
+    assert not ok and reason == "no session bus"
+
+
+def test_the_test_message_is_identifiable() -> None:
+    assert notify.TEST_MESSAGE == "QuotaLens test notification"

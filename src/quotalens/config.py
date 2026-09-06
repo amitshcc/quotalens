@@ -171,7 +171,9 @@ class Settings:
     # On by default: it is one small GET per vendor every five minutes and it
     # answers "is it them or me". Off must stop the requests, not hide the row.
     status_row: bool = True
-    status_vendors: str = "claude,openai"
+    # None or "" means the user deselected every source. The default for an
+    # absent key lives on the ConfigKey, not here. See status.selected_vendors.
+    status_vendors: str | None = "claude,openai"
 
     def with_overrides(self, **kwargs: object) -> Settings:
         """Return a copy with the given non-``None`` fields replaced."""

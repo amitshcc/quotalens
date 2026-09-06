@@ -208,6 +208,37 @@
      shrink regardless -- this is the affordance, so the control says what it
      will accept before you press it. With no JavaScript the button stays
      disabled, and the /settings page keeps its own always-enabled submit. */
+  /* The test notification. POST, local, and guarded by the same cooldown the
+     server applies to `poll now` -- the button also disables itself so a double
+     click cannot queue two. It reports what the OS *accepted*, never that a
+     banner was seen. */
+  document.addEventListener("click", function (ev) {
+    var btn = ev.target.closest && ev.target.closest("#notify-test");
+    if (!btn) return;
+    ev.preventDefault();
+    btn.disabled = true;
+    fetch("/api/notify/test", { method: "POST" })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var line = document.querySelector("#sd-body .dstat") || document.querySelector(".dstat");
+        if (line && d.status) line.textContent = d.status;
+      })
+      .catch(function () {})
+      .then(function () { setTimeout(function () { btn.disabled = false; }, 10000); });
+  });
+
+  /* The vendor boxes follow their parent: disabled, not merely dimmed, so an
+     unavailable choice cannot be submitted. */
+  document.addEventListener("change", function (ev) {
+    if (!ev.target || ev.target.id !== "f-status_row") return;
+    var off = !ev.target.checked;
+    var boxes = document.querySelectorAll(".vgrp input[type=checkbox]");
+    for (var i = 0; i < boxes.length; i++) {
+      if (boxes[i].dataset.locked === "1") continue;   // unsupported stays off
+      boxes[i].disabled = off;
+    }
+  });
+
   document.addEventListener("change", function (ev) {
     if (!ev.target || ev.target.id !== "ret-ack") return;
     var apply = document.getElementById("ret-apply");

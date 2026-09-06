@@ -24,7 +24,7 @@ from fastapi.responses import (
     StreamingResponse,
 )
 
-from quotalens import __version__, retention, status
+from quotalens import __version__, notify, retention, status
 from quotalens.burn import burn_rate
 from quotalens.config import (
     CONFIG_KEYS_BY_NAME,
@@ -110,6 +110,11 @@ class AppState:
     # Strong references to fire-and-forget tasks; without them the event loop
     # only holds a weak one and a prune can be collected part-way through.
     background: set[asyncio.Task[None]] = dc_field(default_factory=set)
+    # The test-notification probe's cooldown and last result, so the settings
+    # view can report what actually happened rather than what is on PATH.
+    last_test_ts: float = 0.0
+    last_test_error: str = ""
+    last_test_status: str = ""
 
 
 def _wants_fragment(request: Request) -> bool:
@@ -250,7 +255,15 @@ def create_app(
 
     @app.get("/settings", response_class=HTMLResponse, include_in_schema=False)
     def settings_page(fragment: int = 0) -> HTMLResponse:
-        view = build_view(state.settings, state.store, state.poller.notify_capability)
+        # Re-detected here, not read from startup: installing terminal-notifier
+        # afterwards used to go unnoticed until a restart, and a status line
+        # that is not current is worse than none.
+        view = build_view(
+            state.settings,
+            state.store,
+            state.poller.refresh_notify_capability(),
+            last_test_error=state.last_test_error,
+        )
         return HTMLResponse(
             _settings_html(view, bool(fragment)), headers={"Cache-Control": "no-store"}
         )
@@ -269,10 +282,16 @@ def create_app(
             # place that has to be right. db_path was patched back by hand; the
             # rest were not, which is the tell that the patch was the wrong
             # shape.
+            #
+            # `replace`, not `with_overrides`: the latter drops None so that an
+            # unpassed CLI flag clears nothing, which silently discarded every
+            # cleared setting here. Deselecting all vendors stored null and then
+            # failed to reach the running instance -- the third time this trap
+            # has bitten, after notify_thresholds and the panel's own writes.
             loaded = load_settings(state.settings.profile, data_dir=config_dir)
             fields = {k: CONFIG_KEYS_BY_NAME[k].field for k in PANEL_KEYS}
-            state.settings = state.settings.with_overrides(
-                **{field: getattr(loaded, field) for field in fields.values()}
+            state.settings = replace(
+                state.settings, **{field: getattr(loaded, field) for field in fields.values()}
             )
             state.poller.adopt(state.settings)
             watcher.enabled = state.settings.status_row
@@ -331,6 +350,35 @@ def create_app(
         state.background.add(task)
         task.add_done_callback(state.background.discard)
         return RedirectResponse(url="/settings?saved=1", status_code=303)
+
+    @app.post("/api/notify/test", include_in_schema=False)
+    def notify_test() -> dict[str, Any]:
+        """Send one identifiable test notification. Local only, POST only.
+
+        Writes no event, creates no crossing and changes no setting: it probes
+        the delivery path and nothing else. Rate limited with the same guard
+        `poll now` uses, so a double click cannot queue two.
+        """
+        now = time.monotonic()
+        remaining = int(max(0.0, notify.TEST_MIN_INTERVAL_S - (now - state.last_test_ts)))
+        if remaining > 0:
+            return {"accepted": False, "retry_in": remaining, "status": state.last_test_status}
+        state.last_test_ts = now
+        capability = state.poller.refresh_notify_capability()
+        handed_off, reason = notify.send_test(capability)
+        state.last_test_error = "" if handed_off else reason
+        state.last_test_status = notify.delivery_status(capability, state.last_test_error)
+        if handed_off:
+            log.info("test notification handed to %s", capability.tool)
+        else:
+            log.warning("test notification not handed off (%s): %s", capability.tool, reason)
+        return {
+            "accepted": True,
+            # Deliberately not "delivered": a zero exit means the OS accepted
+            # it, not that anyone saw it.
+            "handed_off": handed_off,
+            "status": state.last_test_status,
+        }
 
     @app.post("/poll", include_in_schema=False)
     async def force_poll_form(request: Request) -> RedirectResponse:

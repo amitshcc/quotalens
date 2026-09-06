@@ -497,3 +497,29 @@ what "stale money" should look like is a design question this change did not car
       hand-written or older config — had no `<option>`, so the select fell back to
       Disabled and the next save would have thrown the value away silently. The current
       value is now always added to the choices.
+- 2026-09-06: a failed notification was recorded as if it had been sent. `_check_notify`
+      wrote the `notify_crossed` event *before* calling `send()` and discarded the
+      boolean, so a delivery that never happened still suppressed that level for the
+      rest of the window. The event stays — it is what stops a failure becoming a retry
+      on every poll — but the outcome is recorded with it, and no surface reads
+      "notified" for an attempt that returned False.
+- 2026-09-06: `detect_capability()` ran once, at Poller construction, so installing
+      `terminal-notifier` afterwards went unnoticed until a restart and any status line
+      would have been reporting startup rather than now. Re-detected when the settings
+      view renders and when the test action runs; the poller adopts the fresh value.
+- 2026-09-06: `selected_vendors` began `if not keys: return VENDORS`, so deselecting
+      every source silently re-checked all of them — the same shape as the
+      `notify_thresholds` fallback fixed the day before. Empty now means none. The
+      documented default for an *absent* key lives on the ConfigKey, not here: deciding
+      it in both places is what made "the user turned everything off" unrepresentable.
+- 2026-09-06: **the `with_overrides` drops-None trap, third occurrence.** After the
+      panel wrote `status_vendors: null`, the API's adopt block used `with_overrides` to
+      copy the reloaded values onto the running instance — and that helper drops None by
+      design, so an unpassed CLI flag clears nothing. The value reached `config.json`
+      and never reached the running app: the rows stayed up. Observed as 2 rows on the
+      dashboard with `null` on disk. The panel sets every key it owns, so the adopt
+      block uses `dataclasses.replace` now, as `apply_form` already did. Any future
+      "clearing a setting does nothing" bug should start here.
+- 2026-09-06: a heading inside `.dep` is not a direct child of `.fform`, so it never
+      matched the span rule and auto-placed into column 1 — landing *beside* its own
+      group of controls instead of above it. Seen at 1440px.

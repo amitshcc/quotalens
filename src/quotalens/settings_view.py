@@ -22,7 +22,14 @@ from quotalens.config import (
     validate,
     write_config_file,
 )
-from quotalens.notify import SLOT_KEYS, Capability, from_slots, to_slots
+from quotalens.notify import (
+    SLOT_KEYS,
+    Capability,
+    delivery_status,
+    from_slots,
+    to_slots,
+)
+from quotalens.status import AVAILABLE
 from quotalens.store import Store
 
 # Everything the panel may write. The port, the database path and the cookie are
@@ -48,6 +55,7 @@ class SettingsView:
     port: int
     db_path: Path
     notify_capability: Capability
+    delivery_status: str = ""
     estimates: list[retention.SizeEstimate] = field(default_factory=list)
     errors: dict[str, str] = field(default_factory=dict)
     shrink_rows: int | None = None  # set only when the choice would delete something
@@ -68,6 +76,7 @@ def build_view(
     *,
     errors: dict[str, str] | None = None,
     values: dict[str, str] | None = None,
+    last_test_error: str = "",
 ) -> SettingsView:
     """The current settings, with measured retention sizes.
 
@@ -95,6 +104,7 @@ def build_view(
         port=settings.port,
         db_path=settings.db_path,
         notify_capability=capability,
+        delivery_status=delivery_status(capability, last_test_error),
         estimates=retention.estimate(measurement, settings.sample_keep),
         errors=dict(errors or {}),
     )
@@ -117,6 +127,14 @@ def apply_form(
     # Fold the three selects back into the one stored field before the normal
     # key loop sees it. The conversion lives here, at the form boundary, so
     # `notify_thresholds` keeps its format and its CLI compatibility.
+    # Checkboxes to the canonical comma-separated string. An unchecked box sends
+    # nothing, so the *presence* of any vendor_* key is what tells a real
+    # submission apart from one that never had the group -- otherwise deselecting
+    # everything would look identical to a form that omitted the field.
+    if any(k.startswith("vendor_") for k in form):
+        picked = [v.key for v in AVAILABLE if form.get(f"vendor_{v.key}")]
+        form = {**form, "status_vendors": ",".join(picked)}
+
     slots = [str(form.get(slot) or "") for slot in SLOT_KEYS]
     for slot, slot_value in zip(SLOT_KEYS, slots, strict=True):
         submitted[slot] = slot_value

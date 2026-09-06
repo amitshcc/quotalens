@@ -49,10 +49,23 @@ def test_a_vendor_with_no_feed_makes_no_request_at_all() -> None:
     assert row.state == status.UNKNOWN and row.detail == status.NO_API_REASON
 
 
-def test_gemini_is_not_shipped() -> None:
-    """It could only ever say "unable to check": a line that teaches nothing."""
-    assert "gemini" not in {v.key for v in status.VENDORS}
-    assert all(v.api_url for v in status.VENDORS), "every shipped vendor has a feed"
+def test_gemini_is_in_the_registry_but_never_watched() -> None:
+    """Shown in the form, disabled and explained; never polled, never a row.
+
+    It lives in the registry rather than the template so that adding or
+    retiring a vendor stays one edit in one place.
+    """
+    gemini = next(v for v in status.VENDORS if v.key == "gemini")
+    assert not gemini.supported and gemini.api_url is None
+    assert (
+        "does not\nprovide a suitable public status feed"
+        in gemini.unsupported_reason.replace(" ", " ")
+        or "suitable public status feed" in gemini.unsupported_reason
+    )
+    assert "no API" not in gemini.unsupported_reason
+    assert gemini not in status.AVAILABLE
+    assert all(v.api_url for v in status.AVAILABLE), "every watched vendor has a feed"
+    assert gemini not in status.selected_vendors("claude,gemini,openai")
 
 
 def test_an_unrecognised_indicator_is_unknown_not_healthy() -> None:
@@ -101,14 +114,14 @@ def test_the_rows_render_as_links_that_leave(settings, store, secrets) -> None:
     with TestClient(app) as tc:
         html = tc.get("/").text
     rows = re.findall(r'<a class="vs"[^>]*>', html)
-    assert len(rows) == len(status.VENDORS) == 2
+    assert len(rows) == len(status.AVAILABLE) == 2
     for row in rows:
         assert 'target="_blank"' in row
         assert "noopener" in row and "noreferrer" in row
         # None of the classes app.js delegates on, or the SPA eats the click.
         for swallowed in ("rb", "el-link", "sess"):
             assert f'class="vs {swallowed}' not in row and f'{swallowed} vs"' not in row
-    for vendor in status.VENDORS:
+    for vendor in status.AVAILABLE:
         assert f'href="{vendor.page_url}"' in html
 
 
@@ -121,7 +134,7 @@ def test_the_unknown_row_still_links_and_says_why(settings, store, secrets) -> N
     app = create_app(settings, store, secrets)
     with TestClient(app) as tc:
         html = tc.get("/").text
-    for vendor in status.VENDORS:
+    for vendor in status.AVAILABLE:
         pattern = rf'<a class="vs"[^>]*{re.escape(vendor.page_url)}[^>]*>(.*?)</a>'
         row = re.search(pattern, html, re.S)
         assert row is not None, vendor.key
@@ -273,7 +286,7 @@ def test_a_vendor_without_its_brand_file_renders_the_name_alone(settings, store,
     app = create_app(settings, store, secrets)
     with TestClient(app) as tc:
         html = tc.get("/").text
-        for vendor in status.VENDORS:
+        for vendor in status.AVAILABLE:
             if vendor.logo:
                 served = tc.get(f"/static/vendor/{vendor.logo}")
                 assert served.status_code in (200, 404)
@@ -284,7 +297,7 @@ def test_a_vendor_without_its_brand_file_renders_the_name_alone(settings, store,
         assert tc.get("/static/vendor/nope.svg").status_code == 404
         assert tc.get("/static/vendor/%2e%2e%2fapp.css").status_code == 404
         assert tc.get("/static/vendor/README.md").status_code == 404
-    for vendor in status.VENDORS:
+    for vendor in status.AVAILABLE:
         assert vendor.display_name in html
 
 
@@ -363,7 +376,10 @@ def test_every_panel_key_is_actually_rendered_as_a_field(
     rendered = set(re.findall(r'name="([a-z_0-9]+)"', html))
     # notify_thresholds is one stored key behind three selects; the conversion
     # is at the form boundary, so the slots are what appear in the markup.
-    expected = (set(PANEL_KEYS) - {"notify_thresholds"}) | set(SLOT_KEYS)
+    # status_vendors is one stored key behind a checkbox per available vendor,
+    # the same shape as notify_thresholds behind three selects.
+    expected = (set(PANEL_KEYS) - {"notify_thresholds", "status_vendors"}) | set(SLOT_KEYS)
+    expected |= {f"vendor_{v.key}" for v in status.AVAILABLE}
     assert expected <= rendered, expected - rendered
 
 
@@ -547,3 +563,129 @@ def test_the_dialog_is_not_in_the_refreshed_fragment(settings, store, secrets) -
     assert "<dialog" not in fragment
     assert 'id="sd"' not in fragment
     assert page.count('id="sd"') == 1
+
+
+def _vform(**over: str) -> dict[str, str]:
+    base = {k: v for k, v in _slots().items() if k != "status_vendors"}
+    return {**base, **over}
+
+
+def test_vendor_checkboxes_round_trip_to_the_stored_string(
+    settings, store, secrets, tmp_path
+) -> None:
+    app = create_app(settings, store, secrets, config_dir=tmp_path)
+    with TestClient(app) as tc:
+        tc.post("/settings", data=_vform(vendor_claude="1", vendor_openai="1"))
+        assert read_config_file(config_path("", tmp_path))["status_vendors"] == "claude,openai"
+        tc.post("/settings", data=_vform(vendor_claude="1"))
+        assert read_config_file(config_path("", tmp_path))["status_vendors"] == "claude"
+        html = tc.get("/settings").text
+    box = re.search(r'name="vendor_claude"[^>]*>', html).group(0)
+    assert "checked" in box
+    assert "checked" not in re.search(r'name="vendor_openai"[^>]*>', html).group(0)
+
+
+def test_deselecting_every_vendor_means_none_and_does_not_revert(
+    settings, store, secrets, tmp_path
+) -> None:
+    """The live bug: an empty setting returned every vendor.
+
+    And beneath it, the same `with_overrides` drops-None trap that bit
+    notify_thresholds -- the value reached config.json but never reached the
+    running instance, so the rows stayed up.
+    """
+    app = create_app(settings, store, secrets, config_dir=tmp_path)
+    with TestClient(app) as tc:
+        tc.post("/settings", data=_vform(vendor_claude="1", vendor_openai="1"))
+        tc.post("/settings", data=_vform(present="1"))
+        stored = read_config_file(config_path("", tmp_path))["status_vendors"]
+        assert stored is None
+        assert '<a class="vs"' not in tc.get("/").text
+    assert status.selected_vendors(stored) == ()
+    assert status.selected_vendors("") == ()
+
+    asked: list[str] = []
+    watcher = status.StatusWatcher(vendors=status.selected_vendors(stored))
+    watcher.check_all(1000, fetcher=lambda url: asked.append(url) or OK_PAYLOAD)
+    assert asked == [], "no requests are made for an empty selection"
+
+
+def test_an_absent_key_still_takes_every_available_source() -> None:
+    """The default lives on the ConfigKey, not in selected_vendors."""
+    from quotalens.config import CONFIG_KEYS_BY_NAME
+
+    assert CONFIG_KEYS_BY_NAME["status_vendors"].default("") == "claude,openai"
+    assert status.selected_vendors("claude,openai") == status.AVAILABLE
+
+
+def test_a_legacy_comma_value_loads_and_unknown_keys_are_dropped() -> None:
+    assert [v.key for v in status.selected_vendors("claude, mistral ,openai")] == [
+        "claude",
+        "openai",
+    ]
+
+
+def test_gemini_is_shown_disabled_and_never_submitted(settings, store, secrets, tmp_path) -> None:
+    app = create_app(settings, store, secrets, config_dir=tmp_path)
+    with TestClient(app) as tc:
+        html = tc.get("/settings").text
+        # Even if a client forces the field, it cannot reach the stored value.
+        tc.post("/settings", data=_vform(vendor_claude="1", vendor_gemini="1"))
+        stored = read_config_file(config_path("", tmp_path))["status_vendors"]
+    box = re.search(r'name="vendor_gemini"[^>]*>', html).group(0)
+    assert "disabled" in box
+    assert "suitable public status feed" in html
+    assert "no API" not in html
+    assert stored == "claude"
+
+
+def test_the_vendor_boxes_are_disabled_not_merely_dimmed_when_the_parent_is_off(
+    settings, store, secrets, tmp_path
+) -> None:
+    off = settings.with_overrides(status_row=False)
+    app = create_app(off, store, secrets, config_dir=tmp_path)
+    with TestClient(app) as tc:
+        html = tc.get("/settings").text
+    for vendor in status.AVAILABLE:
+        assert "disabled" in re.search(rf'name="vendor_{vendor.key}"[^>]*>', html).group(0)
+
+
+def test_the_test_notification_writes_no_event_and_changes_nothing(
+    settings, store, secrets, tmp_path
+) -> None:
+    """It probes the delivery path. It is not a crossing."""
+    from quotalens.notify import CROSSED_KIND
+
+    app = create_app(settings, store, secrets, config_dir=tmp_path)
+    with TestClient(app) as tc:
+        tc.post("/settings", data=_slots())
+        before = read_config_file(config_path("", tmp_path))
+        events_before = len(store.recent_events(limit=50, kind=CROSSED_KIND))
+        body = tc.post("/api/notify/test").json()
+        assert body["accepted"] is True
+        assert "handed_off" in body and "delivered" not in body  # never claims delivery
+        # A second, immediate click is refused by the same guard `poll now` uses.
+        assert tc.post("/api/notify/test").json()["accepted"] is False
+    assert len(store.recent_events(limit=50, kind=CROSSED_KIND)) == events_before
+    assert read_config_file(config_path("", tmp_path)) == before
+    assert store.counts()["quota"] == 0
+
+
+def test_the_delivery_status_is_redetected_not_read_from_startup(
+    settings, store, secrets, tmp_path, monkeypatch
+) -> None:
+    """Installing terminal-notifier after startup used to go unnoticed."""
+    from quotalens import notify as notify_mod
+
+    app = create_app(settings, store, secrets, config_dir=tmp_path)
+    with TestClient(app) as tc:
+        monkeypatch.setattr(
+            notify_mod, "detect_capability", lambda *a, **k: notify_mod.Capability(False, "gone")
+        )
+        assert "Unavailable: gone" in tc.get("/settings").text
+        monkeypatch.setattr(
+            notify_mod,
+            "detect_capability",
+            lambda *a, **k: notify_mod.Capability(True, tool="terminal-notifier"),
+        )
+        assert "Ready to send via terminal-notifier" in tc.get("/settings").text

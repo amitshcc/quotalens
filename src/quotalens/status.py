@@ -84,6 +84,12 @@ class StatusVendor:
     # the row renders with the name alone: a third-party brand file is not ours
     # to redraw or to invent.
     logo: str | None = None
+    # Whether this vendor can be watched at all. An unsupported entry is shown
+    # in the form, disabled, with `unsupported_reason` explaining it -- so the
+    # registry is the one place a vendor is described and the template never
+    # hard-codes one.
+    supported: bool = True
+    unsupported_reason: str = ""
 
     @property
     def logo_url(self) -> str | None:
@@ -105,7 +111,22 @@ VENDORS: tuple[StatusVendor, ...] = (
         api_url="https://status.openai.com/api/v2/status.json",
         logo="openai.svg",
     ),
+    # Shown, never selectable, never requested. In the registry rather than the
+    # template so that adding or retiring a vendor stays one edit in one place.
+    StatusVendor(
+        key="gemini",
+        display_name="Gemini",
+        page_url="https://aistudio.google.com/status",
+        api_url=None,
+        supported=False,
+        unsupported_reason=(
+            "Gemini / AI Studio status is unavailable because Google does not "
+            "provide a suitable public status feed for this service."
+        ),
+    ),
 )
+# What the form offers and what the checker may poll.
+AVAILABLE = tuple(v for v in VENDORS if v.supported)
 VENDORS_BY_KEY = {v.key: v for v in VENDORS}
 
 
@@ -178,7 +199,9 @@ class StatusWatcher:
     """
 
     enabled: bool = True
-    vendors: tuple[StatusVendor, ...] = VENDORS
+    # AVAILABLE, never VENDORS: an unsupported entry exists to be shown in
+    # the form, and must never be polled.
+    vendors: tuple[StatusVendor, ...] = AVAILABLE
     _cache: dict[str, VendorStatus] = field(default_factory=dict)
     _failures: dict[str, int] = field(default_factory=dict)
     last_check_ts: int | None = None
@@ -246,8 +269,22 @@ def selected_vendors(keys: str | None) -> tuple[StatusVendor, ...]:
 
     An unknown key is dropped rather than raising: a config file naming a vendor
     a later version removed should not stop the dashboard rendering.
+
+    **Empty means none, and the default lives one layer up.** This used to
+    answer an empty setting with every vendor, so deselecting all the boxes
+    silently re-checked them -- the same shape as the notify_thresholds fallback
+    fixed in the previous pass. Both ``None`` and ``""`` now mean *none*: no
+    rows, no requests.
+
+    The documented default belongs to the key being *absent*, and
+    ``ConfigKey.default`` supplies it there, so a config file predating the
+    setting still gets every available source. Deciding it here as well would
+    put the default in two places and make "the user turned everything off"
+    unrepresentable, which is exactly the bug. ``parse_config_value`` also maps
+    a stored ``""`` to ``None``, so treating them alike is what makes the
+    setting survive a round trip at all.
     """
     if not keys:
-        return VENDORS
+        return ()
     wanted = {k.strip().lower() for k in keys.split(",") if k.strip()}
-    return tuple(v for v in VENDORS if v.key in wanted)
+    return tuple(v for v in AVAILABLE if v.key in wanted)

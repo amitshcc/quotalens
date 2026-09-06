@@ -194,6 +194,9 @@ class Poller:
         self._rate_window_boosted = False
         # Probed once at startup so the settings panel can disable the toggle
         # *with the reason*, rather than offering a switch that does nothing.
+        # Re-detected on demand, not frozen here: installing terminal-notifier
+        # after startup used to go unnoticed until a restart. `refresh` is what
+        # the settings view and the test action call.
         self.notify_capability = notify.detect_capability()
         self._detector = ThresholdDetector(
             settings.burn_alert_pts_per_hour, firing=_alert_was_standing(store)
@@ -410,6 +413,11 @@ class Poller:
         """
         self._settings = settings
 
+    def refresh_notify_capability(self) -> notify.Capability:
+        """Re-detect and adopt. Any status shown has to be current, not startup's."""
+        self.notify_capability = notify.detect_capability()
+        return self.notify_capability
+
     def _check_notify(self, now: int, previous: list[QuotaRow], parsed: UsageParse) -> None:
         """Desktop notification on a threshold crossing. An extra sink, never the only one.
 
@@ -447,12 +455,25 @@ class Poller:
                     resets_at_text=_reset_clock(reading.resets_at, now),
                     window_key=key,
                 )
-                # Recorded before delivery: a notification that was attempted and
-                # failed must not be retried on the next poll for the same crossing.
-                self._store.record_event(notify.CROSSED_KIND, crossing.event_detail, ts=now)
-                details.append(crossing.event_detail)
-                notify.send(crossing, self.notify_capability)
-                log.info("notified: %s", crossing.message())
+                # The event is what stops the same level being attempted again
+                # for this window, so it is written whether or not delivery
+                # worked -- a failure must not become a retry on every poll.
+                # But the *outcome* is recorded with it: without that, a failed
+                # send still read as "notified", and the level was then
+                # suppressed for the rest of the window on the strength of a
+                # notification nobody received.
+                delivered = notify.send(crossing, self.notify_capability)
+                detail = crossing.event_detail + ("" if delivered else notify.FAILED_SUFFIX)
+                self._store.record_event(notify.CROSSED_KIND, detail, ts=now)
+                details.append(detail)
+                if delivered:
+                    log.info("notified: %s", crossing.message())
+                else:
+                    log.warning(
+                        "notification NOT delivered (%s): %s",
+                        self.notify_capability.tool or "no tool",
+                        crossing.message(),
+                    )
 
     def _check_credits(self, now: int) -> None:
         """Record and announce a stretch where usage credits were spent.

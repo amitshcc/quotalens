@@ -40,6 +40,10 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 CROSSED_KIND = "notify_crossed"
+# Appended to a crossing's event detail when delivery was attempted and failed.
+# The event still suppresses a retry; the suffix stops any surface reading it as
+# "notified".
+FAILED_SUFFIX = " (not delivered)"
 DEFAULT_THRESHOLDS = (50.0, 75.0, 90.0)
 NOTIFY_TIMEOUT_S = 5.0
 ICON_FILE = "mark.png"  # the ring mark, in quotalens.web; see design/render_mark_png.py
@@ -337,3 +341,56 @@ def from_slots(values: list[str]) -> tuple[str | None, str]:
     if chosen != sorted(chosen):
         return None, "thresholds must be in ascending order"
     return ",".join(str(v) for v in chosen), ""
+
+
+TEST_MESSAGE = "QuotaLens test notification"
+TEST_MIN_INTERVAL_S = 10  # the same guard `poll now` uses against repeat clicks
+
+
+def delivery_status(cap: Capability, last_error: str = "") -> str:
+    """One line, from current detection, about what delivery can do right now.
+
+    Deliberately never claims a notification was *seen*. Exit code 0 from
+    ``osascript`` or ``terminal-notifier`` means the message was handed to the
+    operating system; whether it reached a screen depends on per-app
+    notification permission, Focus, and whether the posting process has a login
+    session at all. The wording keeps that distinction.
+    """
+    if last_error:
+        return f"Last test could not be handed to macOS: {last_error}"
+    if not cap.available:
+        return f"Unavailable: {cap.reason}"
+    if cap.tool == "terminal-notifier":
+        return "Ready to send via terminal-notifier"
+    if cap.tool == "osascript":
+        return "Ready to send via macOS notifications"
+    return f"Ready to send via {cap.tool}"
+
+
+def send_test(cap: Capability, runner: object = None) -> tuple[bool, str]:
+    """Deliver a clearly identifiable test message. Returns (handed_off, reason).
+
+    Creates no crossing, writes no event, touches no setting and no quota
+    history: it is a probe of the delivery path and nothing else.
+    """
+    if not cap.available:
+        return False, cap.reason
+    crossing = Crossing(
+        window="test",
+        label="QuotaLens",
+        threshold=0.0,
+        pct=0.0,
+        resets_at_text="",
+        window_key="test",
+        body=TEST_MESSAGE,
+    )
+    try:
+        ok = send(crossing, cap, runner=runner)
+    except Exception as exc:  # send already swallows, but never let this escape
+        log.warning("test notification raised: %s", exc)
+        return False, f"{type(exc).__name__}"
+    if ok:
+        return True, ""
+    # A short, safe summary in the UI; the detail is already in the log and
+    # carries no cookie, no secret and no environment dump.
+    return False, f"{cap.tool} exited non-zero; see the log"

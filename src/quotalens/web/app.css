@@ -290,6 +290,7 @@ footer{margin-top:var(--sp-5);padding-top:var(--sp-3);border-top:var(--hair) sol
 /* A submit is the toolbar's button, not a full-bleed slab: `button` already has
    the vocabulary, but display:flex in a grid stretches it to the column. */
 .fform button{grid-column:1/-1;justify-self:end;margin-top:var(--sp-2)}
+.fld button{grid-column:2;justify-self:start;margin-top:0}
 /* The dialog reuses .screen's surface; only the modal chrome is new.
 
    Three-part shell. The scroll used to sit on the dialog itself, so the title
@@ -320,8 +321,27 @@ dialog::backdrop{background:var(--case);opacity:.75}
 /* A checkbox and the field that depends on it are one block, so the dependency
    is visible rather than inferred from adjacency. */
 .grp{grid-column:1/-1;display:grid;grid-template-columns:subgrid}
+/* Nesting stays; its outline goes. The rail was the last internal line in the
+   dialog, and grouping here is indent, alignment and one helper sentence --
+   replacing it with a lighter line would be the same decoration in thinner ink. */
 .dep{grid-column:1/-1;display:grid;grid-template-columns:subgrid;
-  margin-left:var(--sp-3);padding-left:var(--sp-3);border-left:var(--hair) solid var(--hairline)}
+  margin-left:var(--sp-3);padding-left:var(--sp-3)}
+/* The three alerts read as a progression when they sit on one line. Each is a
+   label above its select; without overriding the global .fld{display:contents}
+   the six children flatten into the row and wrap. */
+/* A heading inside .dep is not a direct child of .fform, so it never picked up
+   the span rule and auto-placed into column 1 -- landing beside its own group
+   instead of above it. */
+.dep>.cap{grid-column:1/-1}
+.trow{grid-column:2;display:flex;gap:var(--sp-3);flex-wrap:wrap}
+.trow .fld{display:flex;flex-direction:column;gap:2px}
+.trow label{grid-column:auto;justify-self:start}
+.trow select{grid-column:auto}
+.vgrp{grid-column:2;display:grid;gap:var(--sp-1)}
+.vopt{display:flex;align-items:center;gap:var(--sp-2);min-height:var(--row-h);
+  font-size:var(--fs-sm)}
+.vopt input:disabled+span{color:var(--txt-far)}
+.vwhy{margin:0 0 var(--sp-2) var(--sp-4);font-size:var(--fs-xs);max-width:56ch}
 /* Settings sections are not dashboard cards. They borrowed .screen, which gave
    each one a border, a radius and an inset shadow -- boxes inside a box, reading
    as cramped. Hierarchy here is spacing, headings and type weight instead. No
