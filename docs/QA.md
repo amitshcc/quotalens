@@ -453,3 +453,22 @@ what "stale money" should look like is a design question this change did not car
       mask cannot execute anything — which inlining a third-party SVG could. Marks
       carrying their own brand colour, like Claude's clay, stay in `<img>` and are
       never recoloured.
+- 2026-09-06: the settings dialog's header and footer scrolled away with the content,
+      because `overflow:auto` sat on the `<dialog>` itself alongside `max-height`.
+      Measured before the fix: the header went from top 90 to top -310 on a 400px
+      scroll — above the dialog's own top edge. The scroll belongs to the body alone,
+      and `min-height:0` on that body is load-bearing: without it a flex item will not
+      shrink below its content, the body never becomes scrollable, and the header
+      leaves anyway.
+- 2026-09-06: `notify_credits` was in `PANEL_KEYS` but had no field in the form, so
+      every save silently turned credit notifications off — an unchecked box sends
+      nothing, and `apply_form` reads a missing boolean as false. Observed: True on
+      disk before a save, False after one that never mentioned it. A panel key with no
+      field is not "left alone", it is switched off. A test now asserts every
+      `PANEL_KEYS` entry is rendered.
+- 2026-09-06: the narrow one-column collapse was written *above* the `.fform` rules it
+      overrides, at equal specificity, so it lost the cascade and did nothing. Measured
+      at a real 390px viewport through Playwright: the grid still reported two columns.
+      This is the same silent no-op as the `.cap` padding rule two prompts ago —
+      a rule written to fix something, placed where it cannot win. Position in the
+      file was the whole fix, and a test now asserts the order.

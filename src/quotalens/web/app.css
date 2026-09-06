@@ -283,13 +283,37 @@ footer{margin-top:var(--sp-5);padding-top:var(--sp-3);border-top:var(--hair) sol
 /* A submit is the toolbar's button, not a full-bleed slab: `button` already has
    the vocabulary, but display:flex in a grid stretches it to the column. */
 .fform button{grid-column:1/-1;justify-self:end;margin-top:var(--sp-2)}
-/* The dialog reuses .screen's surface; only the modal chrome is new. */
-/* 74ch was a cramped column that wrapped help text mid-phrase. */
-dialog{padding:0;color:var(--txt);background:var(--screen);max-width:min(92vw,680px);
-  max-height:86vh;overflow:auto;border:var(--hair) solid var(--hairline);border-radius:var(--r-2)}
+/* The dialog reuses .screen's surface; only the modal chrome is new.
+
+   Three-part shell. The scroll used to sit on the dialog itself, so the title
+   and close button scrolled out of view with the content -- measured: the header
+   went from top 90 to top -310 on a 400px scroll -- and the modal read as
+   clipped. The scroll belongs to the body alone.
+
+   min-height:0 on the body is load-bearing: a flex item will not shrink below
+   its content without it, so the body never becomes scrollable and the header
+   leaves anyway. */
+dialog{padding:0;color:var(--txt);background:var(--screen);max-width:min(92vw,840px);
+  width:100%;max-height:min(86vh,900px);display:flex;flex-direction:column;overflow:hidden;
+  border:var(--hair) solid var(--hairline);border-radius:var(--r-2)}
 dialog::backdrop{background:var(--case);opacity:.75}
-.dhead{display:flex;align-items:center;justify-content:space-between;padding:var(--sp-3) var(--sp-4)}
-#sd-body{padding:0 var(--sp-4) var(--sp-4)}
+.dhead,.sfoot{flex:none;display:flex;align-items:center;justify-content:space-between;
+  gap:var(--sp-3);padding:var(--sp-3) var(--sp-4)}
+.dhead{border-bottom:var(--hair) solid var(--hairline)}
+.sfoot{border-top:var(--hair) solid var(--hairline);justify-content:flex-end}
+.dhead .cap,.dhead .far{padding:0;margin:0}
+#sd-body{flex:1 1 auto;min-height:0;overflow-y:auto;padding:var(--sp-3) var(--sp-4)}
+/* The dialog's footer carries Save; the page has no footer and keeps its own. */
+[data-js] #sd-body .pgonly{display:none}
+/* A checkbox and the field that depends on it are one block, so the dependency
+   is visible rather than inferred from adjacency. */
+.grp{grid-column:1/-1;display:grid;grid-template-columns:subgrid}
+.dep{grid-column:1/-1;display:grid;grid-template-columns:subgrid;
+  margin-left:var(--sp-3);padding-left:var(--sp-3);border-left:var(--hair) solid var(--hairline)}
+/* Danger zone: separated by its own border, no new colour. */
+.danger{border-top:var(--hair) solid var(--hair-firm);margin-top:var(--sp-4);
+  padding-top:var(--sp-2)}
+.w-s{width:7ch}.w-m{width:18ch}.w-l{width:100%;max-width:44ch}
 .readout-box.bt{grid-template-columns:1fr;white-space:nowrap}
 /* A mark in currentColor is painted through a mask so it takes the theme; one
    with its own brand colour rides in an <img> and is never recoloured. */
@@ -305,3 +329,17 @@ dialog::backdrop{background:var(--case);opacity:.75}
 .jso{display:none}
 [data-js] .jso{display:flex}
 svg .fill{fill:currentColor;stroke:none}
+
+/* Narrow: one column, label above control, everything left-aligned.
+
+   Last in the file on purpose. Written above the .fform rules it overrides, at
+   equal specificity, it lost the cascade and did nothing at all -- the same
+   silent no-op the .cap padding rule was. Measured: at a real 390px viewport
+   the grid still reported two columns. */
+@media (max-width:640px){.fform{grid-template-columns:1fr}
+  .fld label{grid-column:1;justify-self:start}
+  .fld input,.fld code,.fld .far,.fld .ferr{grid-column:1}
+  .grp,.dep{grid-template-columns:1fr}
+  .ropt{grid-template-columns:auto 1fr auto}
+  .w-m,.w-l{width:100%}
+  dialog{max-width:96vw}}

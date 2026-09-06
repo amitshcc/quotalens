@@ -16,6 +16,7 @@ OK_PAYLOAD = {"status": {"indicator": "none", "description": "All Systems Operat
 
 def _form(**over: str) -> dict[str, str]:
     base = {
+        "notify_credits": "1",
         "interval": "60",
         "lookback": "15",
         "burn_alert": "20.0",
@@ -190,7 +191,7 @@ def test_the_form_says_when_changes_apply_once_not_once_per_field(
     app = create_app(settings, store, secrets, config_dir=tmp_path)
     with TestClient(app) as tc:
         html = tc.get("/settings").text
-    assert html.count("Changes apply from the next poll") == 1
+    assert html.count("Changes take effect from the next poll") == 1
     assert "takes effect on the next poll" not in html
 
     from quotalens.render import _field
@@ -340,3 +341,97 @@ def test_the_mask_takes_the_surrounding_colour_in_both_themes() -> None:
     assert "mask:var(--m)" in rule
     # No colour of its own anywhere: a token would freeze it to one theme.
     assert "#" not in rule
+
+
+def test_every_panel_key_is_actually_rendered_as_a_field(
+    settings, store, secrets, tmp_path
+) -> None:
+    """A panel key with no field is not "left alone": it is turned off.
+
+    An unchecked box sends nothing, so `apply_form` reads a missing boolean as
+    false. `notify_credits` was in PANEL_KEYS and never rendered, so every save
+    silently disabled credit notifications -- observed as True on disk before a
+    save and False after one that never mentioned it.
+    """
+    import re
+
+    app = create_app(settings, store, secrets, config_dir=tmp_path)
+    with TestClient(app) as tc:
+        html = tc.get("/settings").text
+    rendered = set(re.findall(r'name="([a-z_]+)"', html))
+    assert set(PANEL_KEYS) <= rendered, set(PANEL_KEYS) - rendered
+
+
+def test_saving_leaves_an_unmentioned_boolean_alone(settings, store, secrets, tmp_path) -> None:
+    app = create_app(settings, store, secrets, config_dir=tmp_path)
+    with TestClient(app) as tc:
+        tc.post("/settings", data={**_form(), "notify_credits": "1"}, follow_redirects=False)
+        assert read_config_file(config_path("", tmp_path))["notify_credits"] is True
+
+
+def test_the_footer_submits_the_settings_form_from_outside_it(
+    settings, store, secrets, tmp_path
+) -> None:
+    """`form="settings-form"` is what makes Save work with no JavaScript.
+
+    Hoisting the dialog into one form would have worked too, and would have put
+    retention inside the same submit -- which is exactly what must not happen.
+    """
+    app = create_app(settings, store, secrets, config_dir=tmp_path)
+    with TestClient(app) as tc:
+        page = tc.get("/").text
+    assert '<button type="submit" form="settings-form">Save changes</button>' in page
+    # Close and Cancel are dialog-method forms, so neither can post settings.
+    assert page.count('<form method="dialog"') == 2
+
+
+def test_save_changes_cannot_apply_retention(settings, store, secrets, tmp_path) -> None:
+    """Two forms, two handlers, two posts. Proven by sending retention to Save."""
+    import time
+
+    from quotalens.parse import QuotaReading
+
+    now = int(time.time())
+    for days in range(40):
+        store.record_quota(
+            now - days * 86_400,
+            [QuotaReading("five_hour", "Session", 50.0, None, None, True)],
+        )
+    before = store.counts()
+    app = create_app(settings, store, secrets, config_dir=tmp_path)
+    with TestClient(app) as tc:
+        tc.post(
+            "/settings",
+            data={**_form(), "retention": "1week", "confirm": "1"},
+            follow_redirects=False,
+        )
+    assert store.counts() == before, "no rows were deleted"
+    assert read_config_file(config_path("", tmp_path)).get("retention") is None
+
+
+def test_the_dialog_shell_scrolls_the_body_not_the_whole_modal() -> None:
+    """The header used to scroll out of view: measured, top 90 to top -310."""
+    from importlib import resources
+
+    css = resources.files("quotalens.web").joinpath("app.css").read_text()
+    shell = css.split("dialog{", 1)[1].split("}", 1)[0]
+    assert "overflow:hidden" in shell and "flex-direction:column" in shell
+    body = css.split("#sd-body{", 1)[1].split("}", 1)[0]
+    assert "overflow-y:auto" in body
+    # Without min-height:0 a flex item will not shrink below its content, the
+    # body never becomes scrollable, and the header leaves anyway.
+    assert "min-height:0" in body
+    for part in (".dhead,.sfoot{",):
+        assert "flex:none" in css.split(part, 1)[1].split("}", 1)[0]
+
+
+def test_the_narrow_collapse_is_after_the_rules_it_overrides() -> None:
+    """It was written above them at equal specificity and did nothing.
+
+    Measured at a real 390px viewport through Playwright: the grid still
+    reported two columns. Position in the file is the whole fix.
+    """
+    from importlib import resources
+
+    css = resources.files("quotalens.web").joinpath("app.css").read_text()
+    assert css.index("@media (max-width:640px)") > css.index(".fform{display:grid")

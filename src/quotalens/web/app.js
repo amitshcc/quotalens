@@ -197,6 +197,16 @@
       .catch(function () { form.submit(); });
   }
 
+  /* The acknowledgement gates the button. The server refuses an unconfirmed
+     shrink regardless -- this is the affordance, so the control says what it
+     will accept before you press it. With no JavaScript the button stays
+     disabled, and the /settings page keeps its own always-enabled submit. */
+  document.addEventListener("change", function (ev) {
+    if (!ev.target || ev.target.id !== "ret-ack") return;
+    var apply = document.getElementById("ret-apply");
+    if (apply) apply.disabled = !ev.target.checked;
+  });
+
   document.addEventListener("click", function (ev) {
     var link = ev.target.closest && ev.target.closest("#settings-link, #settings-btn");
     if (!link) return;

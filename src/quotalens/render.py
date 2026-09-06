@@ -242,7 +242,13 @@ def render_settings_page(view: SettingsView) -> str:
         '<button id="t" type="button" aria-label="Switch theme">'
         '<svg class="ic ic-sun" aria-hidden="true"><use href="#i-sun"/></svg>'
         '<svg class="ic ic-moon" aria-hidden="true"><use href="#i-moon"/></svg>'
-        "theme</button></div></header>" + render_settings(view) + "</div></div>\n"
+        "theme</button></div></header>"
+        # The dialog says this in its header; the page has no dialog header, so
+        # it says it here. Once per surface, never once per field.
+        '<p class="cap" id="sd-title">Settings</p>'
+        '<p class="far lede">Changes take effect from the next poll.</p>'
+        + render_settings(view)
+        + "</div></div>\n"
         "</body>\n</html>\n"
     )
 
@@ -1079,6 +1085,7 @@ def _field(
     error: str = "",
     kind: str = "text",
     effect: str = "live",
+    width: str = "s",
 ) -> str:
     """One labelled input, its note, and its error if the server refused it.
 
@@ -1102,7 +1109,12 @@ def _field(
             f"{' checked' if value == '1' else ''}>"
         )
     else:
-        box = f'<input type="text" name="{e(key)}" id="f-{e(key)}" value="{e(value)}">'
+        # Width tied to content: a three-digit interval rendered as wide as a
+        # webhook URL is why this form read as mostly empty space.
+        box = (
+            f'<input type="text" class="w-{e(width)}" name="{e(key)}" '
+            f'id="f-{e(key)}" value="{e(value)}">'
+        )
     return (
         f'<div class="fld{" is-bad" if error else ""}">'
         f'<label for="f-{e(key)}">{e(label)}</label>{box}'
@@ -1126,10 +1138,22 @@ def render_settings_dialog() -> str:
     untouched for the no-JavaScript path.
     """
     return (
-        '<dialog id="sd" aria-label="Settings">'
+        '<dialog id="sd" aria-labelledby="sd-title" aria-describedby="sd-sub">'
+        # method="dialog" so closing can never post settings, whatever else is
+        # on the page. It is also what makes the close button work with no JS.
         '<form method="dialog" class="dhead">'
-        '<p class="cap">Settings</p><button value="close">close</button></form>'
-        '<div id="sd-body"></div></dialog>'
+        '<div><p class="cap" id="sd-title">Settings</p>'
+        '<p class="far" id="sd-sub">Changes take effect from the next poll.</p></div>'
+        '<button value="close" aria-label="Close settings">close</button></form>'
+        '<div id="sd-body"></div>'
+        # The footer lives outside the settings <form>; `form="settings-form"`
+        # submits it from here with no JavaScript at all. Hoisting the whole
+        # dialog into one form would put retention inside the same submit, which
+        # is exactly what must not happen.
+        '<footer class="sfoot">'
+        '<form method="dialog"><button value="cancel">Cancel</button></form>'
+        '<button type="submit" form="settings-form">Save changes</button>'
+        "</footer></dialog>"
     )
 
 
@@ -1144,9 +1168,9 @@ def render_settings(view: SettingsView) -> str:
     """
     err = view.errors
     body = [
-        '<section class="screen"><form method="post" action="/settings" class="fform">'
-        '<p class="far lede">Changes apply from the next poll.</p>'
-        '<p class="cap">Collector</p>',
+        '<section class="screen"><form method="post" action="/settings" '
+        'id="settings-form" class="fform">'
+        '<p class="cap">Collection &amp; alerts</p>',
         _field(
             "interval",
             "Poll interval",
@@ -1174,6 +1198,7 @@ def render_settings(view: SettingsView) -> str:
             view.values["sample_keep"],
             note="a row cap, independent of retention",
             error=err.get("sample_keep", ""),
+            width="m",
         ),
         _field(
             "webhook_url",
@@ -1181,8 +1206,10 @@ def render_settings(view: SettingsView) -> str:
             view.values["webhook_url"],
             note="opt-in; no account identifier, no cookie",
             error=err.get("webhook_url", ""),
+            width="l",
         ),
         '<p class="cap">Notifications</p>',
+        '<div class="grp">',
     ]
     if view.notify_capability.available:
         # `note` is set when the capability works but not fully -- on macOS
@@ -1209,14 +1236,31 @@ def render_settings(view: SettingsView) -> str:
             )
         )
     body += [
+        '<div class="dep">',
         _field(
             "notify_thresholds",
             "Thresholds",
             view.values["notify_thresholds"],
             note="percentages, comma separated",
             error=err.get("notify_thresholds", ""),
+            width="s",
         ),
+        "</div></div>",
+        # A panel key that is never rendered is not "left alone": an unchecked
+        # box sends nothing, so apply_form read its absence as false and every
+        # save silently turned credit notifications off. Observed: True on disk
+        # before a save, False after one that never mentioned it.
+        '<div class="grp">',
+        _field(
+            "notify_credits",
+            "Credit spending",
+            view.values["notify_credits"],
+            note="notify when usage credits start being spent",
+            kind="checkbox",
+        ),
+        "</div>",
         '<p class="cap">Vendor status</p>',
+        '<div class="grp">',
         _field(
             "status_row",
             "Show vendor status",
@@ -1224,13 +1268,16 @@ def render_settings(view: SettingsView) -> str:
             note="one GET per vendor every 5 min; off stops the requests",
             kind="checkbox",
         ),
+        '<div class="dep">',
         _field(
             "status_vendors",
             "Vendors",
             view.values["status_vendors"],
             note="comma separated: " + ", ".join(v.key for v in status.VENDORS),
+            width="m",
         ),
-        '<p class="cap">Set from the command line only</p>',
+        "</div></div>",
+        '<p class="cap">Advanced — command line only</p>',
         _readonly(
             "Port",
             str(view.port),
@@ -1244,7 +1291,7 @@ def render_settings(view: SettingsView) -> str:
             "never in a config file, so the file stays safe to paste into an issue. "
             "Use: quotalens auth",
         ),
-        '<button type="submit">Save</button></form></section>',
+        '<button type="submit" class="pgonly">Save changes</button></form></section>',
         _retention_block(view),
     ]
     return "".join(body)
@@ -1272,8 +1319,13 @@ def _retention_block(view: SettingsView) -> str:
             f"permanently. Export first if you want them.</p>"
         )
     return (
-        '<section class="screen"><div class="rule"></div>'
-        '<p class="cap">How long data is kept</p>'
+        # Its own container and its own rule: this is the one block here that
+        # destroys data, and it is a separate form and a separate post from the
+        # footer's Save changes, which must never submit or imply it.
+        # .danger carries its own border, so the old <div class="rule"> here
+        # drew a second, empty one above the heading.
+        '<section class="screen danger">'
+        '<p class="cap">Data retention</p>'
         '<form method="post" action="/settings/retention" class="fform">'
         + "".join(options)
         + '<p class="far">Sizes are measured from this database’s own rates, not '
@@ -1284,7 +1336,13 @@ def _retention_block(view: SettingsView) -> str:
         + '<p class="far">Raw payloads are capped separately by a row count, which '
         "is why even the shortest period has a floor.</p>"
         '<a class="rexp" href="/api/export/quota.csv">Export first</a>'
-        '<label class="ropt"><input type="checkbox" name="confirm" value="1">'
-        "<span>I understand this deletes data permanently</span></label>"
-        '<button type="submit">Apply retention</button></form></section>'
+        '<label class="ropt"><input type="checkbox" name="confirm" value="1" '
+        'id="ret-ack"></label>'.replace(
+            "</label>", "<span>I understand this deletes data permanently</span></label>"
+        )
+        # Disabled until the acknowledgement is ticked. The server still refuses
+        # an unconfirmed shrink -- this is the affordance, not the guard.
+        + '<button type="submit" id="ret-apply" class="jso" disabled>Apply retention</button>'
+        + '<button type="submit" class="go">Apply retention</button>'
+        "</form></section>"
     )
