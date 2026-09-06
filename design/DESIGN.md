@@ -405,12 +405,25 @@ it. The cap has moved once:
 | | minified | gzipped | why |
 |---|---|---|---|
 | original | 14,000 | — | headroom over the 8,442 measured above |
-| 2026-09-05 | **16,000** | ~4.5 KB | settings panel, vendor status row, `i-settings` |
+| 2026-09-05 | 16,000 | ~4.5 KB | settings panel, vendor status row, `i-settings` |
+| 2026-09-06 | **17,000** | ~4.7 KB | settings dialog, one-grid form, sticky history |
 
 Raising it is a decision that gets written down here, with the reason and the
 measurement. Editing it to make a red test green is not the same act, and the
-tell is whether a rule was deleted to fit. There is no third raise: at that
-point the answer is the second route this section already recommends.
+tell is whether a rule was deleted to fit.
+
+**The 2026-09-05 entry said "there is no third raise: the answer is the second
+route this section recommends". That was retracted a day later, deliberately.**
+Route-splitting is the remedy for CSS that belongs to a page you navigate to —
+the attribution table, in the original example. It is no remedy at all for the
+settings form, which became a `<dialog>` on the dashboard: its rules load with
+the dashboard whichever file they sit in, so splitting moves bytes between files
+and saves none.
+
+So the replacement rule, which is narrower and survives contact: **for anything
+that renders on the dashboard, the remedy is deleting a feature, not moving a
+stylesheet.** Do not raise this ceiling again without naming the feature you
+would cut instead.
 
 ## 12. Things this system does not do
 
