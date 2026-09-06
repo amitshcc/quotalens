@@ -225,3 +225,150 @@ def app_status(now: int):
     status = PollerStatus()
     status.last_success_ts = now
     return status
+
+
+# -- a gauge for a window the same scrape has already called unknown -------------
+
+
+def _families(settings, store, secrets, now: int, last_ok: int | None = None):
+    app = create_app(settings, store, secrets)
+    app.state.qw.poller.status.state = "ok"
+    app.state.qw.poller.status.last_success_ts = now if last_ok is None else last_ok
+    with TestClient(app) as tc:
+        return parse_exposition(tc.get("/metrics").text)
+
+
+def _one(families, name: str) -> str:
+    return families[f"quotalens_{name}"]["samples"][0][1]
+
+
+def test_a_lapsed_session_withholds_the_headroom_and_the_burn_rate_too(
+    settings, store, secrets
+) -> None:
+    """`quota_percent{five_hour} NaN` beside `session_headroom_percent 60`, observed.
+
+    The window's reset has passed and no new one has opened, so its last value is
+    not this window's percentage -- which the scrape said about the percentage
+    and then contradicted twice in the same response.
+    """
+    now = int(time.time())
+    lapsed = datetime.fromtimestamp(now - 120, UTC).isoformat()
+    live = datetime.fromtimestamp(now + 3600, UTC).isoformat()
+    for i in range(20):
+        store.record_quota(
+            now - (19 - i) * 60,
+            [
+                QuotaReading("five_hour", "5-hour", 40 + i, lapsed, "normal", True),
+                QuotaReading("seven_day", "7-day", 30, live),
+            ],
+        )
+    families = _families(settings, store, secrets, now)
+    quota = {lb["window"]: v for lb, v in families["quotalens_quota_percent"]["samples"]}
+    assert quota["five_hour"] == "NaN"
+    assert quota["seven_day"] == "30", "a healthy neighbour is untouched"
+    assert _one(families, "session_headroom_percent") == "NaN"
+    assert _one(families, "burn_pts_per_hour") == "NaN"
+    assert families["quotalens_up"]["samples"] == [({}, "1")], "the collector itself is fine"
+
+
+def test_a_session_block_that_stopped_arriving_withholds_the_same_three(
+    settings, store, secrets
+) -> None:
+    """Per-window staleness: `five_hour` goes dark while its neighbours refresh.
+
+    A healthy collector is not evidence that every meter is current, and
+    `burn_pts_per_hour 908.571` computed from rows that stopped moving is the
+    number somebody alerts on.
+    """
+    now = int(time.time())
+    reset = datetime.fromtimestamp(now + 3600, UTC).isoformat()
+    stale_at = now - 4 * settings.poll_interval_s
+    for i in range(10):  # both windows, then five_hour stops
+        store.record_quota(
+            stale_at - (9 - i) * 60,
+            [
+                QuotaReading("five_hour", "5-hour", 40 + i, reset, "normal", True),
+                QuotaReading("seven_day", "7-day", 30, reset),
+            ],
+        )
+    for i in range(5):
+        store.record_quota(now - (4 - i) * 60, [QuotaReading("seven_day", "7-day", 31, reset)])
+    families = _families(settings, store, secrets, now)
+    quota = {lb["window"]: v for lb, v in families["quotalens_quota_percent"]["samples"]}
+    assert quota["five_hour"] == "NaN" and quota["seven_day"] == "31"
+    assert _one(families, "session_headroom_percent") == "NaN"
+    assert _one(families, "burn_pts_per_hour") == "NaN"
+
+
+def test_the_spend_gauges_take_the_collector_gate(settings, store, secrets) -> None:
+    """They had none at all: a collector down for hours kept publishing its last figure."""
+    now = int(time.time())
+    _seed(store, now)
+    fresh = _families(settings, store, secrets, now)
+    assert _one(fresh, "spend_used_minor") == "316" and _one(fresh, "spend_limit_minor") == "200"
+    stale = _families(settings, store, secrets, now, last_ok=now - 4 * settings.poll_interval_s)
+    assert _one(stale, "spend_used_minor") == "NaN"
+    assert _one(stale, "spend_limit_minor") == "NaN"
+
+
+def test_metrics_and_the_budget_api_agree_about_a_boost(settings, store, secrets) -> None:
+    """/metrics printed `weekly_windows_remaining 2.5` where the page said "4 so far".
+
+    A threshold counted before its exclusions: `compute_budgets` was called with
+    no `boost_ts`, and the word "boost" did not occur in metrics.py. Both callers
+    now read the events through `boost.recorded`, so they cannot drift again.
+    """
+    from quotalens.boost import BOOST_KIND
+    from quotalens.runway import SESSION_LENGTH_S
+    from quotalens.sessions import Delta, SessionWindow
+
+    now = int(time.time())
+
+    def window(index: int, points: float) -> SessionWindow:
+        start = now - (index + 1) * SESSION_LENGTH_S
+        return SessionWindow(
+            start,
+            start + SESSION_LENGTH_S,
+            False,
+            100.0,
+            100.0,
+            300,
+            start,
+            start + SESSION_LENGTH_S,
+            {"seven_day": Delta(10.0, 10.0 + points, False)},
+            SESSION_LENGTH_S,
+        )
+
+    # Four clean windows costing 10 points each, plus one full window that
+    # "cost" almost nothing because a boost landed inside it.
+    boosted = window(4, 1.0)
+    store.replace_sessions([window(i, 10.0) for i in range(4)] + [boosted])
+    reset = datetime.fromtimestamp(now + 3600, UTC).isoformat()
+    store.record_quota(now, [QuotaReading("seven_day", "7-day", 20, reset)])
+
+    def scrape() -> tuple[list[str], dict]:
+        app = create_app(settings, store, secrets)
+        app.state.qw.poller.status.state = "ok"
+        app.state.qw.poller.status.last_success_ts = now
+        with TestClient(app) as tc:
+            families = parse_exposition(tc.get("/metrics").text)
+            api = tc.get("/api/budget").json()["budgets"][0]
+        return [
+            v
+            for lb, v in families["quotalens_weekly_windows_remaining"]["samples"]
+            if lb["basis"] == "full"
+        ], api
+
+    # Without the boost recorded, five windows are usable and both surfaces
+    # answer with a number -- so the assertion below is about the exclusion and
+    # not about the store being too empty to answer at all.
+    before, api_before = scrape()
+    assert before != ["NaN"] and api_before["full_windows_remaining"] is not None
+    assert api_before["usable_windows"] == 5
+
+    store.record_event(BOOST_KIND, "Weekly fell 98% -> 60%. Limit raised.", ts=boosted.started_at)
+    after, api_after = scrape()
+    assert after == ["NaN"], "five windows, one boosted, is four usable -- below the threshold"
+    assert api_after["full_windows_remaining"] is None
+    assert api_after["usable_windows"] == 4
+    assert "4 so far" in api_after["reason"], api_after["reason"]

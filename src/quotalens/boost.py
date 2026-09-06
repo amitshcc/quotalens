@@ -161,6 +161,23 @@ def scan_history(rows: Sequence[QuotaRow], untrusted_ts: Container[int]) -> list
     return sorted(found, key=lambda b: (b.ts, b.window))
 
 
+# How far back a reader looks for recorded boosts. Shared, because the page and
+# /metrics disagreeing about which boosts exist is the fault this replaces:
+# `metrics.py` did not read them at all, so it printed a weekly budget the page
+# refused. One number, one kind, one place.
+RECENT_LIMIT = 200
+
+
+def recorded(store: Any) -> list[Any]:
+    """Every boost the detector has written, as stored events."""
+    return store.recent_events(limit=RECENT_LIMIT, kind=BOOST_KIND)
+
+
+def recorded_ts(store: Any) -> list[int]:
+    """When each recorded boost happened -- what the budget needs to exclude them."""
+    return [int(e.ts) for e in recorded(store)]
+
+
 def backfill(store: Any) -> list[Boost]:
     """Record boosts that happened before the detector existed. Safe to run twice.
 

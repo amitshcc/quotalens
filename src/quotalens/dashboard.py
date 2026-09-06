@@ -18,6 +18,7 @@ from typing import Any
 from quotalens import credits, retention
 from quotalens.alerts import ALERT_KIND, CLEARED_KIND, standing
 from quotalens.boost import BOOST_KIND, boosted_windows
+from quotalens.boost import recorded as recorded_boosts
 from quotalens.budget import Budget, BudgetReport, WeeklyLimit, compute_budgets
 from quotalens.burn import BurnResult, burn_rate, min_trusted_span, split_at_resets
 from quotalens.config import Settings
@@ -465,7 +466,7 @@ def build_dashboard(
     latest = store.latest_quota()
     # One conclusion, read from the events the poller wrote, and shared by the chart,
     # the meters, the history rows and the budget's cost estimate. Never re-derived.
-    boosts = store.recent_events(limit=200, kind=BOOST_KIND)
+    boosts = recorded_boosts(store)
     boost_ts = [int(e.ts) for e in boosts]
     # Which window each boost was for, matched on the stored label the detector wrote
     # into the event. Without this the crimson step lands on every series that happens

@@ -82,6 +82,7 @@ def render(families: Iterable[Family]) -> str:
 
 def collect(settings: object, store: object, status: object, now: int) -> list[Family]:
     """Every family, in a stable order. Imports stay local to keep this module thin."""
+    from quotalens.boost import recorded_ts as recorded_boost_ts
     from quotalens.budget import compute_budgets
     from quotalens.burn import burn_rate
     from quotalens.dashboard import (
@@ -107,21 +108,37 @@ def collect(settings: object, store: object, status: object, now: int) -> list[F
 
     quota = Family("quota_percent", "gauge", "Percentage of a quota window consumed.")
     resets = Family("window_resets_at_seconds", "gauge", "Unix time at which a window resets.")
-    for row in store.latest_quota():
+    latest = store.latest_quota()
+
+    def is_live(row: object) -> bool:
+        """The one test for "this row is a current reading", for every gauge here.
+
+        A closed window's last value is not this window's percentage, and a block
+        that stopped arriving is not current however healthy the collector is.
+        NaN for both, because a stale number here is one somebody alerts on.
+
+        It used to gate `quota_percent` alone, so the same scrape said the session
+        percentage was unknown and that 60% of it was left -- observed as
+        `quota_percent{five_hour} NaN` beside `session_headroom_percent 60`, and
+        beside `burn_pts_per_hour 908.571` in the per-window-stale case. Anything
+        derived from the session row takes it now.
+        """
+        return fresh and not window_has_lapsed(row, now) and not window_is_stale(row, interval, now)
+
+    for row in latest:
         labels = {"window": row.window, "label": row.label or row.window}
-        # A closed window's last value is not this window's percentage, and a block
-        # that stopped arriving is not current however healthy the collector is.
-        # NaN for both, because a stale number here is one somebody alerts on.
-        live = fresh and not window_has_lapsed(row, now) and not window_is_stale(row, interval, now)
-        quota.add(row.pct if live else None, **labels)
+        quota.add(row.pct if is_live(row) else None, **labels)
         reset_dt = parse_iso(row.resets_at)
         resets.add(reset_dt.timestamp() if reset_dt else None, window=row.window)
+
+    session = next((r for r in latest if r.window == RATE_WINDOW), None)
+    session_live = session is not None and is_live(session)
 
     burn = Family("burn_pts_per_hour", "gauge", "Session burn rate in percentage points per hour.")
     lookback_s = getattr(settings, "burn_lookback_min", 15) * 60
     rows = store.quota_series(now - lookback_s * 4, window=SESSION_WINDOW)
     rate = burn_rate(SESSION_WINDOW, rows, lookback_s, now).rate_pct_per_hour
-    burn.add(rate if fresh else None)
+    burn.add(rate if session_live else None)
 
     threshold = Family(
         "burn_alert_threshold_pts_per_hour", "gauge", "Configured burn-rate alert threshold."
@@ -129,8 +146,7 @@ def collect(settings: object, store: object, status: object, now: int) -> list[F
     threshold.add(getattr(settings, "burn_alert_pts_per_hour", None))
 
     headroom = Family("session_headroom_percent", "gauge", "Percentage of the session window left.")
-    session = next((r for r in store.latest_quota() if r.window == RATE_WINDOW), None)
-    headroom.add(max(0.0, 100.0 - session.pct) if session and fresh else None)
+    headroom.add(max(0.0, 100.0 - session.pct) if session_live else None)
 
     # The weekly limit in the unit the work comes in. NaN, never zero, when there
     # is not enough history to estimate the cost of a window: a zero here would
@@ -152,7 +168,13 @@ def collect(settings: object, store: object, status: object, now: int) -> list[F
         "Five-hour windows of wall clock before the weekly limit resets.",
     )
     sessions = [window_from_row(r) for r in store.sessions(limit=500, order="recent")]
-    report = compute_budgets(weekly_limits(store.latest_quota(), not fresh), sessions, now)
+    # The same boost read the page makes, from the same helper. Without it this
+    # printed `weekly_windows_remaining 2.5` where the page and /api/budget said
+    # "Needs 5 complete session windows; 4 so far" -- a threshold counted before
+    # its exclusions. The word "boost" did not occur in this module.
+    report = compute_budgets(
+        weekly_limits(latest, not fresh), sessions, now, boost_ts=recorded_boost_ts(store)
+    )
     for item in report.budgets:
         windows_left.add(item.full_windows, window=item.key, basis="full")
         windows_left.add(item.typical_windows, window=item.key, basis="typical")
@@ -174,9 +196,13 @@ def collect(settings: object, store: object, status: object, now: int) -> list[F
     for table in sorted(counts):
         rows_family.add(counts[table], table=table)
 
+    # These had no freshness gate at all: a collector that stopped hours ago kept
+    # publishing the last spend it saw as a current figure. The collector gate is
+    # the right one here -- spend has no window to lapse, so `fresh` is the whole
+    # question.
     spend = Family("spend_used_minor", "gauge", "Extra usage spent, in minor currency units.")
     limit = Family("spend_limit_minor", "gauge", "Extra usage limit, in minor currency units.")
-    overage = store.latest_overage()
+    overage = store.latest_overage() if fresh else None
     currency = (overage or {}).get("currency", "") or ""
     spend.add((overage or {}).get("spent_minor"), currency=currency)
     limit.add((overage or {}).get("cap_minor"), currency=currency)
