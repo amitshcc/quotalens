@@ -21,18 +21,19 @@ the note explaining the rename.
 > run is decoration, so these are unchecked until CI has actually run on the
 > commit being tagged.
 >
-> Fill in on the day: commit `________`, run id `________`, date `________`,
-> jobs green `___ of 8`.
+> Filled in on the day: commit `969eb6d`, run id `34056217434`
+> (https://github.com/amitshcc/quotalens/actions/runs/34056217434), date
+> `2026-09-06T19:52:04Z`, jobs green `8 of 8`.
 
-- [ ] the wheel builds, installs, and carries the stylesheet, the scripts and
+- [x] the wheel builds, installs, and carries the stylesheet, the scripts and
       the favicon (`quotalens.web`)
-- [ ] `ruff check` and `ruff format --check` clean
-- [ ] the unit tests pass against the **installed wheel**, not the source tree
-- [ ] `qa/smoke.py`: a real server polls a fake claude.ai, writes rows and reads
+- [x] `ruff check` and `ruff format --check` clean
+- [x] the unit tests pass against the **installed wheel**, not the source tree
+- [x] `qa/smoke.py`: a real server polls a fake claude.ai, writes rows and reads
       them back through the API, `/metrics` and an export
-- [ ] `qa/smoke.py`: `start`, a refused double start, `logs`, `status`, `stop`
+- [x] `qa/smoke.py`: `start`, a refused double start, `logs`, `status`, `stop`
       and a stale pid file
-- [ ] on Windows, `service install` registers the logon task, `service status`
+- [x] on Windows, `service install` registers the logon task, `service status`
       reads it back, and `service uninstall` removes it
 
 **What CI does not prove: the OS keyring.** Storing a cookie in CI would need
