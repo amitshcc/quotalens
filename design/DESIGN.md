@@ -280,10 +280,25 @@ step. Teeth nudged by hand cannot be redrawn at another size later.
 the vendor status panel carry each vendor's own brand file, at 16px, taken from
 that vendor's brand page and shipped unmodified in `quotalens/web/vendor/`. They
 are **third-party trademarks identifying third-party services, not members of
-this icon set**: they keep their own colour, they are never restyled to match
-the theme, and they are never hand-redrawn or traced — a redrawn wordmark looks
-worse and is a worse legal position than the real file used nominatively. A
-missing file is a supported state and the row renders with the name alone.
+this icon set**. They are never hand-redrawn or traced — a redrawn wordmark
+looks worse and is a worse legal position than the real file used nominatively —
+and a missing file is a supported state, so the row renders with the name alone.
+
+**How a mark is coloured is decided by the file, not by us:**
+
+- A mark carrying **its own brand colour** (Claude's clay `#D97757`) is placed
+  in an `<img>` and is never recoloured, in either theme.
+- A mark drawn in **`currentColor`** (OpenAI ships one) is *asking* to take the
+  colour around it — vendors supply that variant precisely so it can sit on a
+  dark ground. It is painted through a CSS mask, so it takes `--txt-dim` like
+  the row it sits in. That is using the file as shipped rather than restyling
+  it, and the file is still stored byte for byte.
+
+The mask matters for a second reason: an SVG loaded through `<img>` is an
+isolated document with no access to this page's CSS, so a `currentColor` mark
+resolves to the initial black and vanishes on the dark ground. Inlining it would
+fix the colour and hand a third-party file a script context; a mask fixes the
+colour and cannot execute anything.
 
 A seventh line icon needs an argument here first. The set is small so that each
 one is learnable, and the cost of adding one is that every existing icon becomes

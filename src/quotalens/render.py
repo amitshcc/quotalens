@@ -1015,6 +1015,22 @@ def _vendor_logo_exists(name: str) -> bool:
     return resources.files("quotalens.web").joinpath("vendor").joinpath(name).is_file()
 
 
+@lru_cache(maxsize=8)
+def _vendor_logo_is_mono(name: str) -> bool:
+    """Does the vendor ship this mark as ``currentColor``?
+
+    A mark drawn in ``currentColor`` is *asking* to take the colour around it,
+    and vendors supply that variant precisely so it can sit on a dark ground.
+    Honouring it is using the file as shipped, not restyling it -- which is why
+    this is a question about the file rather than a per-vendor setting.
+    """
+    try:
+        body = resources.files("quotalens.web").joinpath("vendor").joinpath(name).read_text()
+    except (OSError, UnicodeDecodeError):
+        return False
+    return "currentColor" in body
+
+
 def _vendor_logo(vendor: StatusVendor) -> str:
     """The vendor's own mark, or nothing.
 
@@ -1022,11 +1038,26 @@ def _vendor_logo(vendor: StatusVendor) -> str:
     third-party brand assets shipped unmodified -- a deliberate exception to
     DESIGN.md 8, recorded there -- so the alternative to the real file is no
     mark at all, never a redrawn one.
+
+    Two ways of placing it, decided by the file:
+
+    * **Its own brand colour** (Claude's clay) rides in an ``<img>``. It is not
+      ours to recolour, in either theme.
+    * **``currentColor``** is masked instead. An SVG loaded through ``<img>`` is
+      an isolated document with no access to this page's CSS, so its
+      ``currentColor`` resolves to the initial black and the mark disappears on
+      the dark ground -- which is exactly what happened to OpenAI's. A CSS mask
+      paints the file's own alpha in the surrounding colour, so the mark takes
+      the theme the way the vendor's file asked to, and the file itself is still
+      shipped byte for byte. A mask cannot execute anything either, which an
+      inlined third-party SVG could.
     """
     url = vendor.logo_url
     if not url or not _vendor_logo_exists(vendor.logo or ""):
         return ""
     # aria-hidden: the vendor's name is right beside it, in the same span.
+    if _vendor_logo_is_mono(vendor.logo or ""):
+        return f'<span class="vl vlm" style="--m:url({e(url)})" aria-hidden="true"></span>'
     return f'<img class="vl" src="{e(url)}" alt="" aria-hidden="true" width="16" height="16">'
 
 

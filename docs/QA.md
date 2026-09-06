@@ -443,3 +443,13 @@ what "stale money" should look like is a design question this change did not car
       has to be right — as soon as anything was saved. `db_path` had been patched back by
       hand, which was the tell that the patch was the wrong shape. The save now adopts
       only the keys the panel owns.
+- 2026-09-06: OpenAI's mark vanished on the dark theme. Not a colour choice: the file
+      is drawn in `currentColor`, and an SVG loaded through `<img>` is an isolated
+      document with no access to the embedding page's CSS, so its `currentColor`
+      resolved to the initial black on a near-black ground. A `currentColor` mark is
+      the variant a vendor ships *for* dark grounds, so honouring it is using the file
+      as supplied rather than restyling it. Painted through a CSS mask now: the mark
+      takes `--txt-dim` like the row it sits in, the stored file is unchanged, and a
+      mask cannot execute anything — which inlining a third-party SVG could. Marks
+      carrying their own brand colour, like Claude's clay, stay in `<img>` and are
+      never recoloured.

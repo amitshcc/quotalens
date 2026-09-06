@@ -291,7 +291,11 @@ dialog::backdrop{background:var(--case);opacity:.75}
 .dhead{display:flex;align-items:center;justify-content:space-between;padding:var(--sp-3) var(--sp-4)}
 #sd-body{padding:0 var(--sp-4) var(--sp-4)}
 .readout-box.bt{grid-template-columns:1fr;white-space:nowrap}
+/* A mark in currentColor is painted through a mask so it takes the theme; one
+   with its own brand colour rides in an <img> and is never recoloured. */
 .vl{width:16px;height:16px;vertical-align:-3px;margin-right:6px}
+.vlm{display:inline-block;background:currentColor;mask:var(--m) center/contain no-repeat;
+  -webkit-mask:var(--m) center/contain no-repeat}
 /* history: about ten rows plus the header, a multiple of the 4px grid. Both axes
    in one scroller, so a sticky header survives horizontal scrolling too. */
 .hsc{max-height:calc(11 * var(--row-h));overflow:auto}

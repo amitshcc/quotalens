@@ -305,3 +305,38 @@ def test_saving_does_not_forget_the_flags_this_instance_was_started_with(
     assert "8830" in after, "the port survived a save"
     assert app.state.qw.settings.port == 8830
     assert app.state.qw.settings.poll_interval_s == 120  # and the panel key applied
+
+
+def test_a_currentcolor_mark_is_masked_and_a_brand_coloured_one_is_not(tmp_path) -> None:
+    """How a mark is coloured is the file's decision, not ours.
+
+    An SVG loaded through <img> is an isolated document, so a `currentColor`
+    mark resolves to the initial black and disappears on the dark ground -- which
+    is what happened to OpenAI's. A mask paints the file's own alpha in the
+    surrounding colour; a mark with its own brand colour must not be touched.
+    """
+    from quotalens.render import _vendor_logo, _vendor_logo_is_mono
+
+    for vendor in status.VENDORS:
+        if not vendor.logo:
+            continue
+        html = _vendor_logo(vendor)
+        if not html:
+            continue  # the file has not been added yet; the row shows the name
+        if _vendor_logo_is_mono(vendor.logo):
+            assert 'class="vl vlm"' in html and "--m:url(" in html, vendor.key
+            assert "<img" not in html, vendor.key
+        else:
+            assert html.startswith("<img"), vendor.key
+            assert "vlm" not in html, vendor.key
+
+
+def test_the_mask_takes_the_surrounding_colour_in_both_themes() -> None:
+    from importlib import resources
+
+    css = resources.files("quotalens.web").joinpath("app.css").read_text()
+    rule = css.split(".vlm{", 1)[1].split("}", 1)[0]
+    assert "background:currentColor" in rule, "the mark is painted in the row's own colour"
+    assert "mask:var(--m)" in rule
+    # No colour of its own anywhere: a token would freeze it to one theme.
+    assert "#" not in rule
