@@ -32,13 +32,26 @@ def _form(**over: str) -> dict[str, str]:
 
 
 def test_a_vendor_with_no_feed_makes_no_request_at_all() -> None:
-    """Not a request that fails and is reported as unreachable: a different claim."""
+    """The seam that lets Gemini back in the day Google ships a feed.
+
+    No shipped vendor has ``api_url=None`` any more -- Gemini was removed rather
+    than left saying "unable to check" forever -- so this exercises the branch
+    with a stand-in. If it ever regresses, a future vendor with no feed would
+    silently be reported unreachable, which is a different and untrue claim.
+    """
     asked: list[str] = []
-    watcher = status.StatusWatcher()
+    mute = status.StatusVendor("mute", "Mute", "https://example.invalid/", None)
+    watcher = status.StatusWatcher(vendors=(mute,))
     watcher.check_all(1000, fetcher=lambda url: asked.append(url) or OK_PAYLOAD)
-    assert not any("aistudio" in url for url in asked)
-    gemini = next(r for r in watcher.rows() if r.vendor.key == "gemini")
-    assert gemini.state == status.UNKNOWN and gemini.detail == status.NO_API_REASON
+    assert asked == []
+    row = watcher.rows()[0]
+    assert row.state == status.UNKNOWN and row.detail == status.NO_API_REASON
+
+
+def test_gemini_is_not_shipped() -> None:
+    """It could only ever say "unable to check": a line that teaches nothing."""
+    assert "gemini" not in {v.key for v in status.VENDORS}
+    assert all(v.api_url for v in status.VENDORS), "every shipped vendor has a feed"
 
 
 def test_an_unrecognised_indicator_is_unknown_not_healthy() -> None:
@@ -87,7 +100,7 @@ def test_the_rows_render_as_links_that_leave(settings, store, secrets) -> None:
     with TestClient(app) as tc:
         html = tc.get("/").text
     rows = re.findall(r'<a class="vs"[^>]*>', html)
-    assert len(rows) == 3
+    assert len(rows) == len(status.VENDORS) == 2
     for row in rows:
         assert 'target="_blank"' in row
         assert "noopener" in row and "noreferrer" in row
@@ -99,14 +112,20 @@ def test_the_rows_render_as_links_that_leave(settings, store, secrets) -> None:
 
 
 def test_the_unknown_row_still_links_and_says_why(settings, store, secrets) -> None:
-    """ "Unable to check" is not a dead end; for Gemini the link is the feature."""
+    """ "Unable to check" is not a dead end: it says so, and the click still leaves.
+
+    Every vendor is in this state here, because conftest refuses ``status.fetch``
+    for the whole suite -- which is also exactly what an offline machine sees.
+    """
     app = create_app(settings, store, secrets)
     with TestClient(app) as tc:
         html = tc.get("/").text
-    row = re.search(r'<a class="vs"[^>]*aistudio[^>]*>(.*?)</a>', html, re.S)
-    assert row is not None
-    assert "no public status API" in row.group(1)
-    assert "—" in row.group(1)
+    for vendor in status.VENDORS:
+        pattern = rf'<a class="vs"[^>]*{re.escape(vendor.page_url)}[^>]*>(.*?)</a>'
+        row = re.search(pattern, html, re.S)
+        assert row is not None, vendor.key
+        assert "—" in row.group(1), vendor.key
+        assert 'target="_blank"' in html
 
 
 # -- the settings panel ---------------------------------------------------------
@@ -208,3 +227,52 @@ def test_shortening_retention_needs_a_confirm(settings, store, secrets, tmp_path
         )
         assert allowed.status_code == 303
         assert read_config_file(config_path("", tmp_path))["retention"] == "1week"
+
+
+def test_the_wheel_ships_the_notification_icon_and_the_vendor_directory() -> None:
+    """Mirrors CI's package-contents step; an asset can work from src and not ship."""
+    from importlib import resources
+
+    web = resources.files("quotalens.web")
+    assert web.joinpath("mark.png").read_bytes()[:4] == b"\x89PNG"
+    assert web.joinpath("vendor").is_dir()
+
+
+def test_the_mark_png_is_the_one_the_renderer_produces() -> None:
+    """The committed asset cannot drift from design/mark.svg's numbers."""
+    import sys
+    from importlib import resources
+    from pathlib import Path
+
+    design = Path(__file__).resolve().parents[1] / "design"
+    if not (design / "render_mark_png.py").exists():
+        return  # design/ is not in an installed wheel
+    sys.path.insert(0, str(design))
+    try:
+        import render_mark_png
+    finally:
+        sys.path.pop(0)
+    assert (
+        render_mark_png.render()
+        == resources.files("quotalens.web").joinpath("mark.png").read_bytes()
+    )
+
+
+def test_a_vendor_without_its_brand_file_renders_the_name_alone(settings, store, secrets) -> None:
+    """Absent is a supported state: the mark is theirs, so we do not draw one."""
+    app = create_app(settings, store, secrets)
+    with TestClient(app) as tc:
+        html = tc.get("/").text
+        for vendor in status.VENDORS:
+            if vendor.logo:
+                served = tc.get(f"/static/vendor/{vendor.logo}")
+                assert served.status_code in (200, 404)
+        # The handler serves from a fixed allow-list built from VENDORS, not
+        # from the path, so nothing can be walked out of the vendor directory.
+        # (A literal "../" is resolved by the client before it is ever sent,
+        # which would test the client rather than the route.)
+        assert tc.get("/static/vendor/nope.svg").status_code == 404
+        assert tc.get("/static/vendor/%2e%2e%2fapp.css").status_code == 404
+        assert tc.get("/static/vendor/README.md").status_code == 404
+    for vendor in status.VENDORS:
+        assert vendor.display_name in html

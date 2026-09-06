@@ -161,7 +161,52 @@
     ev.preventDefault();
     navigate(target.getAttribute("href"), true);
   });
+  /* ---- settings dialog ---------------------------------------------------
+     Progressive enhancement over a link that already works: without this,
+     /settings is a real page with a real form, which is the property the
+     no-JavaScript test pins. With it, the same form is fetched into a <dialog>
+     over the dashboard. Native <dialog> gives Escape, focus trapping and the
+     backdrop for nothing. */
+  function settingsDialog() { return document.getElementById("sd"); }
+
+  function openSettings() {
+    var dlg = settingsDialog();
+    if (!dlg || !dlg.showModal) return false;
+    fetch("/settings?fragment=1", { headers: { "X-Requested-With": "fetch" } })
+      .then(function (r) { return r.text(); })
+      .then(function (html) {
+        document.getElementById("sd-body").innerHTML = html;
+        if (!dlg.open) dlg.showModal();
+      })
+      .catch(function () { window.location.href = "/settings"; });
+    return true;
+  }
+
+  function submitSettings(form) {
+    var action = form.getAttribute("action") || "/settings";
+    fetch(action + "?fragment=1", { method: "POST", body: new URLSearchParams(new FormData(form)) })
+      .then(function (r) {
+        // 400 means the server refused a value: show its own message, in place,
+        // beside the field. 303/200 means saved, so close and re-read the page.
+        if (r.status === 400) return r.text().then(function (h) {
+          document.getElementById("sd-body").innerHTML = h;
+        });
+        settingsDialog().close();
+        navigate(window.location.pathname + window.location.search, false);
+      })
+      .catch(function () { form.submit(); });
+  }
+
+  document.addEventListener("click", function (ev) {
+    var link = ev.target.closest && ev.target.closest("#settings-link");
+    if (!link) return;
+    if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.button !== 0) return;
+    if (openSettings()) ev.preventDefault();
+  });
+
   document.addEventListener("submit", function (ev) {
+    var sform = ev.target.closest && ev.target.closest("#sd-body form");
+    if (sform) { ev.preventDefault(); submitSettings(sform); return; }
     if (ev.target && ev.target.id === "poll-form") {
       ev.preventDefault();
       pollNow(ev.target);

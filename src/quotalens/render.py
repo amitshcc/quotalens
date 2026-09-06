@@ -25,7 +25,7 @@ from quotalens.dashboard import (
 )
 from quotalens.runway import fmt_span
 from quotalens.settings_view import SettingsView
-from quotalens.status import VendorStatus
+from quotalens.status import StatusVendor, VendorStatus
 from quotalens.views import AUTO, RANGE_KEYS
 
 ICONS = (
@@ -285,8 +285,12 @@ def _header(dash: Dashboard) -> str:
         # because the theme is settled in the browser and the server cannot know it.
         # No el-link: that class is the SPA's "re-render this fragment in place"
         # list, and /settings is a page, not a fragment of this one.
-        '<a href="/settings" id="settings-link" title="Settings">'
-        '<svg class="ic" aria-hidden="true"><use href="#i-settings"/></svg>settings</a>'
+        #
+        # The glyph alone. `theme` keeps its word: making both icon-only is a
+        # separate decision nobody has made. The name lives on the link, so
+        # dropping the visible word costs a screen reader nothing.
+        '<a href="/settings" id="settings-link" title="Settings" aria-label="Settings">'
+        '<svg class="ic" aria-hidden="true"><use href="#i-settings"/></svg></a>'
         '<button id="t" type="button" aria-label="Switch theme">'
         '<svg class="ic ic-sun" aria-hidden="true"><use href="#i-sun"/></svg>'
         '<svg class="ic ic-moon" aria-hidden="true"><use href="#i-moon"/></svg>theme</button>'
@@ -315,6 +319,7 @@ def _main(dash: Dashboard) -> str:
         + _side(dash)
         + "</div>"
         + _footer(dash)
+        + render_settings_dialog()
         + "</main>"
     )
 
@@ -601,6 +606,17 @@ def _chart(dash: Dashboard) -> str:
             )
             for a, b in c.idle
         )
+        # Credits, drawn before the gaps so hatching still reads on top of it.
+        idle += "".join(
+            f'<rect x="{a:.1f}" y="14" width="{max(b - a, 1.5):.1f}" height="182" class="cred"/>'
+            + (
+                f'<text x="{(a + b) / 2:.1f}" y="190" class="ax" text-anchor="middle">'
+                f"{e(label)}</text>"
+                if b - a > 60
+                else ""
+            )
+            for a, b, label in c.credit_spans
+        )
         gaps = idle + "".join(
             f'<rect x="{a:.1f}" y="14" width="{max(b - a, 1.5):.1f}" height="182" '
             'fill="url(#gap)" class="gap"/>'
@@ -810,11 +826,15 @@ def _history(dash: Dashboard) -> str:
             f'<tfoot><tr><td colspan="{cols}"><a href="{e(h.show_less_href)}" class="sess">'
             "show the first 20</a></td></tr></tfoot>"
         )
+    # One scroller, both axes. The page used to grow by a row a session forever,
+    # so everything below the table moved down every day. Scrolling replaces the
+    # page growing -- it does not replace the `show all` paging, which still
+    # works and still lives in the tfoot inside the scroller.
     return (
-        '<section class="screen history"><table>'
+        '<section class="screen history"><div class="hsc"><table>'
         f"<caption>History — session windows{caption}. Weekly columns: change in the window, "
         "then the level it reached</caption>"
-        f"<thead><tr>{heads}</tr></thead><tbody>{body}</tbody>{foot}</table></section>"
+        f"<thead><tr>{heads}</tr></thead><tbody>{body}</tbody>{foot}</table></div></section>"
     )
 
 
@@ -906,7 +926,7 @@ def _side(dash: Dashboard) -> str:
             style = ' style="color:var(--st-critical)"' if s.state == "critical" else ""
         state_chip = " " + chip(s.state, s.state) if s.state != "normal" else ""
         spend = (
-            f'<div class="rule"></div><dl><dt>Extra usage{state_chip}</dt>'
+            f'<div class="rule"></div><dl><dt>Usage credits{state_chip}</dt>'
             f'<dd class="m">{figure}</dd></dl>'
             f'<div class="v m spend-pct"{style}>{pct}</div>{bar}'
             + (f'<p class="far">{e(s.status_text)}</p>' if s.status_text else "")
@@ -962,10 +982,32 @@ def _status_rows(rows: list[VendorStatus]) -> str:
             # tab it was opened from.
             f'<a class="vs" href="{e(row.vendor.page_url)}" target="_blank" '
             f'rel="noopener noreferrer external" title="{e(row.title)}">'
-            f"<span>{e(row.vendor.display_name)}</span>"
+            f"<span>{_vendor_logo(row.vendor)}{e(row.vendor.display_name)}</span>"
             f'<span class="vst">{mark}</span></a>'
         )
     return '<div class="rule"></div><p class="cap">Vendor status</p>' + "".join(out)
+
+
+@lru_cache(maxsize=8)
+def _vendor_logo_exists(name: str) -> bool:
+    if not name:
+        return False
+    return resources.files("quotalens.web").joinpath("vendor").joinpath(name).is_file()
+
+
+def _vendor_logo(vendor: StatusVendor) -> str:
+    """The vendor's own mark, or nothing.
+
+    An absent file is supported and renders the name alone. These are
+    third-party brand assets shipped unmodified -- a deliberate exception to
+    DESIGN.md 8, recorded there -- so the alternative to the real file is no
+    mark at all, never a redrawn one.
+    """
+    url = vendor.logo_url
+    if not url or not _vendor_logo_exists(vendor.logo or ""):
+        return ""
+    # aria-hidden: the vendor's name is right beside it, in the same span.
+    return f'<img class="vl" src="{e(url)}" alt="" aria-hidden="true" width="16" height="16">'
 
 
 def _footer(dash: Dashboard) -> str:
@@ -1013,6 +1055,21 @@ def _readonly(label: str, value: str, why: str) -> str:
     return (
         f'<div class="fld is-ro"><label>{e(label)}</label>'
         f'<code>{e(value)}</code><span class="far">{e(why)}</span></div>'
+    )
+
+
+def render_settings_dialog() -> str:
+    """The empty shell. app.js fetches the fragment into it on first open.
+
+    Fetching rather than rendering the form twice: one code path builds it, the
+    dialog always shows current values, and the `/settings` page keeps working
+    untouched for the no-JavaScript path.
+    """
+    return (
+        '<dialog id="sd" aria-label="Settings">'
+        '<form method="dialog" class="dhead">'
+        '<p class="cap">Settings</p><button value="close">close</button></form>'
+        '<div id="sd-body"></div></dialog>'
     )
 
 
@@ -1068,12 +1125,17 @@ def render_settings(view: SettingsView) -> str:
         '<p class="cap">Notifications</p>',
     ]
     if view.notify_capability.available:
+        # `note` is set when the capability works but not fully -- on macOS
+        # without terminal-notifier the banner carries the system icon and
+        # nothing can change that. Saying so beats shipping the wrong icon
+        # silently, which is the same rule the capability check itself follows.
+        caveat = view.notify_capability.note
         body.append(
             _field(
                 "notify",
                 "Desktop notification",
                 view.values["notify"],
-                note="when a window crosses a threshold",
+                note="when a window crosses a threshold" + (f". {caveat}" if caveat else ""),
                 kind="checkbox",
             )
         )

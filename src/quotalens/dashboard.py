@@ -15,7 +15,7 @@ from datetime import datetime
 from itertools import pairwise
 from typing import Any
 
-from quotalens import retention
+from quotalens import credits, retention
 from quotalens.alerts import ALERT_KIND, CLEARED_KIND, standing
 from quotalens.boost import BOOST_KIND, boosted_windows
 from quotalens.budget import Budget, BudgetReport, WeeklyLimit, compute_budgets
@@ -55,6 +55,8 @@ from quotalens.views import (
 )
 
 HERO_HOURS = 5
+# There is no balance field in the payload; see quotalens.credits.
+CREDITS_BASIS = "Month to date against your monthly cap, not a remaining balance"
 # The chart lives in the left column of a two-column grid: 1320 page, 20 gutters,
 # a 288 sidebar, a 24 gap and 16 of section padding either side leaves 936. The
 # viewBox matches that, so the SVG renders about 1:1 and is neither letterboxed
@@ -287,6 +289,9 @@ class ChartView:
     session_x: list[float] = field(default_factory=list)  # session window starts
     boost_marks: list[BoostMark] = field(default_factory=list)  # one per moment, not per window
     idle: list[tuple[float, float]] = field(default_factory=list)  # no window running
+    # Spans where usage credits were being spent: a fact about an interval, the
+    # same class as `idle` and `gaps`, not a level.
+    credit_spans: list[tuple[float, float, str]] = field(default_factory=list)
     idle_minutes: int = 0
     now_x: float = 0.0  # where "now" falls; beyond it the chart is the future
     future: bool = False
@@ -334,8 +339,11 @@ class SpendView:
     pct_text: str
     bar_pct: float
     status_text: str
-    state: str  # normal | critical (neutral while disabled)
+    state: str  # normal | critical -- over the cap is critical either way
     withheld: bool
+    # Whether credits can currently be spent. Over-cap-while-off colours the
+    # readout without raising the whole page; see build_dashboard.
+    enabled: bool = False
 
 
 @dataclass
@@ -407,6 +415,15 @@ class Dashboard:
 
 
 # -- builders -------------------------------------------------------------------
+
+
+def _spent_text(minor: int, rows: list) -> str:
+    """Money spent inside the range, or an em dash when nothing is stored for it."""
+    if not rows:
+        return EM_DASH
+    from quotalens.parse import format_money
+
+    return format_money(minor, rows[-1].exponent, rows[-1].currency)
 
 
 def _database_row(size: int | None, period: str | None) -> str:
@@ -532,6 +549,11 @@ def build_dashboard(
     )
     if prior_ts is None and oldest is not None and oldest < rng.start:
         prior_ts = rng.start  # history reaches back past the range: the left edge counts
+    overage_rows = store.overage_series(rng.start, rng.end)
+    credit_runs = credits.stretches(store.overage_series(), settings.poll_interval_s)
+    on_credits_s = credits.seconds_on_credits(credit_runs, rng.start, rng.end)
+    spent_minor = credits.spent_in_range(overage_rows, rng.start, rng.end)
+
     chart = _chart_view(
         range_rows,
         slots,
@@ -546,6 +568,7 @@ def build_dashboard(
         prior_rows,
     )
     _mark_sessions(chart, sessions_all, rng, now)
+    _mark_credits(chart, credit_runs, rng)
     # One conclusion, read from the events the poller wrote, and shared by the chart,
     # the meters, the history rows and the budget's cost estimate.
     _mark_runway(chart, burn.runway, session, rng, now, withheld)
@@ -574,7 +597,11 @@ def build_dashboard(
     # A sub-capped window is excluded: Fable at 100% is half the weekly pool spent,
     # and an account chip reading "critical" for that is simply false.
     account_states = [w.state for w in windows if not w.subcap]
-    magnitude = worst(account_states + ([spend.state] if spend else []))
+    # Over the cap while credits are *off* colours the readout but does not raise
+    # the page: nothing more can be spent, so it is a fact to see rather than an
+    # alarm to act on. Over the cap while they are on is both.
+    spend_states = [spend.state] if spend and spend.enabled else []
+    magnitude = worst(account_states + spend_states)
     if withheld:
         chip, chip_text = epistemic.kind, epistemic.title
     elif magnitude != NORMAL:
@@ -601,6 +628,10 @@ def build_dashboard(
         "Range": rng.label + (" (auto)" if rng.auto else ""),
         "Not collected": f"{chart.gap_minutes} min in range",
         "No session": f"{chart.idle_minutes} min in range",
+        # The same vocabulary as the two rows above it, and range-scoped, so it
+        # is the figure the chart beside it is showing.
+        "On credits": f"{on_credits_s // 60} min in range",
+        "Spent in range": _spent_text(spent_minor, overage_rows),
         "Poll interval": f"{settings.poll_interval_s}s",
         "Samples stored": f"{counts['quota']:,}",
         # The retention period rides along with the size so the setting is visible
@@ -1238,6 +1269,29 @@ def _chart_view(
     )
 
 
+def _mark_credits(chart: ChartView, runs: list, rng: ResolvedRange) -> None:
+    """Bands over the spans where credits were spent.
+
+    A fourth span of the class the chart already draws -- alongside `no session`
+    shading and `not collected` hatching -- because this is a fact about an
+    interval, not a level. Deliberately no colour of its own: DESIGN.md 1 gives
+    amber to the session window and 8 gives the crimson to the boost mark, which
+    is the one piece of good news in the product. The *word* is the channel.
+    """
+    span = max(1, rng.end - rng.start)
+    plot_w = CHART_W - CHART_L - CHART_R
+    out = []
+    for run in runs:
+        lo, hi = max(run.start_ts, rng.start), min(run.end_ts, rng.end)
+        if hi <= lo:
+            continue
+        x0 = CHART_L + (lo - rng.start) / span * plot_w
+        x1 = CHART_L + (hi - rng.start) / span * plot_w
+        label = f"on credits{' (approx)' if run.approximate else ''}"
+        out.append((x0, x1, label))
+    chart.credit_spans = out
+
+
 def _mark_runway(
     chart: ChartView,
     runway: Runway | None,
@@ -1449,19 +1503,27 @@ def _spend_view(spend: SpendReading | None, withheld: bool, now: int) -> SpendVi
         return None
     if spend.is_enabled is False:
         until = parse_iso(spend.disabled_until)
-        status = "Extra usage off" + (f" until {when(until, now)}" if until else "")
+        status = "Credits off" + (f" until {when(until, now)}" if until else "")
         if spend.spend_limit_reached:
             status += ", limit reached"
     elif spend.is_enabled:
-        status = "Extra usage on"
+        status = "Credits on"
     else:
         status = ""
     if spend.conflict:
         status = (status + ". " if status else "") + "Sources disagree on amounts; figures hidden."
+    # No balance exists in either payload -- verified against stored samples, see
+    # credits.py -- so this is month-to-date against a monthly cap and must not
+    # be read as money remaining. Said once, here, rather than implied.
+    status = (status + ". " if status else "") + CREDITS_BASIS
     pct = spend.pct
-    state = CRITICAL if spend.is_enabled and pct is not None and pct >= 100 else NORMAL
+    # Over the cap is critical whatever the switch says. It was previously
+    # gated on is_enabled, so the one real over-cap reading anyone has seen --
+    # $3.16 of a $2.00 cap, 158% -- rendered as normal, because spending past
+    # the cap is *why* it had been disabled.
+    state = CRITICAL if pct is not None and pct >= 100 else NORMAL
     if withheld:
-        return SpendView(None, None, None, "—", 0.0, status, NORMAL, True)
+        return SpendView(None, None, None, "—", 0.0, status, NORMAL, True, bool(spend.is_enabled))
     return SpendView(
         spend.used_text,
         spend.limit_text,
@@ -1471,6 +1533,7 @@ def _spend_view(spend: SpendReading | None, withheld: bool, now: int) -> SpendVi
         status,
         state,
         False,
+        bool(spend.is_enabled),
     )
 
 

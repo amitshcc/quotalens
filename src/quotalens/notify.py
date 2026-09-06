@@ -32,13 +32,44 @@ import logging
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
+from importlib import resources
+from pathlib import Path
 
 log = logging.getLogger(__name__)
 
 CROSSED_KIND = "notify_crossed"
 DEFAULT_THRESHOLDS = (50.0, 75.0, 90.0)
 NOTIFY_TIMEOUT_S = 5.0
+ICON_FILE = "mark.png"  # the ring mark, in quotalens.web; see design/render_mark_png.py
+GENERIC_ICON_NOTE = (
+    "notifications will show the system icon; install terminal-notifier "
+    "(brew install terminal-notifier) for the QuotaLens mark"
+)
+
+
+def icon_path() -> str | None:
+    """A real filesystem path to the mark, or None.
+
+    ``importlib.resources`` may hand back a zip member, so this materialises one
+    and keeps it for the process. The notifiers take a path, not bytes.
+    """
+    global _ICON_CACHE
+    if _ICON_CACHE is not None:
+        return _ICON_CACHE or None
+    try:
+        with resources.as_file(resources.files("quotalens.web").joinpath(ICON_FILE)) as path:
+            target = Path(tempfile.gettempdir()) / f"quotalens-{ICON_FILE}"
+            if not target.exists() or target.stat().st_size != path.stat().st_size:
+                target.write_bytes(path.read_bytes())
+            _ICON_CACHE = str(target)
+    except (OSError, ModuleNotFoundError, FileNotFoundError):
+        _ICON_CACHE = ""
+    return _ICON_CACHE or None
+
+
+_ICON_CACHE: str | None = None
 
 
 @dataclass(frozen=True)
@@ -51,6 +82,9 @@ class Crossing:
     pct: float
     resets_at_text: str
     window_key: str  # identifies *this instance* of the window: its reset time
+    # An override for events that are not threshold crossings -- credits, where
+    # "at 91%, resets 02:10" would be meaningless.
+    body: str = ""
 
     @property
     def event_detail(self) -> str:
@@ -59,6 +93,8 @@ class Crossing:
 
     def message(self) -> str:
         """One line: which window, the percentage, the reset time. No emoji."""
+        if self.body:
+            return self.body
         return f"{self.label} at {self.pct:.0f}%, resets {self.resets_at_text}"
 
 
@@ -110,6 +146,9 @@ class Capability:
     available: bool
     reason: str = ""
     tool: str = ""
+    # A caveat about a capability that works but not fully -- shown beside the
+    # toggle, so the wrong icon is explained rather than shipped silently.
+    note: str = ""
 
     @property
     def explanation(self) -> str:
@@ -130,9 +169,16 @@ def detect_capability(platform: str | None = None, env: dict[str, str] | None = 
     env = env if env is not None else dict(os.environ)
 
     if platform == "darwin":
-        if not shutil.which("osascript"):
-            return Capability(False, "osascript is not on PATH")
-        return Capability(True, tool="osascript")
+        # terminal-notifier first, and not for taste: macOS attaches the icon of
+        # the *posting process*, and `osascript` posts as Script Editor. There is
+        # no argument to `display notification` that changes it, so the osascript
+        # path can never show the QuotaLens mark. terminal-notifier takes
+        # -appIcon and can.
+        if shutil.which("terminal-notifier"):
+            return Capability(True, tool="terminal-notifier")
+        if shutil.which("osascript"):
+            return Capability(True, tool="osascript", note=GENERIC_ICON_NOTE)
+        return Capability(False, "neither terminal-notifier nor osascript is on PATH")
 
     if platform.startswith("win"):
         if not shutil.which("powershell"):
@@ -156,6 +202,20 @@ def detect_capability(platform: str | None = None, env: dict[str, str] | None = 
 
 
 def _argv(tool: str, title: str, body: str) -> list[str]:
+    icon = icon_path()
+    if tool == "terminal-notifier":
+        argv = [
+            "terminal-notifier",
+            "-title",
+            title,
+            "-message",
+            body,
+            "-sender",
+            "com.apple.Terminal",
+        ]
+        if icon:
+            argv += ["-appIcon", icon]
+        return argv
     if tool == "osascript":
         # Quotes are stripped from both parts, so neither can close the string
         # and start AppleScript of its own. The body is our own text today, but
@@ -181,7 +241,10 @@ def _argv(tool: str, title: str, body: str) -> list[str]:
             "'QuotaLens').Show([Windows.UI.Notifications.ToastNotification]::new($t))"
         )
         return ["powershell", "-NoProfile", "-NonInteractive", "-Command", script]
-    return ["notify-send", "-a", "QuotaLens", title, body]
+    argv = ["notify-send", "-a", "QuotaLens"]
+    if icon:
+        argv += ["-i", icon]
+    return [*argv, title, body]
 
 
 def send(crossing: Crossing, capability: Capability, runner: object = None) -> bool:

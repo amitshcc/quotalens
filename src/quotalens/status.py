@@ -7,19 +7,27 @@ half-providers with no client is how that seam rots -- so this is a separate,
 small list, and Claude's entry borrows only its display name from ``CLAUDE`` so
 the vendor is still named once.
 
-**Gemini has no machine-readable feed, and gets no number rather than a wrong
-one.** ``aistudio.google.com/status`` is a JavaScript app with no JSON behind it.
-Google Cloud's ``products.json`` does carry "Vertex Gemini API", but Vertex AI is
-a different surface with a different availability record, and showing it under a
-Gemini label is precisely the confident wrong number this project exists to
-avoid. So Gemini renders "unable to check", with the reason, and one click to the
-page that can answer. The adapter seam means a real feed is a twenty-line
-addition the day Google ships one.
+**Gemini is not here, and that is the finished answer rather than a gap.**
+``aistudio.google.com/status`` is a JavaScript app with no JSON behind it, and
+Google Cloud's ``products.json`` carries only Vertex surfaces -- "Vertex Gemini
+API", "Gemini Code Assist" -- which have their own availability records and are
+not the AI Studio one. A row that can only ever say "unable to check" is a row
+that costs a line and teaches nothing, so it was removed. ``api_url`` staying
+optional is the whole seam: a Gemini entry is four lines the day Google ships a
+feed.
 
-"Unable to check" is the *ordinary* state here, not the edge case: one vendor is
-permanently in it and the other two enter it whenever the machine is offline. It
-takes DESIGN.md 5's treatment exactly -- the value is removed and explained,
-never frozen at the last good reading and never assumed healthy.
+**The logos are third-party marks and are not ours to draw.** Each vendor's own
+brand file goes in ``quotalens/web/vendor/`` under the name its ``StatusVendor``
+gives, taken from that vendor's brand page and shipped unmodified -- never
+hand-redrawn, never traced from a screenshot, never restyled to match the theme.
+A missing file is a supported state: the row renders with the name alone, which
+is what it looked like before logos existed. DESIGN.md 8 records why this is a
+deliberate exception to the icon rules.
+
+"Unable to check" is still an ordinary state, not an edge case -- every vendor
+enters it whenever this machine is offline. It takes DESIGN.md 5's treatment
+exactly: the value is removed and explained, never frozen at the last good
+reading and never assumed healthy.
 """
 
 from __future__ import annotations
@@ -72,6 +80,14 @@ class StatusVendor:
     display_name: str
     page_url: str  # the human page: what the row links to
     api_url: str | None  # the machine feed, or None when the vendor ships none
+    # A file in quotalens/web/vendor/, or None. Absent is a supported state and
+    # the row renders with the name alone: a third-party brand file is not ours
+    # to redraw or to invent.
+    logo: str | None = None
+
+    @property
+    def logo_url(self) -> str | None:
+        return f"/static/vendor/{self.logo}" if self.logo else None
 
 
 VENDORS: tuple[StatusVendor, ...] = (
@@ -80,18 +96,14 @@ VENDORS: tuple[StatusVendor, ...] = (
         display_name=CLAUDE.display_name,
         page_url="https://status.claude.com/",
         api_url="https://status.claude.com/api/v2/status.json",
-    ),
-    StatusVendor(
-        key="gemini",
-        display_name="Gemini",
-        page_url="https://aistudio.google.com/status",
-        api_url=None,
+        logo="claude.svg",
     ),
     StatusVendor(
         key="openai",
         display_name="OpenAI",
         page_url="https://status.openai.com/",
         api_url="https://status.openai.com/api/v2/status.json",
+        logo="openai.svg",
     ),
 )
 VENDORS_BY_KEY = {v.key: v for v in VENDORS}

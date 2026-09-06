@@ -24,7 +24,7 @@ from fastapi.responses import (
     StreamingResponse,
 )
 
-from quotalens import __version__, retention
+from quotalens import __version__, retention, status
 from quotalens.burn import burn_rate
 from quotalens.config import (
     Settings,
@@ -52,7 +52,13 @@ from quotalens.metrics import CONTENT_TYPE as METRICS_CONTENT_TYPE
 from quotalens.metrics import collect as collect_metrics
 from quotalens.metrics import render as render_metrics
 from quotalens.poller import ClientFactory, Poller, spend_as_dict
-from quotalens.render import favicon_svg, render_app, render_page, render_settings_page
+from quotalens.render import (
+    favicon_svg,
+    render_app,
+    render_page,
+    render_settings,
+    render_settings_page,
+)
 from quotalens.secrets import Redactor, SecretStore, global_redactor
 from quotalens.sessions import rebuild as rebuild_sessions
 from quotalens.settings_view import apply_form, build_view, shrink_impact
@@ -103,6 +109,11 @@ class AppState:
     # Strong references to fire-and-forget tasks; without them the event loop
     # only holds a weak one and a prune can be collected part-way through.
     background: set[asyncio.Task[None]] = dc_field(default_factory=set)
+
+
+def _wants_fragment(request: Request) -> bool:
+    """The dialog asks for the bare form; a plain browser POST asks for a page."""
+    return request.query_params.get("fragment") == "1"
 
 
 async def _form(request: Request) -> dict[str, str]:
@@ -232,10 +243,16 @@ def create_app(
             "sample_ts": after if accepted and after != before else None,
         }
 
+    def _settings_html(view, fragment: bool) -> str:
+        """One form, two wrappers: the dialog gets the fragment, the page the shell."""
+        return render_settings(view) if fragment else render_settings_page(view)
+
     @app.get("/settings", response_class=HTMLResponse, include_in_schema=False)
-    def settings_page() -> HTMLResponse:
+    def settings_page(fragment: int = 0) -> HTMLResponse:
         view = build_view(state.settings, state.store, state.poller.notify_capability)
-        return HTMLResponse(render_settings_page(view), headers={"Cache-Control": "no-store"})
+        return HTMLResponse(
+            _settings_html(view, bool(fragment)), headers={"Cache-Control": "no-store"}
+        )
 
     @app.post("/settings", include_in_schema=False)
     async def settings_save(request: Request) -> Response:
@@ -261,7 +278,7 @@ def create_app(
                 errors=errors,
                 values=values,
             )
-            return HTMLResponse(render_settings_page(view), status_code=400)
+            return HTMLResponse(_settings_html(view, _wants_fragment(request)), status_code=400)
         return RedirectResponse(url="/settings?saved=1", status_code=303)
 
     @app.post("/settings/retention", include_in_schema=False)
@@ -278,7 +295,7 @@ def create_app(
                 state.poller.notify_capability,
                 errors={"retention": str(exc)},
             )
-            return HTMLResponse(render_settings_page(view), status_code=400)
+            return HTMLResponse(_settings_html(view, _wants_fragment(request)), status_code=400)
 
         impact = shrink_impact(state.store, state.settings.retention, chosen)
         if impact and not form.get("confirm"):
@@ -290,7 +307,7 @@ def create_app(
                 shrink_span=span,
                 values={**view.values, "retention": chosen},
             )
-            return HTMLResponse(render_settings_page(view), status_code=400)
+            return HTMLResponse(_settings_html(view, _wants_fragment(request)), status_code=400)
 
         path = config_path(state.settings.profile, config_dir)
         stored = read_config_file(path)
@@ -322,6 +339,23 @@ def create_app(
             media_type=STATIC_FILES[name],
             headers={"Cache-Control": "no-cache"},
         )
+
+    @app.get("/static/vendor/{name}", include_in_schema=False)
+    def vendor_logo(name: str) -> Response:
+        """A vendor's own brand file, shipped unmodified.
+
+        Served from a fixed allow-list built from ``status.VENDORS`` rather than
+        from the path, so this cannot be walked out of ``quotalens/web/vendor/``.
+        A vendor whose file has not been added yet 404s and the row renders with
+        the name alone -- see ``render._vendor_logo``.
+        """
+        if name not in {v.logo for v in status.VENDORS if v.logo}:
+            raise HTTPException(status_code=404)
+        try:
+            body = resources.files("quotalens.web").joinpath("vendor").joinpath(name).read_bytes()
+        except (FileNotFoundError, OSError) as exc:
+            raise HTTPException(status_code=404) from exc
+        return Response(body, media_type="image/svg+xml", headers={"Cache-Control": "no-cache"})
 
     @app.get("/favicon.svg", include_in_schema=False)
     def favicon() -> Response:

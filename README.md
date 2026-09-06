@@ -125,11 +125,17 @@ plain GET per vendor every five minutes, no cookie, no identifier, no query
 string. It is on by default and `quotalens config set status_row false` turns it
 off, which stops the requests rather than hiding the row.
 
-Gemini permanently reads **"— no public status API"**. Google ships no
-machine-readable feed for AI Studio, and Google Cloud's product feed covers
-Vertex AI, which is a different surface with a different availability record.
-Showing that under a Gemini label would be a confident wrong answer, so the row
-says it does not know and the click takes you to the page that does.
+**Gemini is not covered.** Google publishes no status API for AI Studio or the
+Gemini API — its status page is a JavaScript app with no JSON behind it, and
+Google Cloud's product feed covers Vertex surfaces, which have their own
+availability record. A row that could only ever say "unable to check" earns
+nothing, so there is no Gemini row. It becomes four lines the day Google ships
+a feed.
+
+The marks beside each vendor's name are that vendor's own brand asset, shipped
+unmodified to identify their service. **They belong to their owners, and
+QuotaLens is not affiliated with, endorsed by, or associated with any of
+them** — Anthropic included, which is the whole reason for saying so here.
 
 ## Two accounts
 

@@ -264,6 +264,15 @@ gear's teeth are a different drawing language from the straight strokes and
 small circles of `i-sun` and `i-rate`, and they read as noise rather than as a
 seventh member of this set.
 
+**The vendor marks are a second exception, and a different kind.** The rows in
+the vendor status panel carry each vendor's own brand file, at 16px, taken from
+that vendor's brand page and shipped unmodified in `quotalens/web/vendor/`. They
+are **third-party trademarks identifying third-party services, not members of
+this icon set**: they keep their own colour, they are never restyled to match
+the theme, and they are never hand-redrawn or traced — a redrawn wordmark looks
+worse and is a worse legal position than the real file used nominatively. A
+missing file is a supported state and the row renders with the name alone.
+
 A seventh line icon needs an argument here first. The set is small so that each
 one is learnable, and the cost of adding one is that every existing icon becomes
 slightly harder to tell apart.

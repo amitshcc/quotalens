@@ -163,10 +163,13 @@ class Settings:
     # that pushes to your desktop without being asked has overstepped.
     notify: bool = False
     notify_thresholds: str = "50,75,90"
+    # Separate from the threshold toggle and on by default: crossing 50% is
+    # information, and money leaving is not the same class of event.
+    notify_credits: bool = True
     # On by default: it is one small GET per vendor every five minutes and it
     # answers "is it them or me". Off must stop the requests, not hide the row.
     status_row: bool = True
-    status_vendors: str = "claude,gemini,openai"
+    status_vendors: str = "claude,openai"
 
     def with_overrides(self, **kwargs: object) -> Settings:
         """Return a copy with the given non-``None`` fields replaced."""
@@ -317,6 +320,14 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         lambda _p: "50,75,90",
     ),
     ConfigKey(
+        "notify_credits",
+        "notify_credits",
+        "NOTIFY_CREDITS",
+        "bool",
+        "notify when usage credits start being spent",
+        lambda _p: True,
+    ),
+    ConfigKey(
         "status_row",
         "status_row",
         "STATUS_ROW",
@@ -330,7 +341,7 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "STATUS_VENDORS",
         "str",
         "which vendors the status row covers, comma separated",
-        lambda _p: "claude,gemini,openai",
+        lambda _p: "claude,openai",
     ),
     ConfigKey(
         "poll_enabled",

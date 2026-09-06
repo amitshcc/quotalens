@@ -14,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from quotalens import notify, retention
+from quotalens import credits, notify, retention
 from quotalens.alerts import (
     ALERT_KIND,
     CLEARED_KIND,
@@ -367,6 +367,7 @@ class Poller:
             ("reset_model", self._check_reset_model),
             ("threshold", self._check_threshold),
             ("notify", lambda n, pa: self._check_notify(n, previous, pa)),
+            ("credits", lambda n, _pa: self._check_credits(n)),
         ):
             try:
                 check(now, parsed)
@@ -443,7 +444,7 @@ class Poller:
                     label=reading.label,
                     threshold=level,
                     pct=reading.pct,
-                    resets_at_text=_reset_clock(reading.resets_at),
+                    resets_at_text=_reset_clock(reading.resets_at, now),
                     window_key=key,
                 )
                 # Recorded before delivery: a notification that was attempted and
@@ -452,6 +453,48 @@ class Poller:
                 details.append(crossing.event_detail)
                 notify.send(crossing, self.notify_capability)
                 log.info("notified: %s", crossing.message())
+
+    def _check_credits(self, now: int) -> None:
+        """Record and announce a stretch where usage credits were spent.
+
+        Detected from the stored ``overage`` series rather than from the current
+        reading: spending is a *rise* between two polls, which no single reading
+        can show. Backfilled the way boosts are, so history already on disk
+        lights up instead of waiting for the next spend.
+        """
+        rows = self._store.overage_series()
+        if len(rows) < 2:
+            return
+        known = credits.recorded_starts(
+            self._store.recent_events(limit=500, kind=credits.SPEND_KIND)
+        )
+        fresh = credits.backfill(rows, self._settings.poll_interval_s, known)
+        for stretch in fresh:
+            detail = stretch.detail()
+            # At the stretch's own start, so the event's ts is the key and the
+            # events list pins it where the money actually moved.
+            self._store.record_event(credits.SPEND_KIND, detail, ts=stretch.start_ts)
+            log.info("credits: %s", detail)
+        if not fresh or not self._settings.notify_credits:
+            return
+        # The newest stretch only: backfilling months of history must not fire a
+        # notification per stretch. This one deserves a banner more than 50% does
+        # -- once credits are on, an unattended agent is spending money.
+        newest = max(fresh, key=lambda s: s.start_ts)
+        if now - newest.end_ts > self._settings.poll_interval_s * 3:
+            return  # historical, not happening now
+        notify.send(
+            notify.Crossing(
+                window="credits",
+                label="Usage credits",
+                threshold=0.0,
+                pct=0.0,
+                resets_at_text="",
+                window_key=str(newest.start_ts),
+                body=newest.notification(_local_clock),
+            ),
+            self.notify_capability,
+        )
 
     def _check_reset_model(self, now: int, parsed: UsageParse) -> None:
         """The session model is an inference; this is the check that it still holds."""
@@ -638,13 +681,34 @@ class Poller:
         self.status.overage_available = True
 
 
-def _reset_clock(resets_at: str | None) -> str:
-    """Local HH:MM for a notification line; the raw string if it will not parse."""
+def _reset_clock(resets_at: str | None, now: float | None = None) -> str:
+    """Local HH:MM, plus the day when the reset is not today.
+
+    ``resets 13:00`` with no day is ambiguous, and that ambiguity is exactly what
+    made one banner unreadable: 13:00 could be the window ending in an hour or
+    the one that ended this morning. A date costs four characters and removes the
+    question.
+    """
     from datetime import datetime
+
+    from quotalens.dashboard import day_month
 
     if not resets_at:
         return "unknown"
     try:
-        return datetime.fromisoformat(resets_at).astimezone().strftime("%H:%M")
+        when = datetime.fromisoformat(resets_at).astimezone()
     except ValueError:
         return resets_at
+    today = datetime.fromtimestamp(now).astimezone() if now else datetime.now().astimezone()
+    clock = when.strftime("%H:%M")
+    return clock if when.date() == today.date() else f"{clock} on {day_month(when)}"
+
+
+def _local_clock(ts: int) -> str:
+    """`06 Sep 01:02` for an event line: a spending stretch may not be today."""
+    from datetime import datetime
+
+    from quotalens.dashboard import day_month
+
+    when = datetime.fromtimestamp(ts).astimezone()
+    return f"{day_month(when)} {when.strftime('%H:%M')}"

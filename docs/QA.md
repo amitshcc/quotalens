@@ -386,3 +386,40 @@ probably not without help).
       so a boost near the right edge pushed `Limits Boosted` past the plot and clipped
       it. The group now mirrors to the left, and the tooltip's alignment mirrors with
       it.
+- 2026-09-06: every `.cap` heading sat one indent step right of the content it headed —
+      "Where the quota went", "Vendor status", the chart headings, the budget and
+      settings sections. A rule setting `.cap`'s horizontal padding to zero was written
+      to fix exactly this and never took effect: it sat *above* `caption,.cap{...padding
+      ...}` at the same specificity, so the later rule won. Dead code that looked like a
+      fix. The captions were never misaligned by an empty slot waiting for an icon.
+- 2026-09-06: the notification banner reading "Session at 91%, resets 13:00" was **not
+      sent by QuotaLens**. Proof: zero `notify_crossed` rows exist in the database;
+      `notify` is off by default and was never enabled on the live instance; the
+      window's stored `resets_at` at that moment was `2026-09-05T20:39:59Z` = 02:10
+      local, and `_reset_clock` renders it as 02:10 correctly. The banner was a retained
+      one from this session's own prompt-17 verification, where `send()` was called with
+      a hand-written `Crossing(pct=91.0, resets_at_text='13:00')` — the string matches
+      character for character, and the real window was at 100%, not 91%. No detection
+      change made. The reset text now carries a date when the reset is not today, which
+      is the ambiguity that made it unreadable either way.
+- 2026-09-06: `osascript -e 'display notification'` can never show the QuotaLens icon —
+      macOS attaches the icon of the posting process, and that is Script Editor. Not a
+      message bug and not fixable in the message. `terminal-notifier` is preferred when
+      present and passed `-appIcon`; `notify-send` gets `-i`. When it is absent the
+      settings toggle says so rather than shipping the wrong icon silently.
+- 2026-09-06: over-cap spend rendered as *normal* whenever credits were disabled, so the
+      one real over-cap reading anyone has seen — $3.16 against a $2.00 cap, 158% — was
+      drawn in the quiet tier. Being over the cap is *why* it had been disabled. Now
+      critical on the readout either way, while the page-level chip still only rises
+      when credits are on and more can actually be spent.
+
+## Open: the credits panel disappears when the collector is quiet
+
+`dash.spend` comes from the live poller status, not from the store, so a dashboard
+whose collector has stopped shows no `Usage credits` block at all — even though
+the whole `overage` series is on disk and the new `On credits` / `Spent in range`
+rows beside it render fine from it. Consistent with the epistemic rules (no
+current reading, no current figure) but inconsistent with its own neighbours, and
+the range-scoped figures are the ones a reader wants when the collector is down.
+Reading the last stored overage row and marking it stale would fix it; deciding
+what "stale money" should look like is a design question this change did not carry.

@@ -31,8 +31,18 @@ Not "you are at 43%". *"At this rate you will finish with 31% unused"*, or
 - **Burn-rate alerts.** A webhook fires when consumption crosses a threshold you
   set — ntfy, Discord, Slack, Pushover, Home Assistant, anything that takes a
   POST. Optionally a desktop notification too, at 50%, 75% and 90% of a window.
+- **A warning when you start spending money.** Once your included quota runs out,
+  usage credits take over and the same unattended agent that was burning quota is
+  now burning dollars. QuotaLens marks the spans where that happened on the
+  chart, counts the minutes and the amount in the range you are looking at, and
+  can notify you the moment it starts. Measured from the readings, never inferred
+  from a meter sitting at 100%.
 - **A weekly budget table** that converts "88% of your week left" into "7.5 more
   full sessions, and your typical one costs 12 points".
+- **Is it them or me?** A row per vendor reading each vendor's own status page,
+  so an outage is one glance rather than a search.
+- **Settings in a dialog**, over the dashboard, that works with JavaScript
+  switched off. Poll interval, thresholds, webhook, notifications, retention.
 - **Quota boosts, detected and marked.** When Anthropic raises a limit, your
   percentage falls without the window resetting. That is not you using less, and
   the chart says so with a crimson step rather than drawing a decline you did
@@ -41,6 +51,12 @@ Not "you are at 43%". *"At this rate you will finish with 31% unused"*, or
 
 ## What it deliberately does not do
 
+- **Show a credit balance.** The API does not expose one. What it exposes is
+  month-to-date spending against a monthly cap, so that is what the panel shows
+  and says it is. Subtracting one from the other to invent a balance would be a
+  number with no source.
+- **Cover Gemini's status.** Google publishes no status API for AI Studio or the
+  Gemini API. A row that could only ever read "unable to check" earns nothing.
 - **Per-project attribution.** Your provider's own `claude /usage` does that
   better. Quota is pooled across claude.ai, Claude Code and Claude Desktop, so a
   local log can show that a project correlates with a climb — it cannot attribute
@@ -94,5 +110,10 @@ install, not after.
   marked; deciding what it should look like instead is open work.
 - The Windows credential path has been exercised by CI but never by a person
   reading a real cookie out of the Windows Credential Manager.
+- Vendor marks in the status rows belong to their owners. QuotaLens is not
+  affiliated with, endorsed by, or associated with any of them.
+- Desktop notifications on macOS show the system icon unless `terminal-notifier`
+  is installed; `osascript` attaches the icon of the process that posts, and
+  nothing in the message can change that. The settings panel says so.
 - Boost magnitude is unknowable. The payload carries no ceiling anywhere, so
   QuotaLens can say a limit was raised and when, but not by how much.

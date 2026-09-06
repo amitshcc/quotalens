@@ -229,7 +229,11 @@ def test_overage_reads_unclamped_with_clipped_bar(settings, store) -> None:
     # Derived, not written down: the page renders local time and a fixture that
     # spells out "1 Oct" fails wherever midnight UTC is still the day before.
     until = datetime(2026, 10, 1, tzinfo=UTC).astimezone()
-    assert dash.spend.status_text.startswith(f"Extra usage off until {until.day} {until:%b}")
+    assert dash.spend.status_text.startswith(f"Credits off until {until.day} {until:%b}")
+    # Over the cap is critical whatever the switch says: 158% used to render
+    # as normal because spending past the cap is why it had been disabled.
+    assert dash.spend.state == "critical"
+    assert "not a remaining balance" in dash.spend.status_text
 
 
 def test_quota_window_over_100_keeps_number_clips_bar(settings, store) -> None:
@@ -348,7 +352,9 @@ def test_healthy_page_shows_three_windows_and_values(settings, store, secrets) -
     assert ">limit:fable<" not in html and ">Weekly — Fable " in html  # never a raw key
     assert '<span class="num">35</span>' in html
     assert "$3.16 / $2.00" in html and '<span class="num">158</span>' in html
-    assert 'style="width:100.0%;background:var(--hair-firm)"' in html  # neutral: off
+    # The bar stops at full and the number does not: 158% is the reading. It is
+    # drawn critical because it is over the cap, even though credits are off.
+    assert 'style="width:100.0%;background:var(--st-critical)"' in html
     assert 'stroke="var(--s1)" stroke-width="var(--trace-hero)"' in html
     assert 'stroke-dasharray="var(--dash-3)"' in html
     # Attribution points at the provider's own tool, rather than promising a
@@ -506,7 +512,7 @@ def test_diagnostics_live_in_side_panel_not_hero(settings, store, secrets) -> No
     assert html.index("nimbus_quill") > html.index('class="cols"')
 
 
-def test_extra_usage_neutral_when_off_critical_when_on_and_over(settings, store) -> None:
+def test_over_cap_is_critical_but_only_raises_the_page_when_credits_are_on(settings, store) -> None:
     now = int(time.time())
     off = SpendReading(316, 200, 2, "USD", "spend", is_enabled=False)
     on = SpendReading(316, 200, 2, "USD", "spend", is_enabled=True)
@@ -514,7 +520,11 @@ def test_extra_usage_neutral_when_off_critical_when_on_and_over(settings, store)
     dash = build_dashboard(
         settings, store, _status(state="ok", last_success_ts=now, spend=off), now, 20.0
     )
-    assert dash.spend.state == "normal" and dash.chip == ""
+    # Over the cap is critical on the readout whatever the switch says -- the
+    # one real over-cap reading anyone has seen, $3.16 of a $2.00 cap, used to
+    # render as normal because being over is *why* it had been disabled. But it
+    # does not raise the page while credits are off: nothing more can be spent.
+    assert dash.spend.state == "critical" and dash.chip == ""
     dash = build_dashboard(
         settings, store, _status(state="ok", last_success_ts=now, spend=on), now, 20.0
     )

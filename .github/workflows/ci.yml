@@ -109,8 +109,28 @@ jobs:
         run: |
           python - <<'PY'
           from importlib import resources
-          for name in ("tokens.css", "app.css", "app.js", "chart.js", "favicon.svg"):
-              data = resources.files("quotalens.web").joinpath(name).read_bytes()
+          web = resources.files("quotalens.web")
+          # An asset that works from the source tree and is missing from the
+          # installed wheel is exactly what this step exists to catch.
+          for name in (
+              "tokens.css", "app.css", "app.js", "chart.js",
+              "favicon.svg", "boost-rocket.svg",
+              "mark.png",  # the notification icon
+          ):
+              data = web.joinpath(name).read_bytes()
               assert data, name
               print(f"{name}: {len(data)} bytes")
+
+          # Vendor marks are optional by design -- a missing file renders the row
+          # with the name alone -- so this asserts the *directory* ships, and
+          # reports whichever marks are present.
+          from quotalens.status import VENDORS
+          vendor = web.joinpath("vendor")
+          assert vendor.is_dir(), "quotalens/web/vendor/ is missing from the wheel"
+          for v in VENDORS:
+              if not v.logo:
+                  continue
+              path = vendor.joinpath(v.logo)
+              state = f"{len(path.read_bytes())} bytes" if path.is_file() else "absent (name only)"
+              print(f"vendor/{v.logo}: {state}")
           PY

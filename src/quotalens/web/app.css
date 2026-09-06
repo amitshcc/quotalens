@@ -173,7 +173,6 @@ tbody th a:hover{text-decoration:underline}
 .budget p,.pointers p,.pointers dd{max-width:76ch}
 .budget p{margin:var(--sp-2) var(--sp-4) var(--sp-3);font-size:var(--fs-sm)}
 .pointers{padding:0 var(--sp-4) var(--sp-4)}
-.cap{padding-left:0;padding-right:0}
 .pointers p{margin:0 0 var(--sp-3)}
 .pointers dl{margin:0 0 var(--sp-3);display:grid;grid-template-columns:auto 1fr;
   gap:var(--sp-2) var(--sp-4);align-items:baseline}
@@ -185,7 +184,14 @@ tbody th a:hover{text-decoration:underline}
 .cols{display:grid;grid-template-columns:1fr 288px;gap:var(--sp-5);margin-top:0;align-items:start}
 .cols>div{min-width:0}  /* the chart may shrink; a grid item will not below content width by default */
 table{width:100%;border-collapse:collapse;font-size:var(--fs-sm)}
-caption,.cap{text-align:left;padding:var(--sp-3) var(--sp-4) var(--sp-2);font-size:var(--fs-sm);color:var(--txt-dim)}
+/* Captions align with the content they head, not one step right of it. A `.cap`
+   sits inside a container that already pads (.pointers, .side), so its own
+   horizontal padding is a second indent; a <caption> heads cells padded by
+   --sp-3, so it matches those. A rule setting .cap's padding to zero used to
+   live above this one at the same specificity and never took effect. */
+caption,.cap{text-align:left;font-size:var(--fs-sm);color:var(--txt-dim)}
+caption{padding:var(--sp-3) var(--sp-3) var(--sp-2)}
+.cap{padding:var(--sp-3) 0 var(--sp-2)}
 th,td{padding:0 var(--sp-3);height:var(--row-h);border-bottom:var(--hair) solid var(--hairline);
   text-align:left;font-weight:var(--w-reg);white-space:nowrap}
 thead th{color:var(--txt-far);font-size:var(--fs-xs);height:22px;border-bottom:var(--hair) solid var(--hair-firm)}
@@ -231,17 +237,43 @@ footer{margin-top:var(--sp-5);padding-top:var(--sp-3);border-top:var(--hair) sol
 .vdot{width:6px;height:6px;border-radius:50%;background:var(--st-ok)}
 
 /* settings: reuses .screen, .cap, .far and .rule; only the form grid is new */
-.fform{display:grid;gap:var(--sp-3);max-width:66ch}
-.fld{display:grid;grid-template-columns:16ch 1fr;gap:2px var(--sp-3);align-items:baseline}
-.fld label{color:var(--txt-dim);font-size:var(--fs-sm)}
-.fld input[type=text]{grid-column:2;font:inherit;font-family:var(--font-num);
-  padding:4px 6px;border:var(--hair) solid var(--hairline);background:transparent;color:var(--txt)}
-.fld .far,.fld .ferr{grid-column:2;font-size:var(--fs-xs)}
+/* settings: one two-column grid for the whole form, so labels and controls line
+   up across every field rather than each field making its own columns. .fld is
+   display:contents so its label and control become items of that one grid. */
+.fform{display:grid;grid-template-columns:auto 1fr;gap:var(--sp-2) var(--sp-3);
+  max-width:66ch;align-items:baseline}
+.fform .cap,.fform .rule{grid-column:1/-1}
+.fld{display:contents}
+.fld label{grid-column:1;justify-self:end;color:var(--txt-dim);font-size:var(--fs-sm)}
+/* min-width:0: a grid item defaults to min-content, so help text refuses to
+   wrap and runs out of the dialog instead. */
+.fld input,.fld code,.fld .far,.fld .ferr{grid-column:2;min-width:0}
+.fld input[type=text]{font:inherit;font-family:var(--font-num);justify-self:start;
+  padding:3px var(--sp-2);border:var(--hair) solid var(--hairline);background:transparent;color:var(--txt)}
+.fld input[type=checkbox]{justify-self:start}
+.fld .far,.fld .ferr{font-size:var(--fs-xs)}
 .fld.is-bad input{border-color:var(--st-critical)}
 .ferr{color:var(--st-critical)}
-.fld code{grid-column:2;font-size:var(--fs-sm);color:var(--txt-dim);word-break:break-all}
-.ropt{display:grid;grid-template-columns:auto 12ch 1fr;gap:var(--sp-3);align-items:baseline;
-  font-size:var(--fs-sm)}
+.fld code{font-size:var(--fs-sm);color:var(--txt-dim);word-break:break-all}
+/* Radio and confirm rows sit in the control column, so their labels start where
+   every other control starts rather than in the label column. */
+.ropt{grid-column:2;display:flex;align-items:baseline;gap:var(--sp-3);font-size:var(--fs-sm)}
+.ropt>span:first-of-type{min-width:9ch}
 .rsize{font-family:var(--font-num);color:var(--txt-dim)}
-.rexp{font-size:var(--fs-sm)}
+.rexp{grid-column:2;font-size:var(--fs-sm)}
+/* A submit is the toolbar's button, not a full-bleed slab: `button` already has
+   the vocabulary, but display:flex in a grid stretches it to the column. */
+.fform button{grid-column:2;justify-self:start}
+/* The dialog reuses .screen's surface; only the modal chrome is new. */
+dialog{padding:0;color:var(--txt);background:var(--screen);max-width:min(92vw,74ch);
+  max-height:86vh;overflow:auto;border:var(--hair) solid var(--hairline);border-radius:var(--r-2)}
+dialog::backdrop{background:var(--case);opacity:.75}
+.dhead{display:flex;align-items:center;justify-content:space-between;padding:var(--sp-3) var(--sp-4)}
+#sd-body{padding:0 var(--sp-4) var(--sp-4)}
 .readout-box.bt{grid-template-columns:1fr;white-space:nowrap}
+.vl{width:16px;height:16px;vertical-align:-3px;margin-right:6px}
+/* history: about ten rows plus the header, a multiple of the 4px grid. Both axes
+   in one scroller, so a sticky header survives horizontal scrolling too. */
+.hsc{max-height:calc(11 * var(--row-h));overflow:auto}
+.hsc thead th{position:sticky;top:0;z-index:1;background:var(--screen)}
+.cred{fill:var(--grid);pointer-events:none}

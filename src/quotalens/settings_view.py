@@ -35,10 +35,11 @@ PANEL_KEYS = (
     "webhook_url",
     "notify",
     "notify_thresholds",
+    "notify_credits",
     "status_row",
     "status_vendors",
 )
-BOOLEAN_KEYS = ("notify", "status_row")
+BOOLEAN_KEYS = ("notify", "notify_credits", "status_row")
 
 
 @dataclass(frozen=True)

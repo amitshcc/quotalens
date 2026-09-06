@@ -478,6 +478,24 @@ class Store:
             ).fetchone()
         return dict(row) if row else None
 
+    def overage_series(self, start: int = 0, end: int | None = None) -> list[Any]:
+        """Every stored spend reading in a range, oldest first.
+
+        The credits detector needs the series, not the latest row: spending is a
+        rise between two polls, which no single reading can show.
+        """
+        from quotalens.credits import OverageRow
+
+        clause = "WHERE ts >= ?" + (" AND ts <= ?" if end is not None else "")
+        params: tuple[Any, ...] = (start,) if end is None else (start, end)
+        with self._tx() as cur:
+            rows = cur.execute(
+                "SELECT ts, spent_minor, cap_minor, currency, exponent FROM overage "
+                f"{clause} ORDER BY ts",
+                params,
+            ).fetchall()
+        return [OverageRow(**dict(r)) for r in rows]
+
     def recent_events(self, limit: int = 20, kind: str | None = None) -> list[EventRow]:
         sql = "SELECT ts, kind, detail FROM event"
         params: list[Any] = []
