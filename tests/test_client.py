@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -16,8 +17,11 @@ from conftest import (
     raise_transport,
 )
 from quotalens.client import (
+    MAX_BODY_BYTES,
     AuthError,
     BlockedError,
+    ClientError,
+    CurlTransport,
     RateLimitedError,
     RawResponse,
     ShapeError,
@@ -167,3 +171,51 @@ def test_close_closes_transport() -> None:
     client = make_client(make_handler())
     asyncio.run(client.close())
     assert client._transport.closed  # type: ignore[attr-defined]
+
+
+# -- the upstream body is bounded ------------------------------------------------
+
+
+class _StubSession:
+    """Stands in for `curl_cffi`'s AsyncSession, returning a body of a given size."""
+
+    def __init__(self, size: int) -> None:
+        self.body = b"x" * size
+
+    async def get(self, url, headers, timeout, allow_redirects):
+        return SimpleNamespace(
+            status_code=200,
+            headers={"content-type": "application/json"},
+            content=self.body,
+            text=self.body.decode(),
+        )
+
+    async def close(self) -> None:
+        pass
+
+
+def _transport(size: int) -> CurlTransport:
+    transport = CurlTransport.__new__(CurlTransport)  # no real session; nothing goes out
+    transport._session = _StubSession(size)
+    return transport
+
+
+def test_a_body_one_byte_over_the_cap_is_refused() -> None:
+    """There was no cap: `response.text` went whole into the `sample` table, and
+    `sample_keep` bounds rows, not bytes. A hostile upstream could fill the disk.
+    """
+    with pytest.raises(UpstreamError) as caught:
+        asyncio.run(_transport(MAX_BODY_BYTES + 1).get("https://x.invalid/u", {}, 5.0))
+    assert str(MAX_BODY_BYTES) in str(caught.value)
+    assert isinstance(caught.value, ClientError), "poll_once records it as an upstream failure"
+
+
+def test_a_body_exactly_at_the_cap_is_allowed() -> None:
+    """Off by one in the other direction would refuse a payload nothing is wrong with."""
+    response = asyncio.run(_transport(MAX_BODY_BYTES).get("https://x.invalid/u", {}, 5.0))
+    assert response.status == 200 and len(response.text) == MAX_BODY_BYTES
+
+
+def test_a_real_sized_payload_is_nowhere_near_it() -> None:
+    """Measured 2,028 bytes on the real endpoint; the cap is three orders above."""
+    assert asyncio.run(_transport(2_028).get("https://x.invalid/u", {}, 5.0)).status == 200

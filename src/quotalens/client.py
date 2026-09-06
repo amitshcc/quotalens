@@ -66,6 +66,21 @@ class Transport(Protocol):
     async def close(self) -> None: ...
 
 
+# Real usage payloads measured 2,028 bytes on 2026-09-06 and the overage one
+# 1,033; four megabytes is three orders of magnitude of headroom and still bounds
+# the damage. There was no cap at all: `poller._collect` hands `response.text`
+# straight to `store.record_sample`, which json.dumps it into the `sample` table
+# verbatim, and `sample_keep` bounds the row *count*, not the row *size*. So a
+# hostile or spoofed upstream -- a compromised network path, a corporate TLS
+# proxy -- could fill the disk one poll at a time.
+#
+# Honest about what this does and does not do: `curl_cffi` has already read the
+# body into memory by the time we can measure it, so this bounds the *database*,
+# not the transient allocation. Bounding that needs a streamed read, which is a
+# different request shape and not this change.
+MAX_BODY_BYTES = 4 * 1024 * 1024
+
+
 class CurlTransport:
     """``curl_cffi`` session with browser impersonation; redirects are not followed."""
 
@@ -85,6 +100,14 @@ class CurlTransport:
                 CURL_TIMEOUT_CODE
             )
             raise TransportError(type(exc).__name__, timed_out=timed_out) from exc
+        body = response.content or b""
+        if len(body) > MAX_BODY_BYTES:
+            # A ClientError, so poll_once records it as an upstream failure and
+            # the page says the response could not be used -- rather than storing
+            # it, or raising something the loop has to treat as a crash.
+            raise UpstreamError(
+                f"upstream response is {len(body)} bytes, over the {MAX_BODY_BYTES} byte cap"
+            )
         headers_out = {str(k).lower(): str(v) for k, v in response.headers.items()}
         return RawResponse(response.status_code, headers_out, response.text)
 
