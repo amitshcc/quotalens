@@ -40,10 +40,13 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 CROSSED_KIND = "notify_crossed"
-# Appended to a crossing's event detail when delivery was attempted and failed.
-# The event still suppresses a retry; the suffix stops any surface reading it as
-# "notified".
-FAILED_SUFFIX = " (not delivered)"
+# The de-dup key and the outcome share one event detail, so they are separated by
+# a token the parser knows about rather than run together. Appending prose
+# directly to the key made `float("50 (not delivered)")` raise, the threshold was
+# never counted as fired, and a failed delivery was retried every minute for the
+# rest of the window -- the exact opposite of what the event exists to prevent.
+DETAIL_SEP = " | "
+FAILED_NOTE = "not delivered"
 DEFAULT_THRESHOLDS = (50.0, 75.0, 90.0)
 NOTIFY_TIMEOUT_S = 5.0
 ICON_FILE = "mark.png"  # the ring mark, in quotalens.web; see design/render_mark_png.py
@@ -92,8 +95,16 @@ class Crossing:
 
     @property
     def event_detail(self) -> str:
-        """What is written to ``event``, and what a restart reads back."""
+        """What is written to ``event``, and what a restart reads back.
+
+        The de-dup key ends here. Anything a row also has to say goes after
+        ``DETAIL_SEP`` -- see :func:`failed_detail`.
+        """
         return f"{self.window}@{self.window_key} crossed {self.threshold:.0f}"
+
+    def failed_detail(self) -> str:
+        """The same key, plus the fact that delivery did not happen."""
+        return f"{self.event_detail}{DETAIL_SEP}{FAILED_NOTE}"
 
     def message(self) -> str:
         """One line: which window, the percentage, the reset time. No emoji."""
@@ -113,11 +124,15 @@ def fired_thresholds(details: list[str], window: str, window_key: str) -> set[fl
     prefix = f"{window}@{window_key} crossed "
     out: set[float] = set()
     for detail in details:
-        if detail.startswith(prefix):
-            try:
-                out.add(float(detail[len(prefix) :]))
-            except ValueError:
-                continue
+        if not detail.startswith(prefix):
+            continue
+        # Only the part before the separator is the identifier. Anything after
+        # it is commentary and must never reach float().
+        key = detail[len(prefix) :].split(DETAIL_SEP, 1)[0].strip()
+        try:
+            out.add(float(key))
+        except ValueError:
+            continue
     return out
 
 

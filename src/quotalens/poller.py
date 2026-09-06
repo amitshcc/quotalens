@@ -463,7 +463,7 @@ class Poller:
                 # suppressed for the rest of the window on the strength of a
                 # notification nobody received.
                 delivered = notify.send(crossing, self.notify_capability)
-                detail = crossing.event_detail + ("" if delivered else notify.FAILED_SUFFIX)
+                detail = crossing.event_detail if delivered else crossing.failed_detail()
                 self._store.record_event(notify.CROSSED_KIND, detail, ts=now)
                 details.append(detail)
                 if delivered:

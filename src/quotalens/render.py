@@ -1184,11 +1184,16 @@ def _checkbox_group(view: SettingsView) -> str:
     return '<div class="vgrp">' + "".join(rows) + empty + "</div>"
 
 
-def _readonly(label: str, value: str, why: str) -> str:
-    """A setting the panel deliberately does not offer, and the reason."""
+def _readonly(label: str, value: str, why: str, cmd: str = "") -> str:
+    """A setting the panel deliberately does not offer, and the reason.
+
+    ``cmd`` is kept out of the prose so it can be marked ``nowrap`` -- as one
+    run of text it broke mid-command, leaving ``<n>`` alone on the second line.
+    """
+    tail = f' <code class="cmd">{e(cmd)}</code>' if cmd else ""
     return (
         f'<div class="fld is-ro"><label>{e(label)}</label>'
-        f'<code>{e(value)}</code><span class="far">{e(why)}</span></div>'
+        f'<code>{e(value)}</code><span class="far">{e(why)}{tail}</span></div>'
     )
 
 
@@ -1279,13 +1284,16 @@ def render_settings(view: SettingsView) -> str:
         # without terminal-notifier the banner carries the system icon and
         # nothing can change that. Saying so beats shipping the wrong icon
         # silently, which is the same rule the capability check itself follows.
-        caveat = view.notify_capability.note
+        # No field-level help: the group sentence above says when alerts fire and
+        # the live Delivery line below says whether they can be delivered. A
+        # third, static copy of both was the worst of the three. The label says
+        # what the box toggles rather than restating the section heading.
         body.append(
             _field(
                 "notify",
-                "Desktop notification",
+                "Enabled",
                 view.values["notify"],
-                note="when a window crosses a threshold" + (f". {caveat}" if caveat else ""),
+                note="",
                 kind="checkbox",
             )
         )
@@ -1304,7 +1312,14 @@ def render_settings(view: SettingsView) -> str:
         '<div class="fld is-ro"><label>Delivery</label>'
         f'<span class="far dstat">{e(view.delivery_status)}</span>'
         '<span class="far">Exit code 0 means handed to the operating system, '
-        "not seen by you.</span></div>",
+        "not seen by you.</span>"
+        # Conditional on what was detected, so it appears only when it applies.
+        + (
+            f'<span class="far">{e(view.notify_capability.note)}</span>'
+            if view.notify_capability.note
+            else ""
+        )
+        + "</div>",
         '<div class="fld is-ro"><label></label>'
         '<button type="button" id="notify-test" class="jso">'
         "Send test notification</button></div>",
@@ -1356,15 +1371,15 @@ def render_settings(view: SettingsView) -> str:
         _readonly(
             "Port",
             str(view.port),
-            "this page is served on it, so a change here would never reach you. "
-            "Use: quotalens config set port <n>",
+            "this page is served on it, so a change here would never reach you. Use:",
+            cmd="quotalens config set port <n>",
         ),
-        _readonly("Database", str(view.db_path), "use: quotalens serve --db <path>"),
+        _readonly("Database", str(view.db_path), "Use:", cmd="quotalens serve --db <path>"),
         _readonly(
             "Session cookie",
             "in the OS keyring",
-            "never in a config file, so the file stays safe to paste into an issue. "
-            "Use: quotalens auth",
+            "never in a config file, so the file stays safe to paste into an issue. Use:",
+            cmd="quotalens auth",
         ),
         '<button type="submit" class="pgonly">Save changes</button></form></section>',
         _retention_block(view),

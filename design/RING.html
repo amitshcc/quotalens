@@ -1,0 +1,310 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{box-sizing:border-box}body{margin:0}</style>
+<title>Ring, Four Ways</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+</head><body>
+<style>
+:root{
+  --pg:#F2F3F1; --pg-2:#E9EBE8; --ink:#15191A; --dim:#5B6462; --far:#8B9391;
+  --hair:#D6DAD6; --hair-2:#C2C7C2; --lift:#FCFDFB; --track:#C6CBC6;
+  --sig:#A81E26; --ok:#1F5F52;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --cond:"IBM Plex Sans Condensed","IBM Plex Sans",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --pg:#111415; --pg-2:#181C1D; --ink:#E0E5E3; --dim:#98A19E; --far:#6E7775;
+    --hair:#242A2B; --hair-2:#333A3B; --lift:#0C0F10; --track:#3B4342;
+    --sig:#F0575C; --ok:#4FC0A0;
+  }
+}
+:root[data-theme="dark"]{
+  --pg:#111415; --pg-2:#181C1D; --ink:#E0E5E3; --dim:#98A19E; --far:#6E7775;
+  --hair:#242A2B; --hair-2:#333A3B; --lift:#0C0F10; --track:#3B4342;
+  --sig:#F0575C; --ok:#4FC0A0;
+}
+:root[data-theme="light"]{
+  --pg:#F2F3F1; --pg-2:#E9EBE8; --ink:#15191A; --dim:#5B6462; --far:#8B9391;
+  --hair:#D6DAD6; --hair-2:#C2C7C2; --lift:#FCFDFB; --track:#C6CBC6;
+  --sig:#A81E26; --ok:#1F5F52;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--pg);color:var(--ink);font-family:var(--sans);
+  font-size:16px;line-height:1.55;-webkit-font-smoothing:antialiased;
+  font-variant-numeric:tabular-nums}
+.wrap{max-width:1080px;margin:0 auto;padding:0 28px 88px}
+p{margin:0 0 14px}
+.eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--far);margin:0 0 10px}
+header.top{border-bottom:1px solid var(--hair-2);padding:52px 0 26px}
+h1{font-family:var(--cond);font-weight:600;font-size:clamp(32px,4.6vw,48px);
+  line-height:1.05;letter-spacing:-.015em;margin:0 0 14px;text-wrap:balance}
+.sub{font-size:17px;color:var(--dim);max-width:60ch;margin:0}
+h2{font-family:var(--cond);font-weight:600;font-size:24px;letter-spacing:-.01em;margin:0 0 6px}
+section{padding-top:46px}
+.lede{max-width:64ch;color:var(--dim);font-size:15px}
+.rule{height:1px;background:var(--hair-2);margin:46px 0 0}
+
+/* sweep */
+.sweep{display:grid;grid-template-columns:1fr 1fr;gap:0;margin-top:22px;
+  border:1px solid var(--hair-2);background:var(--lift)}
+.sw{padding:22px 24px;border-right:1px solid var(--hair)}
+.sw:last-child{border-right:none}
+.sw-row{display:flex;gap:20px;align-items:center;color:var(--ink)}
+.sw-lbl{font-size:13.5px;color:var(--dim);margin:14px 0 0}
+.sw-lbl b{color:var(--ink);font-weight:600}
+@media (max-width:700px){.sweep{grid-template-columns:1fr}.sw{border-right:none;
+  border-bottom:1px solid var(--hair)}}
+
+/* variants */
+.variant{display:grid;grid-template-columns:260px 200px 1fr;gap:0;
+  border:1px solid var(--hair-2);border-bottom:none;background:var(--lift)}
+.variant:last-of-type{border-bottom:1px solid var(--hair-2)}
+.v-head{padding:22px 22px 20px;border-right:1px solid var(--hair)}
+.v-no{font-family:var(--mono);font-size:11px;color:var(--far);display:block;margin-bottom:6px}
+.v-head h3{font-family:var(--cond);font-weight:600;font-size:22px;margin:0 0 8px;
+  letter-spacing:-.005em}
+.v-say{font-size:14px;color:var(--dim);margin:0}
+.v-plate{display:flex;align-items:center;justify-content:center;
+  border-right:1px solid var(--hair);color:var(--ink);padding:24px 0}
+.v-right{padding:22px 24px 20px;display:flex;flex-direction:column;gap:16px}
+.v-sizes{display:flex;align-items:flex-end;gap:20px;color:var(--ink)}
+.v-sizes .s{display:flex;flex-direction:column;align-items:center;gap:7px}
+.v-sizes .s b{font-family:var(--mono);font-size:9.5px;font-weight:400;color:var(--far)}
+.tab{display:flex;align-items:center;gap:7px;background:var(--pg-2);
+  border:1px solid var(--hair);border-bottom:none;border-radius:6px 6px 0 0;
+  padding:6px 12px 6px 9px;font-size:11.5px;color:var(--dim);margin-left:auto;
+  white-space:nowrap;align-self:flex-end}
+.tab b{color:var(--ink);font-weight:500}
+.v-lock{display:flex;align-items:center;gap:9px;font-size:17px;font-weight:500;
+  letter-spacing:-.012em;color:var(--ink);padding:10px 0;
+  border-top:1px solid var(--hair);border-bottom:1px solid var(--hair)}
+.v-states{display:flex;gap:26px;flex-wrap:wrap;color:var(--ink)}
+.v-states .st{display:flex;flex-direction:column;align-items:center;gap:5px;min-width:56px}
+.v-states .st b{font-family:var(--mono);font-size:11.5px;font-weight:400}
+.v-states .st.crit b{color:var(--sig)}
+.v-states .st span{font-family:var(--mono);font-size:9.5px;color:var(--far)}
+.verdict{font-family:var(--mono);font-size:11px;color:var(--far);margin:auto 0 0;
+  letter-spacing:.02em}
+.verdict.good{color:var(--ok)}
+.verdict.warn{color:var(--sig)}
+@media (max-width:900px){.variant{grid-template-columns:1fr}
+  .v-head,.v-plate{border-right:none;border-bottom:1px solid var(--hair)}}
+
+/* rejects */
+.rejects{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+  border-top:1px solid var(--hair);margin-top:22px}
+.rej{display:flex;gap:16px;padding:20px 22px 20px 0;border-bottom:1px solid var(--hair);
+  border-right:1px solid var(--hair)}
+.rej:last-child{border-right:none}
+.rej-plate{flex:0 0 auto;color:var(--dim);padding-left:2px}
+.rej-nm{font-weight:600;font-size:14px;margin:0 0 3px;color:var(--ink)}
+.rej p{font-size:13.5px;color:var(--dim);margin:0}
+
+pre{background:var(--lift);border:1px solid var(--hair-2);padding:18px 20px;
+  overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.65;
+  color:var(--dim);margin:20px 0 0}
+pre .cmt{color:var(--far)}
+ul.tight{margin:0;padding-left:18px;font-size:15px;color:var(--dim);max-width:64ch}
+ul.tight li{margin-bottom:8px}
+ul.tight b{color:var(--ink);font-weight:600}
+.foot{margin-top:52px;padding-top:20px;border-top:1px solid var(--hair-2);
+  font-family:var(--mono);font-size:11.5px;color:var(--far);max-width:72ch;line-height:1.7}
+</style>
+
+<div class="wrap">
+
+<header class="top">
+  <p class="eyebrow">QuotaLens · mark · round three</p>
+  <h1>Ring, four ways</h1>
+  <p class="sub">The shape is settled. What is not settled is how it is drawn — whether there is a track
+  behind the arc, whether the silhouette stays a full circle, and whether it carries one reading or two.
+  Each is shown at 128px, at the three sizes it ships in, in a tab, in the wordmark lockup, and across the
+  states the dashboard already defines.</p>
+</header>
+
+<section style="padding-top:34px">
+  <h2>First, which way it sweeps</h2>
+  <p class="lede">This decision comes before the drawing, because it changes what every variant below means.
+  The arc can show what you have used or what you have left.</p>
+  <div class="sweep">
+  <div class="sw">
+    <div class="sw-row"><svg width="40" height="40" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="butt" stroke-dasharray="12.44 56.55" transform="rotate(-90 12 12)"/></svg><svg width="40" height="40" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="butt" stroke-dasharray="38.45 56.55" transform="rotate(-90 12 12)"/></svg><svg width="40" height="40" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6"/><circle cx="12" cy="12" r="9" fill="none" stroke="var(--sig)" stroke-width="2.6" stroke-linecap="butt" stroke-dasharray="51.46 56.55" transform="rotate(-90 12 12)"/></svg></div>
+    <p class="sw-lbl">arc shows what is <b>used</b> — it grows toward a full, red circle</p>
+  </div>
+  <div class="sw">
+    <div class="sw-row"><svg width="40" height="40" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="butt" stroke-dasharray="44.11 56.55" transform="rotate(-90 12 12)"/></svg><svg width="40" height="40" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="butt" stroke-dasharray="18.10 56.55" transform="rotate(-90 12 12)"/></svg><svg width="40" height="40" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6"/><circle cx="12" cy="12" r="9" fill="none" stroke="var(--sig)" stroke-width="2.6" stroke-linecap="butt" stroke-dasharray="5.09 56.55" transform="rotate(-90 12 12)"/></svg></div>
+    <p class="sw-lbl">arc shows what is <b>left</b> — it shrinks to almost nothing</p>
+  </div>
+</div>
+  <p class="lede" style="margin-top:18px"><b style="color:var(--ink)">Used, growing clockwise from twelve
+  o'clock.</b> The moment that matters is 91%, and a nearly-full red circle is a stronger signal than a
+  nearly-empty one — an almost-invisible arc at the point of maximum danger is exactly backwards. It also
+  matches every progress ring anyone has ever seen, so it needs no learning. All four variants below use it.</p>
+</section>
+
+<section>
+  <h2>The four</h2>
+  <p class="lede">Same 24-unit grid, same 68% reading, same states. Only the drawing changes.</p>
+</section>
+
+<div style="margin-top:24px">
+<div class="variant">
+  <div class="v-head">
+    <span class="v-no">01</span>
+    <h3>Track</h3>
+    <p class="v-say">A faint full circle with the used part drawn solid over it. You see the part <em>and</em> the whole, so 68% reads as 68% rather than as “most of a circle”.</p>
+  </div>
+  <div class="v-plate"><svg width="128" height="128" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="butt" stroke-dasharray="38.45 56.55" transform="rotate(-90 12 12)"/></svg></div>
+  <div class="v-right">
+    <div class="v-sizes">
+      <div class="s"><svg width="32" height="32" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="butt" stroke-dasharray="38.45 56.55" transform="rotate(-90 12 12)"/></svg><b>32</b></div>
+      <div class="s"><svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="butt" stroke-dasharray="38.45 56.55" transform="rotate(-90 12 12)"/></svg><b>24</b></div>
+      <div class="s"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="butt" stroke-dasharray="38.45 56.55" transform="rotate(-90 12 12)"/></svg><b>16</b></div>
+      <div class="tab"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="butt" stroke-dasharray="38.45 56.55" transform="rotate(-90 12 12)"/></svg><b>QuotaLens</b> 68%</div>
+    </div>
+    <div class="v-lock"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="butt" stroke-dasharray="38.45 56.55" transform="rotate(-90 12 12)"/></svg><span>QuotaLens</span></div>
+    <div class="v-states">
+        <div class="st"><svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="butt" stroke-dasharray="12.44 56.55" transform="rotate(-90 12 12)"/></svg><b>22%</b><span>early</span></div>
+        <div class="st"><svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="butt" stroke-dasharray="38.45 56.55" transform="rotate(-90 12 12)"/></svg><b>68%</b><span>two thirds gone</span></div>
+        <div class="st crit"><svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6"/><circle cx="12" cy="12" r="9" fill="none" stroke="var(--sig)" stroke-width="2.6" stroke-linecap="butt" stroke-dasharray="51.46 56.55" transform="rotate(-90 12 12)"/></svg><b>91%</b><span>at the threshold</span></div>
+        <div class="st"><svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6" stroke-dasharray="3 3"/></svg><b>—</b><span>stale</span></div>
+    </div>
+    <p class="verdict good">two tone values needed · unmistakable at 16 · the safe answer</p>
+  </div>
+</div>
+
+<div class="variant">
+  <div class="v-head">
+    <span class="v-no">02</span>
+    <h3>Open</h3>
+    <p class="v-say">The arc alone, no track behind it, round caps. One path, the lightest drawing of the four, and the only one that would survive being stamped in a single colour.</p>
+  </div>
+  <div class="v-plate"><svg width="128" height="128" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-dasharray="38.45 56.55" transform="rotate(-90 12 12)"/></svg></div>
+  <div class="v-right">
+    <div class="v-sizes">
+      <div class="s"><svg width="32" height="32" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-dasharray="38.45 56.55" transform="rotate(-90 12 12)"/></svg><b>32</b></div>
+      <div class="s"><svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-dasharray="38.45 56.55" transform="rotate(-90 12 12)"/></svg><b>24</b></div>
+      <div class="s"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-dasharray="38.45 56.55" transform="rotate(-90 12 12)"/></svg><b>16</b></div>
+      <div class="tab"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-dasharray="38.45 56.55" transform="rotate(-90 12 12)"/></svg><b>QuotaLens</b> 68%</div>
+    </div>
+    <div class="v-lock"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-dasharray="38.45 56.55" transform="rotate(-90 12 12)"/></svg><span>QuotaLens</span></div>
+    <div class="v-states">
+        <div class="st"><svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-dasharray="12.44 56.55" transform="rotate(-90 12 12)"/></svg><b>22%</b><span>early</span></div>
+        <div class="st"><svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-dasharray="38.45 56.55" transform="rotate(-90 12 12)"/></svg><b>68%</b><span>two thirds gone</span></div>
+        <div class="st crit"><svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--sig)" stroke-width="2.8" stroke-linecap="round" stroke-dasharray="51.46 56.55" transform="rotate(-90 12 12)"/></svg><b>91%</b><span>at the threshold</span></div>
+        <div class="st"><svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.8" stroke-dasharray="3 3"/></svg><b>—</b><span>stale</span></div>
+    </div>
+    <p class="verdict warn">an incomplete circle in a tab reads as a spinner for the first half second</p>
+  </div>
+</div>
+
+<div class="variant">
+  <div class="v-head">
+    <span class="v-no">03</span>
+    <h3>Bead</h3>
+    <p class="v-say">A complete ring, thinner, with a solid bead riding on it at the current position. The silhouette is always a circle; only the bead moves.</p>
+  </div>
+  <div class="v-plate"><svg width="128" height="128" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.0" stroke-linecap="butt" stroke-dasharray="38.45 56.55" transform="rotate(-90 12 12)"/><circle cx="3.86" cy="15.83" r="3" fill="currentColor"/></svg></div>
+  <div class="v-right">
+    <div class="v-sizes">
+      <div class="s"><svg width="32" height="32" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.0" stroke-linecap="butt" stroke-dasharray="38.45 56.55" transform="rotate(-90 12 12)"/><circle cx="3.86" cy="15.83" r="3" fill="currentColor"/></svg><b>32</b></div>
+      <div class="s"><svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.0" stroke-linecap="butt" stroke-dasharray="38.45 56.55" transform="rotate(-90 12 12)"/><circle cx="3.86" cy="15.83" r="3" fill="currentColor"/></svg><b>24</b></div>
+      <div class="s"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.0" stroke-linecap="butt" stroke-dasharray="38.45 56.55" transform="rotate(-90 12 12)"/><circle cx="3.86" cy="15.83" r="3" fill="currentColor"/></svg><b>16</b></div>
+      <div class="tab"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.0" stroke-linecap="butt" stroke-dasharray="38.45 56.55" transform="rotate(-90 12 12)"/><circle cx="3.86" cy="15.83" r="3" fill="currentColor"/></svg><b>QuotaLens</b> 68%</div>
+    </div>
+    <div class="v-lock"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.0" stroke-linecap="butt" stroke-dasharray="38.45 56.55" transform="rotate(-90 12 12)"/><circle cx="3.86" cy="15.83" r="3" fill="currentColor"/></svg><span>QuotaLens</span></div>
+    <div class="v-states">
+        <div class="st"><svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.0" stroke-linecap="butt" stroke-dasharray="12.44 56.55" transform="rotate(-90 12 12)"/><circle cx="20.84" cy="10.31" r="3" fill="currentColor"/></svg><b>22%</b><span>early</span></div>
+        <div class="st"><svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.0" stroke-linecap="butt" stroke-dasharray="38.45 56.55" transform="rotate(-90 12 12)"/><circle cx="3.86" cy="15.83" r="3" fill="currentColor"/></svg><b>68%</b><span>two thirds gone</span></div>
+        <div class="st crit"><svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2"/><circle cx="12" cy="12" r="9" fill="none" stroke="var(--sig)" stroke-width="2.0" stroke-linecap="butt" stroke-dasharray="51.46 56.55" transform="rotate(-90 12 12)"/><circle cx="7.18" cy="4.40" r="3" fill="var(--sig)"/></svg><b>91%</b><span>at the threshold</span></div>
+        <div class="st"><svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.0" stroke-dasharray="3 3"/></svg><b>—</b><span>stale</span></div>
+    </div>
+    <p class="verdict good">most stable of the four · the bead survives 16px better than a thin arc</p>
+  </div>
+</div>
+
+<div class="variant">
+  <div class="v-head">
+    <span class="v-no">04</span>
+    <h3>Dual</h3>
+    <p class="v-say">Two concentric rings: session window outside, weekly window inside. Both of the product's readings in one mark, which no other option here manages.</p>
+  </div>
+  <div class="v-plate"><svg width="128" height="128" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.6" fill="none" stroke="var(--track)" stroke-width="2.1"/><circle cx="12" cy="12" r="9.6" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="butt" stroke-dasharray="41.02 60.32" transform="rotate(-90 12 12)"/><circle cx="12" cy="12" r="5.4" fill="none" stroke="var(--track)" stroke-width="2.1"/><circle cx="12" cy="12" r="5.4" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="butt" stroke-dasharray="21.04 33.93" transform="rotate(-90 12 12)"/></svg></div>
+  <div class="v-right">
+    <div class="v-sizes">
+      <div class="s"><svg width="32" height="32" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.6" fill="none" stroke="var(--track)" stroke-width="2.1"/><circle cx="12" cy="12" r="9.6" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="butt" stroke-dasharray="41.02 60.32" transform="rotate(-90 12 12)"/><circle cx="12" cy="12" r="5.4" fill="none" stroke="var(--track)" stroke-width="2.1"/><circle cx="12" cy="12" r="5.4" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="butt" stroke-dasharray="21.04 33.93" transform="rotate(-90 12 12)"/></svg><b>32</b></div>
+      <div class="s"><svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.6" fill="none" stroke="var(--track)" stroke-width="2.1"/><circle cx="12" cy="12" r="9.6" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="butt" stroke-dasharray="41.02 60.32" transform="rotate(-90 12 12)"/><circle cx="12" cy="12" r="5.4" fill="none" stroke="var(--track)" stroke-width="2.1"/><circle cx="12" cy="12" r="5.4" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="butt" stroke-dasharray="21.04 33.93" transform="rotate(-90 12 12)"/></svg><b>24</b></div>
+      <div class="s"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.6" fill="none" stroke="var(--track)" stroke-width="2.1"/><circle cx="12" cy="12" r="9.6" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="butt" stroke-dasharray="41.02 60.32" transform="rotate(-90 12 12)"/><circle cx="12" cy="12" r="5.4" fill="none" stroke="var(--track)" stroke-width="2.1"/><circle cx="12" cy="12" r="5.4" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="butt" stroke-dasharray="21.04 33.93" transform="rotate(-90 12 12)"/></svg><b>16</b></div>
+      <div class="tab"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.6" fill="none" stroke="var(--track)" stroke-width="2.1"/><circle cx="12" cy="12" r="9.6" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="butt" stroke-dasharray="41.02 60.32" transform="rotate(-90 12 12)"/><circle cx="12" cy="12" r="5.4" fill="none" stroke="var(--track)" stroke-width="2.1"/><circle cx="12" cy="12" r="5.4" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="butt" stroke-dasharray="21.04 33.93" transform="rotate(-90 12 12)"/></svg><b>QuotaLens</b> 68%</div>
+    </div>
+    <div class="v-lock"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.6" fill="none" stroke="var(--track)" stroke-width="2.1"/><circle cx="12" cy="12" r="9.6" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="butt" stroke-dasharray="41.02 60.32" transform="rotate(-90 12 12)"/><circle cx="12" cy="12" r="5.4" fill="none" stroke="var(--track)" stroke-width="2.1"/><circle cx="12" cy="12" r="5.4" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="butt" stroke-dasharray="21.04 33.93" transform="rotate(-90 12 12)"/></svg><span>QuotaLens</span></div>
+    <div class="v-states">
+        <div class="st"><svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.6" fill="none" stroke="var(--track)" stroke-width="2.1"/><circle cx="12" cy="12" r="9.6" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="butt" stroke-dasharray="13.27 60.32" transform="rotate(-90 12 12)"/><circle cx="12" cy="12" r="5.4" fill="none" stroke="var(--track)" stroke-width="2.1"/><circle cx="12" cy="12" r="5.4" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="butt" stroke-dasharray="21.04 33.93" transform="rotate(-90 12 12)"/></svg><b>22%</b><span>early</span></div>
+        <div class="st"><svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.6" fill="none" stroke="var(--track)" stroke-width="2.1"/><circle cx="12" cy="12" r="9.6" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="butt" stroke-dasharray="41.02 60.32" transform="rotate(-90 12 12)"/><circle cx="12" cy="12" r="5.4" fill="none" stroke="var(--track)" stroke-width="2.1"/><circle cx="12" cy="12" r="5.4" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="butt" stroke-dasharray="21.04 33.93" transform="rotate(-90 12 12)"/></svg><b>68%</b><span>two thirds gone</span></div>
+        <div class="st crit"><svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.6" fill="none" stroke="var(--track)" stroke-width="2.1"/><circle cx="12" cy="12" r="9.6" fill="none" stroke="var(--sig)" stroke-width="2.1" stroke-linecap="butt" stroke-dasharray="54.89 60.32" transform="rotate(-90 12 12)"/><circle cx="12" cy="12" r="5.4" fill="none" stroke="var(--track)" stroke-width="2.1"/><circle cx="12" cy="12" r="5.4" fill="none" stroke="var(--sig)" stroke-width="2.1" stroke-linecap="butt" stroke-dasharray="21.04 33.93" transform="rotate(-90 12 12)"/></svg><b>91%</b><span>at the threshold</span></div>
+        <div class="st"><svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.6" fill="none" stroke="var(--track)" stroke-width="2.1" stroke-dasharray="3 3"/><circle cx="12" cy="12" r="5.4" fill="none" stroke="var(--track)" stroke-width="2.1" stroke-dasharray="3 3"/></svg><b>—</b><span>stale</span></div>
+    </div>
+    <p class="verdict warn">the gap between the rings closes at 16px · a 24px-and-up mark</p>
+  </div>
+</div>
+</div>
+
+<section>
+  <p class="eyebrow">Also tried</p>
+  <h2>Three that did not survive</h2>
+  <div class="rejects">
+  <div class="rej"><div class="rej-plate"><svg width="58" height="58" viewBox="0 0 24 24" aria-hidden="true"><g><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-dasharray="5.09 56.55" transform="rotate(-90 12 12)"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-dasharray="5.09 56.55" transform="rotate(-45 12 12)"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-dasharray="5.09 56.55" transform="rotate(0 12 12)"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-dasharray="5.09 56.55" transform="rotate(45 12 12)"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-dasharray="5.09 56.55" transform="rotate(90 12 12)"/><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6" stroke-dasharray="5.09 56.55" transform="rotate(135 12 12)"/><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6" stroke-dasharray="5.09 56.55" transform="rotate(180 12 12)"/><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6" stroke-dasharray="5.09 56.55" transform="rotate(225 12 12)"/></g></svg></div><div><p class="rej-nm">Segments</p><p>Eight segments, five lit. Legible, but it turns a continuous reading into a coarse one and eight gaps mush together at 16px.</p></div></div>
+  <div class="rej"><div class="rej-plate"><svg width="58" height="58" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="var(--track)" stroke-width="2.6"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="butt" stroke-dasharray="38.45 56.55" transform="rotate(-90 12 12)"/><circle cx="12" cy="12" r="2.4" fill="currentColor"/></svg></div><div><p class="rej-nm">Ring and dot</p><p>A centre dot adds a second element that carries no information. It is the kind of detail that looks considered and is not.</p></div></div>
+  <div class="rej"><div class="rej-plate"><svg width="58" height="58" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 12 L4.85 15.4" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></div><div><p class="rej-nm">Ring and needle</p><p>A needle from the centre. Reads as a clock at a glance, which is a different claim than the one the mark should be making.</p></div></div>
+  </div>
+</section>
+
+<div class="rule"></div>
+
+<section>
+  <p class="eyebrow">Recommendation</p>
+  <h2>01 · Track, with 03 · Bead as the alternative</h2>
+  <ul class="tight">
+    <li><b>Track</b> is the one to ship. It is the only variant where the reading is unambiguous — you can
+    see the whole circle, so a two-thirds arc reads as two thirds rather than as “nearly a circle”. It costs
+    two elements and one extra tone, both of which you already have in <code>tokens.css</code>.</li>
+    <li><b>Bead</b> if you would rather the silhouette never change. At 16px in a busy tab strip a constant
+    circle is easier to find than an arc that is sometimes a quarter-circle; the trade is that a bead at one
+    position is a coarser read than an arc.</li>
+    <li><b>Open</b> is the most elegant drawing and the wrong one for a tab. An arc with round caps and no
+    track is what every loading spinner on the internet looks like.</li>
+    <li><b>Dual</b> is the most interesting idea here and I would keep it in the drawer. It is a genuinely
+    good 32px-and-up mark for the site header and the OG image — just not the favicon.</li>
+  </ul>
+
+  <h2 style="margin-top:38px">What Track costs to ship</h2>
+  <p class="lede">Two circles. The track takes <code>--txt-far</code>, the arc takes <code>--lit</code>, and
+  the dash length is the reading — so the same file serves as both the static mark and the live one, with a
+  single attribute updated by the poller.</p>
+  <pre>&lt;svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
+     role="img" aria-label="QuotaLens — 68% of the session window used"&gt;
+  &lt;circle cx="12" cy="12" r="9" fill="none"
+          stroke="var(--txt-far)"  stroke-width="2.6"/&gt;
+  &lt;circle cx="12" cy="12" r="9" fill="none"
+          stroke="var(--lit)" stroke-width="2.6"
+          stroke-dasharray="38.45 56.55"          <span class="cmt">&lt;!-- 68% of 2πr --&gt;</span>
+          transform="rotate(-90 12 12)"/&gt;
+&lt;/svg&gt;</pre>
+  <ul class="tight" style="margin-top:20px">
+    <li><b>Three files</b>, same as now: <code>mark.svg</code> at 24, <code>favicon.svg</code> redrawn on a
+    16 grid with the stroke at 3 units so the edges land on whole pixels, and <code>logo.svg</code> for the
+    mark plus the wordmark.</li>
+    <li><b>Amber or not.</b> If the Bench palette survives, the arc is <code>--lit</code> and the mark is the
+    fourth legitimate use of amber — it is the session window, which is the rule, not an exception to it. If
+    you take one of the other directions, the arc takes that direction's live colour instead.</li>
+    <li><b>Stale is a dashed empty ring</b>, never a full one. The mark obeys the same rule as every meter in
+    the product: when the value is unknown it is removed, not guessed.</li>
+  </ul>
+
+  <p class="foot">Every mark on this page is live SVG at real size — the 16px renders are 16px, not scaled
+  screenshots. Arc lengths are computed from 2πr at r=9 (circumference 56.55), so 68% is a dash of 38.45.</p>
+</section>
+
+</div>
+</body></html>

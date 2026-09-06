@@ -1,0 +1,114 @@
+name: Release
+
+# Publishing is the owner's action, so this workflow does nothing on its own:
+# it fires on a tag you push, or on a manual dispatch aimed at TestPyPI.
+#
+# No API token anywhere. Both jobs mint a short-lived credential per run through
+# OIDC (PyPI "trusted publishing"), which is why each has `id-token: write` and
+# names an environment. A token in `secrets.*` would work and would be worse: it
+# does not expire, and it is one leaked log line from being someone else's.
+#
+# Before the first real tag, publish once to TestPyPI via workflow_dispatch. The
+# upload is irreversible and a filename can never be reused, even after a
+# deletion — so a bad wheel on PyPI burns `quotalens-1.0-py3-none-any.whl`
+# forever.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Where to publish"
+        required: true
+        default: testpypi
+        type: choice
+        options: [testpypi, pypi]
+
+permissions:
+  contents: read
+
+jobs:
+  # The tag is not evidence. Build from the tagged tree, then run the same
+  # checks CI runs, against the artifact that is about to be uploaded rather
+  # than against the source tree.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: python -m pip install --upgrade pip build twine
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      # `twine check` reads the metadata PyPI will read. It catches a README
+      # that does not render before the upload does, which is the one class of
+      # error you cannot take back.
+      - name: Check the metadata
+        run: python -m twine check dist/*
+
+      # The version in the tag, the version in pyproject.toml and the version
+      # the installed package reports must be one number. They have disagreed
+      # before, and a release that says 1.0 in two places and 0.1.0 in the
+      # third is worse than no release.
+      - name: The tag, the metadata and __version__ agree
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          WHEEL=$(ls dist/*.whl)
+          python -m pip install "${WHEEL}"
+          PKG=$(python -c "import quotalens; print(quotalens.__version__)")
+          echo "tag=$TAG  package=$PKG  wheel=$WHEEL"
+          [ "$TAG" = "$PKG" ] || { echo "::error::tag v$TAG does not match __version__ $PKG"; exit 1; }
+          case "$WHEEL" in *"quotalens-$TAG-"*) ;; *) echo "::error::wheel filename does not carry $TAG"; exit 1;; esac
+
+      # A wheel that installs but cannot start is what CI's smoke test exists to
+      # catch. Run it here too: this is the artifact being published, not a
+      # rebuild of it.
+      - name: Smoke the built wheel
+        run: |
+          python -m pip install "$(ls dist/*.whl)[test]"
+          python -m pytest -q
+          python qa/smoke.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  testpypi:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  pypi:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
+    runs-on: ubuntu-latest
+    environment: pypi        # add a required reviewer on this environment, so a
+                             # tag alone cannot publish without you clicking
+    permissions:
+      id-token: write        # OIDC: this is the whole credential story
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

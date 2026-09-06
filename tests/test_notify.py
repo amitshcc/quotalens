@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from quotalens import notify
 
 
@@ -180,12 +182,44 @@ def test_a_stored_value_outside_the_offered_set_is_still_representable() -> None
 
 
 def test_a_failed_delivery_is_never_recorded_as_notified() -> None:
-    """The event still suppresses a retry; the suffix stops it reading as success."""
-    detail = "five_hour@R1 crossed 50" + notify.FAILED_SUFFIX
+    """The event still suppresses a retry; the note stops it reading as success.
+
+    This assertion used to read `== set()`, which contradicted its own docstring
+    and matched the bug rather than the intent: the note was appended straight
+    onto the parsed key, `float("50 (not delivered)")` raised, and the level was
+    retried once a minute for the rest of the window.
+    """
+    crossing = _crossing()
+    detail = crossing.failed_detail()
     assert "notified" not in detail
-    assert notify.FAILED_SUFFIX.strip() in detail
-    # And the de-dup key still matches, so the level is not attempted again.
-    assert notify.fired_thresholds([detail], "five_hour", "R1") == set()
+    assert notify.FAILED_NOTE in detail
+    assert notify.fired_thresholds([detail], "five_hour", "R1") == {50.0}
+
+
+def _crossing(threshold: float = 50.0) -> notify.Crossing:
+    return notify.Crossing("five_hour", "Session", threshold, 51.0, "02:10", "R1")
+
+
+@pytest.mark.parametrize("threshold", [20.0, 50.0, 75.0, 90.0, 100.0])
+def test_delivered_and_failed_details_parse_identically(threshold: float) -> None:
+    """A round trip through the production path, not a hand-built string.
+
+    Constructing the detail by hand in a test is what let the parser and the
+    writer drift apart in the first place.
+    """
+    crossing = _crossing(threshold)
+    delivered = notify.fired_thresholds([crossing.event_detail], "five_hour", "R1")
+    failed = notify.fired_thresholds([crossing.failed_detail()], "five_hour", "R1")
+    assert delivered == failed == {threshold}
+
+
+def test_a_note_never_reaches_the_number() -> None:
+    """The key ends at the separator; anything after it is commentary."""
+    crossing = _crossing()
+    assert crossing.failed_detail().startswith(crossing.event_detail + notify.DETAIL_SEP)
+    assert notify.fired_thresholds(
+        [crossing.event_detail + notify.DETAIL_SEP + "anything at all"], "five_hour", "R1"
+    ) == {50.0}
 
 
 def test_the_status_line_never_claims_a_notification_was_seen() -> None:
@@ -221,3 +255,78 @@ def test_the_test_probe_refuses_when_delivery_is_unavailable() -> None:
 
 def test_the_test_message_is_identifiable() -> None:
     assert notify.TEST_MESSAGE == "QuotaLens test notification"
+
+
+def test_a_failed_delivery_is_attempted_once_and_not_retried(settings, store) -> None:
+    """The level the bug actually bit: send call counts, not event text.
+
+    A failed delivery was retried on every poll -- once a minute for the rest of
+    the window -- because the event written to stop that could not be read back.
+    """
+    import time
+
+    from quotalens.parse import QuotaReading, UsageParse
+    from quotalens.poller import Poller
+    from quotalens.secrets import MemorySecretStore, Redactor
+
+    calls: list[str] = []
+    poller = Poller(
+        settings.with_overrides(notify=True, notify_thresholds="50"),
+        store,
+        MemorySecretStore(None),
+        Redactor(),
+    )
+    poller.notify_capability = notify.Capability(True, tool="fake")
+
+    reset = "2026-09-07T08:00:00+00:00"
+
+    def parsed(pct: float) -> UsageParse:
+        return UsageParse(
+            readings=[QuotaReading("five_hour", "Session", pct, reset, None, True)],
+            ignored=[],
+            fallback_used=False,
+        )
+
+    def step(pct: float, at: int) -> None:
+        previous = store.latest_quota()
+        current = parsed(pct)
+        store.record_quota(at, current.readings)
+        poller._check_notify(at, previous, current)
+
+    original = notify.send
+    notify.send = lambda c, cap, runner=None: calls.append(c.message()) or False
+    try:
+        now = int(time.time())
+        step(10.0, now)  # arms
+        step(60.0, now + 60)  # the crossing: one attempt, which fails
+        assert len(calls) == 1, calls
+        step(61.0, now + 120)  # same level, next poll
+        step(62.0, now + 180)  # and the one after
+        assert len(calls) == 1, f"a failed delivery was retried: {calls}"
+    finally:
+        notify.send = original
+
+
+def test_the_credit_path_does_not_share_the_fault(store) -> None:
+    """Credits key their event on the stretch start, not on a parsed detail.
+
+    So there is no number inside a string for a note to corrupt -- the same class
+    of fault cannot exist there.
+    """
+    from quotalens import credits
+
+    class Row:
+        def __init__(self, ts: int) -> None:
+            self.ts = ts
+
+    assert credits.recorded_starts([Row(10), Row(20)]) == {10, 20}
+    run = credits.stretches(
+        [
+            credits.OverageRow(t, v, 3000, "USD", 2)
+            for t, v in ((0, 0), (60, 500), (120, 500), (180, 500), (240, 500))
+        ],
+        60,
+    )[0]
+    # The detail is prose only; nothing is parsed back out of it.
+    assert "credits started" in run.detail()
+    assert credits.recorded_starts([Row(run.start_ts)]) == {run.start_ts}

@@ -276,6 +276,8 @@ footer{margin-top:var(--sp-5);padding-top:var(--sp-3);border-top:var(--hair) sol
 .fld.is-bad input{border-color:var(--st-critical)}
 .ferr{color:var(--st-critical)}
 .fld code{font-size:var(--fs-sm);color:var(--txt-dim);word-break:break-all}
+/* `quotalens config set port <n>` broke with <n> alone on line two. */
+.cmd{white-space:nowrap}
 /* Radio and confirm rows sit in the control column, so their labels start where
    every other control starts rather than in the label column. */
 /* Three columns so the sizes line up on their digits down the page, which is
@@ -309,7 +311,9 @@ dialog{padding:0;color:var(--txt);background:var(--screen);max-width:min(92vw,84
   width:100%;max-height:min(86vh,900px);overflow:hidden;
   border:var(--hair) solid var(--hairline);border-radius:var(--r-2)}
 dialog[open]{display:flex;flex-direction:column}
-dialog::backdrop{background:var(--case);opacity:.75}
+/* --case is near-black in dark and pale in light, so one token could not dim
+   both. A neutral scrim does, at the same strength either way. */
+dialog::backdrop{background:rgb(0 0 0/.55)}
 .dhead,.sfoot{flex:none;display:flex;align-items:center;justify-content:space-between;
   gap:var(--sp-3);padding:var(--sp-3) var(--sp-4)}
 .dhead{border-bottom:var(--hair) solid var(--hairline)}
@@ -350,8 +354,13 @@ dialog::backdrop{background:var(--case);opacity:.75}
 .sset{background:none;border:0;border-radius:0;box-shadow:none}
 /* The one box that stays. It destroys data, and prompt 21 separated it on
    purpose; flattening every container would take that separation with it. */
+/* The container's own padding pushed its heading 13px in, so a top-level
+   section landed on neither the top-level nor the nested indent. Negative
+   margin on the heading alone restores the alignment without losing the box. */
 .danger{border:var(--hair) solid var(--st-critical-bg);border-radius:var(--r-2);
   margin-top:var(--sp-5);padding:var(--sp-2) var(--sp-3) var(--sp-3)}
+/* The padding *and* the 1px border, or the heading lands a pixel out. */
+.danger>.cap{margin-left:calc(-1 * (var(--sp-3) + var(--hair)))}
 .w-s{width:7ch}.w-m{width:18ch}.w-l{width:100%;max-width:44ch}
 .readout-box.bt{grid-template-columns:1fr;white-space:nowrap}
 /* A mark in currentColor is painted through a mask so it takes the theme; one

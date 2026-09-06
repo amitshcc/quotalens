@@ -523,3 +523,28 @@ what "stale money" should look like is a design question this change did not car
 - 2026-09-06: a heading inside `.dep` is not a direct child of `.fform`, so it never
       matched the span rule and auto-placed into column 1 — landing *beside* its own
       group of controls instead of above it. Seen at 1440px.
+- 2026-09-06: **the de-dup event could not be read back.** `FAILED_SUFFIX` was appended
+      straight onto the event detail, but that detail is also a parsed identifier:
+      `fired_thresholds` did `float(detail[len(prefix):])`, which for
+      `"... crossed 50 (not delivered)"` raised ValueError, hit the bare `except:
+      continue`, and never counted the threshold as fired. So a failed delivery was
+      retried on **every poll** — once a minute for the rest of the window — which is
+      the exact thing the event exists to prevent, and the comment above it claimed it
+      did. Prose was appended to an identifier. The key now ends at an explicit
+      `" | "` separator that the parser knows about, and `Crossing.failed_detail()`
+      builds it so the writer and the reader cannot drift.
+      The test that should have caught it asserted `== set()` while its own docstring
+      said the opposite — it was written to match the bug. Fixed to `== {50.0}`, plus a
+      round-trip property test built from `Crossing.event_detail` rather than a
+      hand-written string, and a poller-level test asserting send *call counts*: 1 on
+      the crossing, still 1 after two more polls.
+      The credit path does not share the fault: its events are keyed on the stretch
+      start timestamp, so no number is parsed back out of prose.
+- 2026-09-06: `Data retention` sat 13px in from the other top-level headings, having
+      inherited the danger-zone container's padding — neither the top-level indent nor
+      the nested one, which is a difference that means nothing to a reader. Measured
+      left edges are now two numbers, 317 and 341, not three.
+- 2026-09-06: `dialog::backdrop{background:var(--case);opacity:.75}` only dimmed the
+      dashboard in dark theme. `--case` is near-black there and pale in light, so one
+      token could not do both jobs and the light-theme modal floated over an undimmed
+      page. A neutral scrim at a fixed alpha holds in both.
