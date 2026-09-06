@@ -442,7 +442,8 @@ it. The cap has moved once:
 |---|---|---|---|
 | original | 14,000 | — | headroom over the 8,442 measured above |
 | 2026-09-05 | 16,000 | ~4.5 KB | settings panel, vendor status row, `i-settings` |
-| 2026-09-06 | **17,000** | ~4.7 KB | settings dialog, one-grid form, sticky history |
+| 2026-09-06 | 17,000 | ~4.7 KB | settings dialog, one-grid form, sticky history |
+| 2026-09-06 | **18,000** | ~5.0 KB | dialog shell, nested fields, danger zone, narrow collapse |
 
 Raising it is a decision that gets written down here, with the reason and the
 measurement. Editing it to make a red test green is not the same act, and the
@@ -460,6 +461,11 @@ So the replacement rule, which is narrower and survives contact: **for anything
 that renders on the dashboard, the remedy is deleting a feature, not moving a
 stylesheet.** Do not raise this ceiling again without naming the feature you
 would cut instead.
+
+The 18,000 raise names it: **the modal**. Settings is already a real page at
+`/settings`; the shell, the footer and the scroll containment are what wrapping
+it in a dialog costs, and the page needs none of them. Give up opening settings
+without leaving the dashboard and the bytes come back.
 
 ## 12. Things this system does not do
 

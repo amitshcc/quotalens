@@ -404,24 +404,27 @@ def test_app_css_stays_within_budget() -> None:
     # delivered, still less than one small PNG and still no webfont, framework
     # or CDN behind it.
     #
-    # Raised again on 2026-09-06, to 17,000, and the previous comment here said
-    # not to: "split a route and load its CSS there". That remedy assumed the
-    # expensive CSS belongs to a page you navigate to. It does not apply to what
-    # spent this: the settings form is now a <dialog> on the dashboard, so its
-    # rules load with the dashboard whichever file they live in. Splitting would
-    # move bytes between files and save none.
+    # Raised to 18,000 on 2026-09-06 for the settings dialog restructure: a
+    # persistent header and footer around a scrolling body, dependent fields
+    # nested under their checkboxes, a bordered danger zone, input widths tied
+    # to content, and a one-column collapse below 640px. Estimated 810 bytes
+    # before writing any of it.
     #
-    # What it bought, measured: 821 bytes for a modal that replaced a separate
-    # page, one two-column grid replacing per-field grids, a sticky history
-    # table, a vendor logo rule and the caption alignment fix. Over the wire
-    # that is roughly 4.7 KB gzipped at the 3.6:1 this sheet compresses at.
+    # The standing rule from the 17,000 raise is that the next one must name the
+    # feature it would cut instead, because for anything on the dashboard that
+    # is the only real remedy -- route-splitting does not help CSS that loads
+    # with the dashboard whichever file it sits in.
     #
-    # The rule that replaces "no third raise", because that one was too absolute
-    # to survive contact: route-splitting is the remedy for route-specific CSS.
-    # For anything on the dashboard the remedy is deleting a feature, and that
-    # is a product decision, not a stylesheet one. Do not raise this again
-    # without naming which feature you would delete instead.
-    assert len(minify(css).encode()) + len(minify(tokens).encode()) < 17_000
+    # **The feature is the modal itself.** Without this ceiling, settings goes
+    # back to being the /settings page it already is and stays one: the shell,
+    # the footer and the scroll containment are what a modal costs, and the page
+    # needs none of them. What would be lost is changing a setting without
+    # leaving the dashboard you were reading. That is the trade, stated so the
+    # next person can take it if they want the bytes back.
+    #
+    # History: 14,000 -> 16,000 (settings panel, status row, i-settings) ->
+    # 17,000 (dialog, one-grid form, sticky history) -> 18,000.
+    assert len(minify(css).encode()) + len(minify(tokens).encode()) < 18_000
     # no colour literal outside tokens.css
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b", minify(css))
 
