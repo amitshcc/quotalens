@@ -65,6 +65,9 @@ data somewhere they can query it.
 signup, and nothing phones home. The only outbound
 requests are to claude.ai.
 
+> *Superseded 2026-09-06: see README §Vendor status for the current outbound
+> inventory.*
+
 **Local by default.** Binds `127.0.0.1`. The session cookie lives in the OS
 keychain, never in a config file committed by accident, never in a log line.
 

@@ -115,14 +115,23 @@ next poll or needs a restart.
 The port, the database path and the cookie are shown read-only, with the command
 that changes each. The port is the address of the page you are looking at.
 
+**Desktop notifications are there and are off by default.** Turn them on in the
+panel and pick up to three usage levels; a banner fires once when a window
+crosses each. Off by default because it is three OS code paths — `osascript` or
+`terminal-notifier` on macOS, `powershell` on Windows, `notify-send` on Linux —
+and it is dead under a systemd user unit with no session bus, which is how this
+is meant to run. The panel says so, with the reason, rather than offering a
+switch that does nothing; the webhook is one code path that works everywhere and
+is the right default for an unattended instance.
+
 ## Vendor status
 
 A row per vendor in the side panel — Claude, Gemini, OpenAI — reading each
 vendor's own status page. The whole row is a link to that page, in a new tab.
 
-**This is the only outbound traffic to anyone other than your provider**: one
-plain GET per vendor every five minutes, no cookie, no identifier, no query
-string. It is on by default and `quotalens config set status_row false` turns it
+**This, and the webhook if you set one, is the only outbound traffic to anyone
+other than your provider**: one plain GET per vendor every five minutes, no
+cookie, no identifier, no query string. It is on by default and `quotalens config set status_row false` turns it
 off, which stops the requests rather than hiding the row.
 
 **Gemini is not covered.** Google publishes no status API for AI Studio or the
@@ -265,8 +274,11 @@ to the empty track. The chart shades the gap as "no session" instead of running
 the trace flat to the right edge.
 
 The rule is one line — *never present a session percentage as current once its
-window's reset time has passed* — and it lives in `compute_runway`, so every
-consumer inherits it rather than each learning it separately.
+window's reset time has passed* — and it is implemented in `window_has_lapsed`
+and in `compute_runway`. Two places, not one: the meters, `/api/quota/current`
+and `/metrics` reach it through the first, the hero through the second.
+Consolidating them is open work, and until it is done a change to either has to
+be made to both.
 
 Staleness is also tracked **per window**, not only per collector. A block can
 stop arriving inside an otherwise healthy payload, and a healthy collector is not
@@ -352,15 +364,20 @@ Treat `quotalens probe` output as sensitive and redact it before sharing.
 
 Two things accumulate, and only one of them is pruned.
 
+All the figures below were **measured on a real database on 2026-09-06**: four
+days of one-minute polling, 5,807 usage samples, 1,697 overage samples and
+16,066 readings in a 26.3 MB file. Yours will differ — the payload size is the
+endpoint's, and the row counts are your poll interval's.
+
 **The readings are the product and are never pruned.** One row per window per
-poll, about 100 bytes each. With three windows at a minute a poll that is
-roughly 0.4 MB a day, 150 MB a year. If you want less, poll less often.
+poll, about 100 bytes each. Measured: 3,949 rows a day, **0.39 MB a day, about
+144 MB a year**. If you want less, poll less often.
 
 **The raw payloads are debugging material and are bounded.** Every response is
 stored verbatim so that when the endpoint shape changes there is a record of it.
-Measured on a real database: a usage payload averages **2.0 KB**, so at a minute
-a poll the `sample` table grows **2.8 MB a day, about 1 GB a year** if nothing
-prunes it. Something does:
+Measured: a usage payload averages **2,028 bytes** (range 1,897–2,073 over 5,807
+samples), so at a minute a poll the usage half of the `sample` table grows
+**2.9 MB a day, about 1.05 GB a year** if nothing prunes it. Something does:
 
 ```sh
 quotalens prune --dry-run    # what it would remove
@@ -395,15 +412,18 @@ database** — your poll interval, your window count — not a figure shipped wi
 the tool. Under two days of history it shows an em dash, because it is not
 knowable yet.
 
-The default keeps the newest **20,000 samples, about 14 days, roughly 39 MB**,
-plus the first sample of every distinct payload shape, forever — that set is the
-endpoint-drift record and pruning it would defeat the point of keeping payloads
-at all. The poller prunes on the same rule every six hours, so the default
-applies whether or not you ever run the command.
+The default keeps the newest **20,000 samples, roughly 39 MB**, plus the first
+sample of every distinct payload shape, forever — that set is the endpoint-drift
+record and pruning it would defeat the point of keeping payloads at all. The
+poller prunes on the same rule every six hours, so the default applies whether or
+not you ever run the command.
 
-(Those figures are measured, not arithmetic. Earlier the overage endpoint was
-fetched every poll too, which added a second 1.0 KB payload a minute; it is
-now fetched once at startup.)
+**How many days 20,000 buys depends on what else is being sampled.** Usage alone
+at a minute a poll is 14 days. The database measured above also stores an overage
+sample roughly every three and a half minutes — 419 a day against usage's 1,427 —
+and those count against the same cap, so it is **about 11 days** there. The panel
+under *Data retention* estimates from your own database rather than from either
+number.
 
 ### Rows another collector wrote
 
@@ -443,9 +463,6 @@ better. Pointing at the better tool is a feature.
   MCP servers and scheduled tasks. Quota is pooled across claude.ai, Claude Code
   and Claude Desktop, so local logs can only ever show correlation with a number
   they cannot see.
-- **Desktop notifications.** A desktop notification is three OS code paths and
-  it is dead under a systemd user unit with no session bus, which is how this is
-  meant to run. The webhook is one code path that works everywhere.
 - **Anything but loopback.** There is no `--host`. The dashboard is account data
   with no authentication. If you want it elsewhere, put it behind a proxy you
   already trust; if enough people ask, the answer will be a token, not a flag.
@@ -482,7 +499,8 @@ than something to bolt on. It is the first issue on the list.
 
 ## Platforms
 
-macOS, Linux and Windows are in the CI matrix on Python 3.11 and 3.13, six jobs,
+macOS, Linux and Windows are in the CI matrix on Python 3.11 and 3.13, eight
+jobs (three platforms × two versions, plus lint and render),
 green on every push. Each one builds the wheel, installs *that* rather than the
 source tree, runs the whole suite against it, and then runs a smoke test that
 starts a real server against a fake upstream, polls it, reads the series back
