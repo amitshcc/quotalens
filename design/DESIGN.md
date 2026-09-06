@@ -443,7 +443,8 @@ it. The cap has moved once:
 | original | 14,000 | — | headroom over the 8,442 measured above |
 | 2026-09-05 | 16,000 | ~4.5 KB | settings panel, vendor status row, `i-settings` |
 | 2026-09-06 | 17,000 | ~4.7 KB | settings dialog, one-grid form, sticky history |
-| 2026-09-06 | **18,000** | ~5.0 KB | dialog shell, nested fields, danger zone, narrow collapse |
+| 2026-09-06 | 18,000 | ~5.0 KB | dialog shell, nested fields, danger zone, narrow collapse |
+| 2026-09-06 | **19,000** | ~5.2 KB | delivery status, test control, alert row, vendor checkboxes |
 
 Raising it is a decision that gets written down here, with the reason and the
 measurement. Editing it to make a red test green is not the same act, and the

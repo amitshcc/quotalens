@@ -404,6 +404,20 @@ def test_app_css_stays_within_budget() -> None:
     # delivered, still less than one small PNG and still no webfont, framework
     # or CDN behind it.
     #
+    # Raised to 19,000 on 2026-09-06 for the notifications and vendor-status
+    # rework: a delivery status line, a test-notification control, three alert
+    # selects laid out as a row, and a checkbox per vendor with its own
+    # explanatory copy. Removing the dependency rails gave ~50 bytes back and
+    # the new controls spent ~400; two redundant rules were deleted first
+    # (.trow .fld duplicated the global display:contents, and a status sentence
+    # is prose that did not need the mono face).
+    #
+    # **The feature this would cut is the vendor checkbox group.** It replaced a
+    # comma-separated text field that cost nothing to style, and going back to
+    # that field returns the bytes at the price of asking people to know the
+    # format. The threshold row would follow it. Both are comprehensibility, not
+    # capability -- which is what makes them the honest thing to name here.
+    #
     # Raised to 18,000 on 2026-09-06 for the settings dialog restructure: a
     # persistent header and footer around a scrolling body, dependent fields
     # nested under their checkboxes, a bordered danger zone, input widths tied
@@ -424,7 +438,7 @@ def test_app_css_stays_within_budget() -> None:
     #
     # History: 14,000 -> 16,000 (settings panel, status row, i-settings) ->
     # 17,000 (dialog, one-grid form, sticky history) -> 18,000.
-    assert len(minify(css).encode()) + len(minify(tokens).encode()) < 18_000
+    assert len(minify(css).encode()) + len(minify(tokens).encode()) < 19_000
     # no colour literal outside tokens.css
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b", minify(css))
 
