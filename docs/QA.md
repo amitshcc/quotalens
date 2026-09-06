@@ -472,3 +472,28 @@ what "stale money" should look like is a design question this change did not car
       This is the same silent no-op as the `.cap` padding rule two prompts ago —
       a rule written to fix something, placed where it cannot win. Position in the
       file was the whole fix, and a test now asserts the order.
+- 2026-09-06: the settings dialog vanished a refresh interval after opening and turned
+      up as ordinary content below the footer. Two faults, both required. **(A)** the
+      `<dialog>` was emitted by `_main`, so it was inside `render_app` — which is exactly
+      what `/api/dashboard/fragment` returns and what `app.js` writes into
+      `#app.innerHTML`. Every refresh destroyed the open dialog and inserted a fresh
+      closed one; a native dialog removed from the document leaves the top layer for
+      good, and the replacement had never had `showModal()` called on it. **(B)**
+      `dialog{display:flex}` carried no `[open]` guard, so it overrode the UA's
+      `display:none` for that closed replacement and it laid out in normal flow after
+      the footer. The shell now renders once as a sibling of `#app`, the flex rules sit
+      on `dialog[open]`, and `app.js` re-queries the node after the fetch instead of
+      caching it across the await. Verified: open for 60s across ~6 refreshes plus a
+      forced poll, still one `#sd`, still `:modal`, still holding a typed value.
+- 2026-09-06: switching every notification threshold off handed 50/75/90 straight back.
+      Two layers. `parse_thresholds` answered both `None` and `""` with
+      `DEFAULT_THRESHOLDS`, so an empty configured list was indistinguishable from an
+      absent key. And underneath it `Settings.with_overrides` drops `None` by design —
+      so a CLI flag that was not passed clears nothing — which made the panel writing
+      `None` a silent no-op: the stored value simply stayed. The panel sets every key it
+      owns, so it uses `dataclasses.replace` now; the merge helper is for flags.
+      Observed: 303 accepted, `config.json` unchanged at `30,60,80`.
+- 2026-09-06: a stored threshold outside the offered select values — `10`, from a
+      hand-written or older config — had no `<option>`, so the select fell back to
+      Disabled and the next save would have thrown the value away silently. The current
+      value is now always added to the choices.

@@ -8,7 +8,7 @@ retention would destroy -- are testable without a request.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +22,7 @@ from quotalens.config import (
     validate,
     write_config_file,
 )
-from quotalens.notify import Capability
+from quotalens.notify import SLOT_KEYS, Capability, from_slots, to_slots
 from quotalens.store import Store
 
 # Everything the panel may write. The port, the database path and the cookie are
@@ -76,6 +76,10 @@ def build_view(
     """
     shown = {key: _shown(settings, key) for key in PANEL_KEYS}
     shown["retention"] = settings.retention or ""
+    # The three selects are a view of one stored string, never a second source
+    # of truth: they are derived here and folded back in `apply_form`.
+    for slot, slot_value in zip(SLOT_KEYS, to_slots(settings.notify_thresholds), strict=True):
+        shown[slot] = slot_value
     if values:
         shown.update(values)
     oldest = store.oldest_ts()
@@ -109,6 +113,20 @@ def apply_form(
     errors: dict[str, str] = {}
     submitted: dict[str, str] = {}
     candidate = settings
+
+    # Fold the three selects back into the one stored field before the normal
+    # key loop sees it. The conversion lives here, at the form boundary, so
+    # `notify_thresholds` keeps its format and its CLI compatibility.
+    slots = [str(form.get(slot) or "") for slot in SLOT_KEYS]
+    for slot, slot_value in zip(SLOT_KEYS, slots, strict=True):
+        submitted[slot] = slot_value
+    joined, slot_error = from_slots(slots)
+    if slot_error:
+        errors["notify_thresholds"] = slot_error
+    else:
+        # None means every slot is Disabled, which is a setting, not an absence.
+        form = {**form, "notify_thresholds": joined}
+
     for key in PANEL_KEYS:
         spec = CONFIG_KEYS_BY_NAME[key]
         raw: Any = form.get(key)
@@ -117,7 +135,12 @@ def apply_form(
         submitted[key] = "" if raw is None else str(raw)
         try:
             value = parse_config_value(spec, raw, key)
-            candidate = candidate.with_overrides(**{spec.field: value})
+            # `replace`, not `with_overrides`: the latter drops None by design,
+            # because a CLI flag that was not passed must not clear anything.
+            # Here None is a *value* -- "every threshold Disabled" -- and using
+            # the merge helper made clearing a field silently a no-op. The
+            # panel sets every key it owns, so it never needs the merge.
+            candidate = replace(candidate, **{spec.field: value})
         except SettingsError as exc:
             errors[key] = str(exc)
     if errors:

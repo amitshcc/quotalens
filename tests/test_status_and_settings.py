@@ -358,8 +358,13 @@ def test_every_panel_key_is_actually_rendered_as_a_field(
     app = create_app(settings, store, secrets, config_dir=tmp_path)
     with TestClient(app) as tc:
         html = tc.get("/settings").text
-    rendered = set(re.findall(r'name="([a-z_]+)"', html))
-    assert set(PANEL_KEYS) <= rendered, set(PANEL_KEYS) - rendered
+    from quotalens.notify import SLOT_KEYS
+
+    rendered = set(re.findall(r'name="([a-z_0-9]+)"', html))
+    # notify_thresholds is one stored key behind three selects; the conversion
+    # is at the form boundary, so the slots are what appear in the markup.
+    expected = (set(PANEL_KEYS) - {"notify_thresholds"}) | set(SLOT_KEYS)
+    assert expected <= rendered, expected - rendered
 
 
 def test_saving_leaves_an_unmentioned_boolean_alone(settings, store, secrets, tmp_path) -> None:
@@ -415,7 +420,13 @@ def test_the_dialog_shell_scrolls_the_body_not_the_whole_modal() -> None:
 
     css = resources.files("quotalens.web").joinpath("app.css").read_text()
     shell = css.split("dialog{", 1)[1].split("}", 1)[0]
-    assert "overflow:hidden" in shell and "flex-direction:column" in shell
+    assert "overflow:hidden" in shell
+    # [open] is load-bearing: display:flex on a bare `dialog` overrides the UA's
+    # display:none for a closed one, which laid it out after the footer as
+    # ordinary content.
+    opened = css.split("dialog[open]{", 1)[1].split("}", 1)[0]
+    assert "display:flex" in opened and "flex-direction:column" in opened
+    assert "display:flex" not in shell
     body = css.split("#sd-body{", 1)[1].split("}", 1)[0]
     assert "overflow-y:auto" in body
     # Without min-height:0 a flex item will not shrink below its content, the
@@ -435,3 +446,104 @@ def test_the_narrow_collapse_is_after_the_rules_it_overrides() -> None:
 
     css = resources.files("quotalens.web").joinpath("app.css").read_text()
     assert css.index("@media (max-width:640px)") > css.index(".fform{display:grid")
+
+
+def _slots(**over: str) -> dict[str, str]:
+    base = {k: v for k, v in _form().items() if k != "notify_thresholds"}
+    return {**base, "notify_t1": "50", "notify_t2": "75", "notify_t3": "90", **over}
+
+
+def test_three_selects_round_trip_through_one_stored_string(
+    settings, store, secrets, tmp_path
+) -> None:
+    app = create_app(settings, store, secrets, config_dir=tmp_path)
+    with TestClient(app) as tc:
+        tc.post("/settings", data=_slots(notify_t1="30", notify_t2="60", notify_t3="80"))
+        assert read_config_file(config_path("", tmp_path))["notify_thresholds"] == "30,60,80"
+        html = tc.get("/settings").text
+    for slot, value in (("notify_t1", "30"), ("notify_t2", "60"), ("notify_t3", "80")):
+        sel = re.search(rf'name="{slot}".*?</select>', html, re.S).group(0)
+        assert f'value="{value}" selected' in sel
+
+
+def test_all_disabled_stores_null_and_does_not_revert(settings, store, secrets, tmp_path) -> None:
+    """Two traps, one behind the other.
+
+    `parse_thresholds` answered an empty list with DEFAULT_THRESHOLDS, and
+    `with_overrides` -- which drops None so an unpassed CLI flag clears nothing --
+    made writing None a silent no-op. Either one alone hands 50/75/90 straight
+    back to a user who switched them all off.
+    """
+    from quotalens.config import load_settings
+    from quotalens.notify import parse_thresholds
+
+    app = create_app(settings, store, secrets, config_dir=tmp_path)
+    with TestClient(app) as tc:
+        tc.post("/settings", data=_slots(notify_t1="30", notify_t2="60", notify_t3="80"))
+        tc.post("/settings", data=_slots(notify_t1="", notify_t2="", notify_t3=""))
+    stored = read_config_file(config_path("", tmp_path))
+    assert stored["notify_thresholds"] is None
+    assert load_settings(data_dir=tmp_path).notify_thresholds is None
+    assert parse_thresholds(load_settings(data_dir=tmp_path).notify_thresholds) == ()
+
+
+def test_credit_notifications_survive_all_thresholds_being_off(
+    settings, store, secrets, tmp_path
+) -> None:
+    app = create_app(settings, store, secrets, config_dir=tmp_path)
+    with TestClient(app) as tc:
+        tc.post("/settings", data=_slots(notify_t1="", notify_t2="", notify_t3=""))
+    assert read_config_file(config_path("", tmp_path))["notify_credits"] is True
+
+
+def test_duplicate_and_descending_selects_are_refused_beside_the_field(
+    settings, store, secrets, tmp_path
+) -> None:
+    app = create_app(settings, store, secrets, config_dir=tmp_path)
+    with TestClient(app) as tc:
+        dup = tc.post("/settings", data=_slots(notify_t2="50"))
+        desc = tc.post("/settings", data=_slots(notify_t1="90", notify_t3="50"))
+    assert dup.status_code == 400 and "different percentage" in dup.text
+    assert desc.status_code == 400 and "ascending order" in desc.text
+    assert read_config_file(config_path("", tmp_path)) == {}
+
+
+def test_a_legacy_config_with_four_thresholds_loads(settings, store, secrets, tmp_path) -> None:
+    """The lowest three fill the slots; the extras stay on disk until a save."""
+    from quotalens.config import write_config_file
+
+    write_config_file(config_path("", tmp_path), {"notify_thresholds": "10,20,30,40"})
+    legacy = settings.with_overrides(notify_thresholds="10,20,30,40")
+    app = create_app(legacy, store, secrets, config_dir=tmp_path)
+    with TestClient(app) as tc:
+        html = tc.get("/settings").text
+    for value in ("10", "20", "30"):
+        assert f'value="{value}" selected' in html, value
+    assert 'value="40" selected' not in html  # the form has three slots
+    # Loading rewrites nothing.
+    assert read_config_file(config_path("", tmp_path))["notify_thresholds"] == "10,20,30,40"
+
+
+def test_a_legacy_config_with_spaces_or_two_values_loads(settings, store, secrets) -> None:
+    legacy = settings.with_overrides(notify_thresholds=" 40 , 80 ")
+    app = create_app(legacy, store, secrets)
+    with TestClient(app) as tc:
+        html = tc.get("/settings").text
+    assert 'value="40" selected' in html and 'value="80" selected' in html
+
+
+def test_the_dialog_is_not_in_the_refreshed_fragment(settings, store, secrets) -> None:
+    """The whole cause of the disappearing modal, pinned at the server.
+
+    render_app is what /api/dashboard/fragment returns and what app.js writes
+    into #app.innerHTML, so a <dialog> in it is destroyed and rebuilt on every
+    refresh -- and a native dialog removed from the document leaves the top
+    layer for good.
+    """
+    app = create_app(settings, store, secrets)
+    with TestClient(app) as tc:
+        page = tc.get("/").text
+        fragment = tc.get("/api/dashboard/fragment").text
+    assert "<dialog" not in fragment
+    assert 'id="sd"' not in fragment
+    assert page.count('id="sd"') == 1

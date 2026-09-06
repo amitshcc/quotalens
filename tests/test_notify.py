@@ -48,9 +48,21 @@ def test_one_window_does_not_silence_another() -> None:
 def test_thresholds_parse_and_a_bad_entry_is_dropped_not_guessed() -> None:
     assert notify.parse_thresholds("60, 80") == (60.0, 80.0)
     assert notify.parse_thresholds("60, banana, 80") == (60.0, 80.0)
-    assert notify.parse_thresholds("") == notify.DEFAULT_THRESHOLDS
-    assert notify.parse_thresholds("nonsense") == notify.DEFAULT_THRESHOLDS
     assert notify.parse_thresholds("0, 150, 50") == (50.0,)  # out of range
+
+
+def test_an_empty_configured_list_means_none_not_the_default() -> None:
+    """Switching every threshold off used to hand them straight back.
+
+    Both `""` and `None` returned DEFAULT_THRESHOLDS, so a user who disabled all
+    three got 50, 75 and 90 again on the next poll. The documented default
+    belongs to the key being *absent*, which is where ConfigKey.default supplies
+    it -- an empty list is a setting, not a missing one.
+    """
+    assert notify.parse_thresholds("") == ()
+    assert notify.parse_thresholds(None) == ()
+    assert notify.parse_thresholds("nonsense") == ()
+    assert notify.crossings(pct=95, previous_pct=10, already_fired=set(), thresholds=()) == []
 
 
 def test_a_systemd_unit_with_no_session_bus_reports_why_rather_than_pretending() -> None:
@@ -111,3 +123,54 @@ def test_the_windows_toast_actually_shows_a_toast() -> None:
 def test_a_powershell_quote_is_doubled_not_dropped() -> None:
     script = notify._argv("powershell", "QuotaLens", "resets o'clock")[-1]
     assert "o''clock" in script
+
+
+# -- the three threshold slots -----------------------------------------------------
+
+
+def test_the_default_round_trips_through_three_slots() -> None:
+    assert notify.to_slots("50,75,90") == ["50", "75", "90"]
+    assert notify.from_slots(["50", "75", "90"]) == ("50,75,90", "")
+
+
+def test_a_partially_disabled_set_keeps_only_what_was_chosen() -> None:
+    assert notify.to_slots("40,80") == ["40", "80", ""]
+    assert notify.from_slots(["", "60", ""]) == ("60", "")
+
+
+def test_all_disabled_stores_none_and_fires_nothing() -> None:
+    """The failure this is guarding: an `or DEFAULT` handing 50/75/90 back."""
+    stored, error = notify.from_slots(["", "", ""])
+    assert stored is None and error == ""
+    assert notify.parse_thresholds(stored) == ()
+    assert notify.crossings(pct=99, previous_pct=1, already_fired=set(), thresholds=()) == []
+
+
+def test_duplicates_and_descending_order_are_refused_with_a_reason() -> None:
+    assert notify.from_slots(["50", "50", "90"])[1] == (
+        "each threshold must be a different percentage"
+    )
+    assert notify.from_slots(["90", "75", "50"])[1] == "thresholds must be in ascending order"
+    assert notify.from_slots(["50", "banana", ""])[1].startswith("'banana'")
+
+
+def test_a_legacy_list_longer_than_three_keeps_its_lowest_three() -> None:
+    """Loading rewrites nothing: the extras stay on disk until a save."""
+    assert notify.to_slots("10,20,30,40,50") == ["10", "20", "30"]
+    assert notify.parse_thresholds("10,20,30,40,50") == (10.0, 20.0, 30.0, 40.0, 50.0)
+
+
+def test_a_legacy_list_with_spaces_or_two_values_loads() -> None:
+    assert notify.to_slots(" 40 , 80 ") == ["40", "80", ""]
+    assert notify.to_slots("70") == ["70", "", ""]
+
+
+def test_the_choices_can_express_the_shipped_default() -> None:
+    for value in notify.DEFAULT_THRESHOLDS:
+        assert int(value) in notify.THRESHOLD_CHOICES
+
+
+def test_a_stored_value_outside_the_offered_set_is_still_representable() -> None:
+    """Otherwise the select falls back to Disabled and the next save loses it."""
+    assert notify.to_slots("10,20,30") == ["10", "20", "30"]
+    assert 10 not in notify.THRESHOLD_CHOICES  # the case this guards

@@ -7,7 +7,7 @@ from functools import lru_cache
 from html import escape as e
 from importlib import resources
 
-from quotalens import __version__, retention, status
+from quotalens import __version__, notify, retention, status
 from quotalens.alerts import ALERT_KIND
 from quotalens.config import CLAUDE, MIN_POLL_INTERVAL_S, Provider
 from quotalens.dashboard import (
@@ -265,12 +265,23 @@ def render_page(dash: Dashboard) -> str:
         '<script src="/static/chart.js" defer></script>\n'
         "</head>\n"
         f'<body data-refresh="{dash.refresh_s}">\n{ICONS}\n'
-        f'<div id="app">{render_app(dash)}</div>\n</body>\n</html>\n'
+        f'<div id="app">{render_app(dash)}</div>\n'
+        # Outside #app: the refresh replaces that subtree wholesale.
+        f"{render_settings_dialog()}\n</body>\n</html>\n"
     )
 
 
 def render_app(dash: Dashboard) -> str:
-    """The refreshable part: header and main, so state chips update together."""
+    """The refreshable part: header and main, so state chips update together.
+
+    **The settings dialog is deliberately not here.** This is exactly what
+    ``/api/dashboard/fragment`` returns and what ``app.js`` writes into
+    ``#app.innerHTML``, so anything in it is destroyed and rebuilt on every
+    refresh. A native ``<dialog>`` removed from the document leaves the top
+    layer, and its replacement has never had ``showModal()`` called on it -- so
+    an open modal vanished on the next tick. It lives in the page shell as a
+    sibling of ``#app`` instead; a test asserts it never comes back here.
+    """
     return _header(dash) + _main(dash)
 
 
@@ -345,7 +356,6 @@ def _main(dash: Dashboard) -> str:
         + _side(dash)
         + "</div>"
         + _footer(dash)
-        + render_settings_dialog()
         + "</main>"
     )
 
@@ -1122,6 +1132,26 @@ def _field(
     )
 
 
+def _select_field(key: str, label: str, value: str, error: str = "") -> str:
+    """One threshold slot. A native select, styled like the inputs beside it."""
+    # A stored value outside the offered set still gets an option, so a config
+    # written by hand or by an older version shows what it actually holds and
+    # survives a save. Without this the select silently fell back to Disabled
+    # and the next save threw the value away.
+    choices = sorted({*notify.THRESHOLD_CHOICES, *([int(float(value))] if value else [])})
+    opts = ['<option value="">Disabled</option>']
+    for choice in choices:
+        chosen = " selected" if value == str(choice) else ""
+        opts.append(f'<option value="{choice}"{chosen}>{choice}%</option>')
+    err = f'<span class="ferr">{e(error)}</span>' if error else ""
+    return (
+        f'<div class="fld{" is-bad" if error else ""}">'
+        f'<label for="f-{e(key)}">{e(label)}</label>'
+        f'<select class="w-s" name="{e(key)}" id="f-{e(key)}">{"".join(opts)}</select>'
+        f"{err}</div>"
+    )
+
+
 def _readonly(label: str, value: str, why: str) -> str:
     """A setting the panel deliberately does not offer, and the reason."""
     return (
@@ -1168,7 +1198,7 @@ def render_settings(view: SettingsView) -> str:
     """
     err = view.errors
     body = [
-        '<section class="screen"><form method="post" action="/settings" '
+        '<section class="sset"><form method="post" action="/settings" '
         'id="settings-form" class="fform">'
         '<p class="cap">Collection &amp; alerts</p>',
         _field(
@@ -1237,14 +1267,19 @@ def render_settings(view: SettingsView) -> str:
         )
     body += [
         '<div class="dep">',
-        _field(
-            "notify_thresholds",
-            "Thresholds",
-            view.values["notify_thresholds"],
-            note="percentages, comma separated",
-            error=err.get("notify_thresholds", ""),
-            width="s",
+        # Three selects rather than a comma-separated string: nothing to learn
+        # about syntax, and the stored format is unchanged -- the conversion
+        # happens once, at the form boundary, in settings_view.
+        *(
+            _select_field(
+                slot,
+                f"Notification {i + 1}",
+                view.values.get(slot, ""),
+                err.get("notify_thresholds", "") if i == 0 else "",
+            )
+            for i, slot in enumerate(notify.SLOT_KEYS)
         ),
+        '<p class="far dnote">Notify when a usage window reaches this percentage.</p>',
         "</div></div>",
         # A panel key that is never rendered is not "left alone": an unchecked
         # box sends nothing, so apply_form read its absence as false and every
@@ -1324,7 +1359,7 @@ def _retention_block(view: SettingsView) -> str:
         # footer's Save changes, which must never submit or imply it.
         # .danger carries its own border, so the old <div class="rule"> here
         # drew a second, empty one above the heading.
-        '<section class="screen danger">'
+        '<section class="sset danger">'
         '<p class="cap">Data retention</p>'
         '<form method="post" action="/settings/retention" class="fform">'
         + "".join(options)

@@ -265,6 +265,13 @@ footer{margin-top:var(--sp-5);padding-top:var(--sp-3);border-top:var(--hair) sol
 .fld input[type=text]{font:inherit;font-family:var(--font-num);justify-self:start;
   padding:3px var(--sp-2);border:var(--hair) solid var(--hairline);background:transparent;color:var(--txt)}
 .fld input[type=checkbox]{justify-self:start}
+/* Native selects in the same compact vocabulary as the inputs beside them.
+   No custom dropdown: the platform's is keyboard- and screen-reader-correct
+   already, and nothing here is worth reimplementing that. */
+.fld select{grid-column:2;justify-self:start;width:11ch;font:inherit;font-family:var(--font-num);
+  padding:3px var(--sp-2);border:var(--hair) solid var(--hairline);
+  background:transparent;color:var(--txt)}
+.dnote{grid-column:2;font-size:var(--fs-xs)}
 .fld .far,.fld .ferr{font-size:var(--fs-xs)}
 .fld.is-bad input{border-color:var(--st-critical)}
 .ferr{color:var(--st-critical)}
@@ -293,9 +300,14 @@ footer{margin-top:var(--sp-5);padding-top:var(--sp-3);border-top:var(--hair) sol
    min-height:0 on the body is load-bearing: a flex item will not shrink below
    its content without it, so the body never becomes scrollable and the header
    leaves anyway. */
+/* [open] is load-bearing, not tidiness: display:flex on a bare `dialog`
+   overrides the UA's display:none for a *closed* one, so it laid out in normal
+   flow after the footer as ordinary content. Guarded here, a closed dialog is
+   display:none again and occupies nothing. */
 dialog{padding:0;color:var(--txt);background:var(--screen);max-width:min(92vw,840px);
-  width:100%;max-height:min(86vh,900px);display:flex;flex-direction:column;overflow:hidden;
+  width:100%;max-height:min(86vh,900px);overflow:hidden;
   border:var(--hair) solid var(--hairline);border-radius:var(--r-2)}
+dialog[open]{display:flex;flex-direction:column}
 dialog::backdrop{background:var(--case);opacity:.75}
 .dhead,.sfoot{flex:none;display:flex;align-items:center;justify-content:space-between;
   gap:var(--sp-3);padding:var(--sp-3) var(--sp-4)}
@@ -310,9 +322,16 @@ dialog::backdrop{background:var(--case);opacity:.75}
 .grp{grid-column:1/-1;display:grid;grid-template-columns:subgrid}
 .dep{grid-column:1/-1;display:grid;grid-template-columns:subgrid;
   margin-left:var(--sp-3);padding-left:var(--sp-3);border-left:var(--hair) solid var(--hairline)}
-/* Danger zone: separated by its own border, no new colour. */
-.danger{border-top:var(--hair) solid var(--hair-firm);margin-top:var(--sp-4);
-  padding-top:var(--sp-2)}
+/* Settings sections are not dashboard cards. They borrowed .screen, which gave
+   each one a border, a radius and an inset shadow -- boxes inside a box, reading
+   as cramped. Hierarchy here is spacing, headings and type weight instead. No
+   replacement divider lines: those would be the same decoration in thinner ink.
+   .screen itself is untouched, so every dashboard panel is unchanged. */
+.sset{background:none;border:0;border-radius:0;box-shadow:none}
+/* The one box that stays. It destroys data, and prompt 21 separated it on
+   purpose; flattening every container would take that separation with it. */
+.danger{border:var(--hair) solid var(--st-critical-bg);border-radius:var(--r-2);
+  margin-top:var(--sp-5);padding:var(--sp-2) var(--sp-3) var(--sp-3)}
 .w-s{width:7ch}.w-m{width:18ch}.w-l{width:100%;max-width:44ch}
 .readout-box.bt{grid-template-columns:1fr;white-space:nowrap}
 /* A mark in currentColor is painted through a mask so it takes the theme; one

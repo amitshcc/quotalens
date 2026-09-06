@@ -271,10 +271,24 @@ def send(crossing: Crossing, capability: Capability, runner: object = None) -> b
     return True
 
 
+# What the three selects offer, so the shipped default 50,75,90 is exactly
+# representable and nothing has to be typed.
+THRESHOLD_CHOICES: tuple[int, ...] = (20, 30, 40, 50, 60, 70, 75, 80, 90, 100)
+THRESHOLD_SLOTS = 3
+SLOT_KEYS = tuple(f"notify_t{i + 1}" for i in range(THRESHOLD_SLOTS))
+
+
 def parse_thresholds(raw: str | None) -> tuple[float, ...]:
-    """``"50,75,90"`` to a tuple. An unparseable entry is dropped, not guessed at."""
+    """``"50,75,90"`` to a tuple. An unparseable entry is dropped, not guessed at.
+
+    **An empty configured list is not an absent one.** This used to answer both
+    with ``DEFAULT_THRESHOLDS``, so a user who switched every threshold off got
+    50, 75 and 90 back on the next poll. ``None`` and ``""`` now mean *none*;
+    the documented default belongs to the key being absent from the config
+    entirely, which is where ``ConfigKey.default`` supplies it.
+    """
     if not raw:
-        return DEFAULT_THRESHOLDS
+        return ()
     out = []
     for part in raw.split(","):
         part = part.strip()
@@ -286,4 +300,40 @@ def parse_thresholds(raw: str | None) -> tuple[float, ...]:
             continue
         if 0 < value <= 100:
             out.append(value)
-    return tuple(sorted(set(out))) or DEFAULT_THRESHOLDS
+    return tuple(sorted(set(out)))
+
+
+def to_slots(raw: str | None) -> list[str]:
+    """The stored string as three select values, lowest first, unused blank.
+
+    A stored list longer than three keeps its lowest three here, because the
+    form has three slots and cannot show more. Nothing is rewritten by loading:
+    the extra values stay in ``config.json`` until the user actually saves, and
+    saving then stores exactly what the form showed.
+    """
+    values = [f"{v:g}" for v in parse_thresholds(raw)][:THRESHOLD_SLOTS]
+    return values + [""] * (THRESHOLD_SLOTS - len(values))
+
+
+def from_slots(values: list[str]) -> tuple[str | None, str]:
+    """Three select values to the stored string, or an error.
+
+    Returns ``(None, "")`` when every slot is Disabled -- which is a real
+    setting meaning "no threshold notifications", not a missing one.
+    """
+    chosen = []
+    for value in values:
+        text = (value or "").strip()
+        if not text:
+            continue
+        try:
+            chosen.append(int(float(text)))
+        except ValueError:
+            return None, f"{text!r} is not a percentage"
+    if not chosen:
+        return None, ""
+    if len(set(chosen)) != len(chosen):
+        return None, "each threshold must be a different percentage"
+    if chosen != sorted(chosen):
+        return None, "thresholds must be in ascending order"
+    return ",".join(str(v) for v in chosen), ""

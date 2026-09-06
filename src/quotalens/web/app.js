@@ -170,12 +170,17 @@
   function settingsDialog() { return document.getElementById("sd"); }
 
   function openSettings() {
-    var dlg = settingsDialog();
-    if (!dlg || !dlg.showModal) return false;
+    if (!settingsDialog() || !settingsDialog().showModal) return false;
     fetch("/settings?fragment=1", { headers: { "X-Requested-With": "fetch" } })
       .then(function (r) { return r.text(); })
       .then(function (html) {
-        document.getElementById("sd-body").innerHTML = html;
+        // Re-queried after the await, never cached across it. A refresh landing
+        // mid-fetch used to leave this holding a node that is no longer in the
+        // document, so showModal() was called on an orphan and nothing opened.
+        var dlg = settingsDialog();
+        var body = document.getElementById("sd-body");
+        if (!dlg || !body) return;
+        body.innerHTML = html;
         if (!dlg.open) dlg.showModal();
       })
       .catch(function () { window.location.href = "/settings"; });
@@ -189,9 +194,11 @@
         // 400 means the server refused a value: show its own message, in place,
         // beside the field. 303/200 means saved, so close and re-read the page.
         if (r.status === 400) return r.text().then(function (h) {
-          document.getElementById("sd-body").innerHTML = h;
+          var body = document.getElementById("sd-body");
+          if (body) body.innerHTML = h;
         });
-        settingsDialog().close();
+        var dlg = settingsDialog();
+        if (dlg) dlg.close();
         navigate(window.location.pathname + window.location.search, false);
       })
       .catch(function () { form.submit(); });

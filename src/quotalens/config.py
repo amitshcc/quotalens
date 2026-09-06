@@ -162,7 +162,9 @@ class Settings:
     # Off by default, matching the webhook's opt-in posture in alerts.py: a tool
     # that pushes to your desktop without being asked has overstepped.
     notify: bool = False
-    notify_thresholds: str = "50,75,90"
+    # None is "the user switched them all off", which is a different state from
+    # the key being absent; see notify.parse_thresholds.
+    notify_thresholds: str | None = "50,75,90"
     # Separate from the threshold toggle and on by default: crossing 50% is
     # information, and money leaving is not the same class of event.
     notify_credits: bool = True
