@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+import pytest
 from fastapi.testclient import TestClient
 
 from quotalens import status
@@ -356,8 +357,9 @@ def test_the_mask_takes_the_surrounding_colour_in_both_themes() -> None:
     assert "#" not in rule
 
 
+@pytest.mark.parametrize("notifier", [True, False])
 def test_every_panel_key_is_actually_rendered_as_a_field(
-    settings, store, secrets, tmp_path
+    settings, store, secrets, tmp_path, monkeypatch, notifier
 ) -> None:
     """A panel key with no field is not "left alone": it is turned off.
 
@@ -365,9 +367,15 @@ def test_every_panel_key_is_actually_rendered_as_a_field(
     false. `notify_credits` was in PANEL_KEYS and never rendered, so every save
     silently disabled credit notifications -- observed as True on disk before a
     save and False after one that never mentioned it.
+
+    Run for both hosts. Unparametrised, this passed on macOS and Windows and
+    failed on every Linux runner, because `notify` was rendered only where a
+    notifier existed -- so the machine that ran it was what decided the answer.
     """
     import re
 
+    if not notifier:
+        _unavailable(monkeypatch)
     app = create_app(settings, store, secrets, config_dir=tmp_path)
     with TestClient(app) as tc:
         html = tc.get("/settings").text
@@ -689,3 +697,110 @@ def test_the_delivery_status_is_redetected_not_read_from_startup(
             lambda *a, **k: notify_mod.Capability(True, tool="terminal-notifier"),
         )
         assert "Ready to send via terminal-notifier" in tc.get("/settings").text
+
+
+# -- the notify group: a disabled box is not an unticked one --------------------
+
+
+def _browser_submit(html: str) -> dict[str, str]:
+    """What a browser would POST from the rendered settings form.
+
+    Built by reading the markup the server actually produced, not by writing the
+    dict by hand: the fault below was that a field's *absence from the wire* was
+    read as a value, and a hand-written dict is exactly the thing that cannot
+    see it. Follows the submission rules that matter here -- a disabled control
+    is never successful, an unchecked checkbox sends nothing, a select sends its
+    selected option.
+    """
+    form = html.split('id="settings-form"', 1)[1].split("</form>", 1)[0]
+    out: dict[str, str] = {}
+    for tag in re.findall(r"<input\b[^>]*>", form):
+        name = re.search(r'name="([^"]+)"', tag)
+        if not name or " disabled" in tag:
+            continue
+        kind = (re.search(r'type="([^"]+)"', tag) or [None, "text"])[1]
+        value = (re.search(r'value="([^"]*)"', tag) or [None, ""])[1]
+        if kind == "checkbox" and " checked" not in tag:
+            continue
+        out[name[1]] = value
+    for block in re.findall(r"<select\b[^>]*>.*?</select>", form, re.S):
+        name = re.search(r'name="([^"]+)"', block)
+        chosen = re.search(r'<option value="([^"]*)"[^>]*\bselected\b', block)
+        if name:
+            out[name[1]] = chosen[1] if chosen else ""
+    return out
+
+
+def _unavailable(monkeypatch) -> None:
+    from quotalens import notify
+
+    monkeypatch.setattr(
+        notify,
+        "detect_capability",
+        lambda *a, **k: notify.Capability(False, "no session bus; this is how a unit runs."),
+    )
+
+
+def test_the_notify_box_is_rendered_disabled_when_nothing_can_deliver(
+    settings, store, secrets, tmp_path, monkeypatch
+) -> None:
+    """Rendered and disabled, never omitted -- an omitted field has no value at all.
+
+    Omitting it is what failed `test_every_panel_key_is_actually_rendered_as_a_field`
+    on every Linux runner, and `release.yml`'s build job runs the suite on
+    ubuntu-latest before it uploads anything, so it also stopped the tag.
+    """
+    _unavailable(monkeypatch)
+    app = create_app(settings, store, secrets, config_dir=tmp_path)
+    with TestClient(app) as tc:
+        html = tc.get("/settings").text
+    box = re.search(r'<input type="checkbox" name="notify"[^>]*>', html)
+    assert box, "the field must exist even where it cannot be used"
+    assert " disabled" in box[0]
+    assert "no session bus" in html and "The webhook still fires." in html
+
+
+def test_a_save_from_a_host_with_no_notifier_leaves_notify_alone(
+    settings, store, secrets, tmp_path, monkeypatch
+) -> None:
+    """The bug: a disabled box and an unticked box are the same thing on the wire.
+
+    `config set notify true` on a desktop, then open the panel from the systemd
+    user unit and press Save to change retention -- and the desktop's
+    notifications are off, with nothing said.
+    """
+    _unavailable(monkeypatch)
+    app = create_app(settings, store, secrets, config_dir=tmp_path)
+    path = config_path("", tmp_path)
+    with TestClient(app) as tc:
+        tc.post("/settings", data=_form(notify="1", notify_group="1"), follow_redirects=False)
+        assert read_config_file(path)["notify"] is True
+        submitted = _browser_submit(tc.get("/settings").text)
+        assert "notify" not in submitted and "notify_group" not in submitted
+        tc.post("/settings", data=submitted, follow_redirects=False)
+    assert read_config_file(path)["notify"] is True
+
+
+def test_unticking_the_box_still_turns_notify_off_where_it_works(
+    settings, store, secrets, tmp_path, monkeypatch
+) -> None:
+    """The behaviour the marker must not break: an unticked box is still a false.
+
+    The capability is forced rather than inherited from whatever is on PATH, so
+    the assertion is about the code and not about the machine running it.
+    """
+    from quotalens import notify
+
+    monkeypatch.setattr(
+        notify, "detect_capability", lambda *a, **k: notify.Capability(True, tool="stub")
+    )
+    app = create_app(settings, store, secrets, config_dir=tmp_path)
+    path = config_path("", tmp_path)
+    with TestClient(app) as tc:
+        tc.post("/settings", data=_form(notify="1", notify_group="1"), follow_redirects=False)
+        assert read_config_file(path)["notify"] is True
+        submitted = _browser_submit(tc.get("/settings").text)
+        assert submitted["notify"] == "1" and submitted["notify_group"] == "1"
+        del submitted["notify"]  # what unticking the box does
+        tc.post("/settings", data=submitted, follow_redirects=False)
+    assert read_config_file(path)["notify"] is False

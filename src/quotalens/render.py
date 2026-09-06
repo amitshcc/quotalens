@@ -24,7 +24,7 @@ from quotalens.dashboard import (
     clock,
 )
 from quotalens.runway import fmt_span
-from quotalens.settings_view import SettingsView
+from quotalens.settings_view import NOTIFY_GROUP, SettingsView
 from quotalens.status import StatusVendor, VendorStatus
 from quotalens.views import AUTO, RANGE_KEYS
 
@@ -1096,6 +1096,7 @@ def _field(
     kind: str = "text",
     effect: str = "live",
     width: str = "s",
+    disabled: bool = False,
 ) -> str:
     """One labelled input, its note, and its error if the server refused it.
 
@@ -1113,23 +1114,35 @@ def _field(
     """
     when = "" if effect == "live" else " \u00b7 needs a restart"
     err = f'<span class="ferr">{e(error)}</span>' if error else ""
+    off = " disabled" if disabled else ""
     if kind == "checkbox":
         box = (
             f'<input type="checkbox" name="{e(key)}" id="f-{e(key)}" value="1"'
-            f"{' checked' if value == '1' else ''}>"
+            f"{' checked' if value == '1' else ''}{off}>"
         )
     else:
         # Width tied to content: a three-digit interval rendered as wide as a
         # webhook URL is why this form read as mostly empty space.
         box = (
             f'<input type="text" class="w-{e(width)}" name="{e(key)}" '
-            f'id="f-{e(key)}" value="{e(value)}">'
+            f'id="f-{e(key)}" value="{e(value)}"{off}>'
         )
     return (
         f'<div class="fld{" is-bad" if error else ""}">'
         f'<label for="f-{e(key)}">{e(label)}</label>{box}'
         f'<span class="far">{e(note)}{when}</span>{err}</div>'
     )
+
+
+def _sentence(text: str) -> str:
+    """A fragment written by another module, ended so the next sentence can follow.
+
+    The capability reasons are phrased for several callers and only some end in
+    a stop, which read as "notify-send is not installed (libnotify) The webhook
+    still fires."
+    """
+    text = text.strip()
+    return text if not text or text[-1] in ".!?" else text + "."
 
 
 def _select_field(key: str, label: str, value: str, error: str = "") -> str:
@@ -1279,33 +1292,45 @@ def render_settings(view: SettingsView) -> str:
         '<p class="far">Alerts fire once when a usage window crosses a configured level.</p>',
         '<div class="grp">',
     ]
-    if view.notify_capability.available:
-        # `note` is set when the capability works but not fully -- on macOS
-        # without terminal-notifier the banner carries the system icon and
-        # nothing can change that. Saying so beats shipping the wrong icon
-        # silently, which is the same rule the capability check itself follows.
-        # No field-level help: the group sentence above says when alerts fire and
-        # the live Delivery line below says whether they can be delivered. A
-        # third, static copy of both was the worst of the three. The label says
-        # what the box toggles rather than restating the section heading.
-        body.append(
-            _field(
-                "notify",
-                "Enabled",
-                view.values["notify"],
-                note="",
-                kind="checkbox",
-            )
-        )
-    else:
-        body.append(
-            _readonly(
-                "Desktop notification",
-                "unavailable",
-                # Disabled with the reason, never an on switch that does nothing.
-                f"{view.notify_capability.reason} The webhook still fires.",
-            )
-        )
+    # The box is always rendered, and disabled rather than omitted when nothing
+    # here can deliver a notification. Omitting it turned the field's absence
+    # into a value: an unchecked box sends nothing, so `apply_form` read the
+    # missing field as false and a save from a headless instance silently
+    # switched off the notifications the desktop instance uses. It also failed
+    # `test_every_panel_key_is_actually_rendered_as_a_field` on every Linux
+    # runner, which is the same bug seen from CI.
+    #
+    # `note` is set when the capability works but not fully -- on macOS without
+    # terminal-notifier the banner carries the system icon and nothing can
+    # change that. Saying so beats shipping the wrong icon silently, which is
+    # the same rule the capability check itself follows. When it works there is
+    # no field-level help: the group sentence above says when alerts fire and
+    # the live Delivery line below says whether they can be delivered. A third,
+    # static copy of both was the worst of the three. The label says what the
+    # box toggles rather than restating the section heading.
+    blocked = not view.notify_capability.available
+    off = " disabled" if blocked else ""
+    body += [
+        _field(
+            "notify",
+            "Enabled",
+            view.values["notify"],
+            note=(
+                f"unavailable \u2014 {_sentence(view.notify_capability.reason)} "
+                "The webhook still fires."
+                if blocked
+                else ""
+            ),
+            kind="checkbox",
+            disabled=blocked,
+        ),
+        # The marker that tells `apply_form` this submission carried the notify
+        # group at all. It shares the checkbox's disabled state on purpose: a
+        # browser submits neither when the group is disabled, so the absence of
+        # both means "not offered" rather than "switched off". See
+        # `settings_view.GROUP_MARKERS`.
+        f'<input type="hidden" name="{NOTIFY_GROUP}" value="1"{off}>',
+    ]
     body += [
         # The delivery status is the honest answer to "will this work here",
         # re-detected on every render rather than frozen at startup.

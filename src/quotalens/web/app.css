@@ -345,6 +345,10 @@ dialog::backdrop{background:rgb(0 0 0/.55)}
 .vopt{display:flex;align-items:center;gap:var(--sp-2);min-height:var(--row-h);
   font-size:var(--fs-sm)}
 .vopt input:disabled+span{color:var(--txt-far)}
+/* A control that cannot be used reads as one that can, unless the label
+   says otherwise. Same treatment as the vendor options above; the notify
+   box puts its label before the input, so it takes :has() rather than +. */
+.fld:has(input:disabled)>label{color:var(--txt-far)}
 .vwhy{margin:0 0 var(--sp-2) var(--sp-4);font-size:var(--fs-xs);max-width:56ch}
 /* Settings sections are not dashboard cards. They borrowed .screen, which gave
    each one a border, a radius and an inset shadow -- boxes inside a box, reading

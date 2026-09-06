@@ -48,6 +48,24 @@ PANEL_KEYS = (
 )
 BOOLEAN_KEYS = ("notify", "notify_credits", "status_row")
 
+# A checkbox that cannot be submitted -- disabled because nothing on this host
+# can deliver a notification -- sends nothing, which on the wire is identical to
+# a box the user unticked. So the group carries a hidden marker with the same
+# disabled state, and the key is read only when the marker arrives with it.
+# Without this, opening the panel on a headless instance and pressing Save wrote
+# `notify: false` over a setting the user never touched.
+#
+# The check is on the *form*, never on the capability, deliberately. Deciding at
+# apply time from what this host can do would let a submission that omits the
+# field flip the key on one host and not another, and would make the panel's
+# contract depend on something the submitter cannot see.
+#
+# `notify_credits` and `status_row` need no marker: they are always rendered
+# enabled, so their absence really is an unticked box. One line each here the
+# day that stops being true.
+NOTIFY_GROUP = "notify_group"
+GROUP_MARKERS = {"notify": NOTIFY_GROUP}
+
 
 @dataclass(frozen=True)
 class SettingsView:
@@ -149,6 +167,11 @@ def apply_form(
         spec = CONFIG_KEYS_BY_NAME[key]
         raw: Any = form.get(key)
         if key in BOOLEAN_KEYS:
+            marker = GROUP_MARKERS.get(key)
+            if marker is not None and not form.get(marker):
+                # The form never offered this key. Leave it exactly as it is.
+                submitted[key] = _shown(settings, key)
+                continue
             raw = "1" if raw else "0"  # an unchecked box sends nothing at all
         submitted[key] = "" if raw is None else str(raw)
         try:
