@@ -82,15 +82,24 @@ class SpendReading:
 
     @property
     def used_text(self) -> str | None:
-        if self.conflict:
-            return None
-        return format_money(self.used_minor, self.exponent, self.currency)
+        # None already means "nothing to show here", which is the honest answer
+        # for a stored row whose exponent cannot be rendered. Raising took every
+        # page to 500 for as long as the row was the newest overage.
+        return None if self.conflict else _money_or_none(self.used_minor, self)
 
     @property
     def limit_text(self) -> str | None:
         if self.conflict or self.limit_minor is None:
             return None
-        return format_money(self.limit_minor, self.exponent, self.currency)
+        return _money_or_none(self.limit_minor, self)
+
+
+def _money_or_none(minor: int, reading: SpendReading) -> str | None:
+    """Rendered money, or None for a row whose exponent `format_money` refuses."""
+    try:
+        return format_money(minor, reading.exponent, reading.currency)
+    except ValueError:
+        return None
 
 
 class ParseError(ValueError):
@@ -308,9 +317,48 @@ def _dedupe(readings: list[QuotaReading]) -> list[QuotaReading]:
 # -- spend ----------------------------------------------------------------------
 
 
+# ISO 4217 minor units run 0 (JPY) to 4 (CLF); 6 leaves room for something odd
+# without leaving room for 60.
+PLAUSIBLE_EXPONENTS = range(0, 7)
+DEFAULT_EXPONENT = 2
+
+
+def _exponent(*candidates: int | None) -> int | None:
+    """The currency exponent to use, or ``None`` when the payload's is not plausible.
+
+    All-absent is fine and means ``DEFAULT_EXPONENT``; the first one that *is*
+    present decides, so ``None`` back from here unambiguously means "refuse".
+
+    The guard existed only in ``format_money``, which runs at *render* time. So
+    ``spend.used.exponent: 60`` was accepted, **stored**, and then took ``/``,
+    ``/api/health``, ``/api/quota/current`` and ``/api/dashboard`` to 500 for as
+    long as that row was the newest overage -- against the README's "if the
+    response could not be parsed, every value is replaced by an em dash and the
+    frame changes". Refusing it where the payload is parsed is what makes that
+    sentence true: the spend reading is ``None``, nothing is stored, and the
+    block lands in Diagnostics the way a missing ``utilization`` does.
+
+    Both payload paths are checked, not only the one the audit named.
+    ``_spend_from_overage_endpoint`` cannot carry this fault -- it hard-codes 2
+    because the endpoint sends no exponent -- but ``_spend_from_extra_usage``
+    reads ``decimal_places`` straight out of the payload and is the same hostile
+    reach as ``spend.used.exponent``.
+    """
+    for value in candidates:
+        if value is None:
+            continue
+        return value if value in PLAUSIBLE_EXPONENTS else None
+    return DEFAULT_EXPONENT
+
+
 def format_money(amount_minor: int, exponent: int, currency: str) -> str:
-    """``316`` with exponent ``2`` in USD renders as ``$3.16``. The one conversion."""
-    if exponent < 0 or exponent > 6:
+    """``316`` with exponent ``2`` in USD renders as ``$3.16``. The one conversion.
+
+    The guard stays: it is the belt for a bad row already sitting in an older
+    database, written before the parse-time check existed. Everything that
+    renders money catches it and shows an em dash rather than a 500.
+    """
+    if exponent not in PLAUSIBLE_EXPONENTS:
         raise ValueError(f"implausible currency exponent {exponent}")
     major = amount_minor / (10**exponent)
     text = f"{major:,.{exponent}f}"
@@ -331,16 +379,19 @@ def _spend_from_spend_block(spend: dict[str, Any]) -> SpendReading | None:
         return None
     limit = spend.get("limit")
     limit_minor = _as_int(limit.get("amount_minor")) if isinstance(limit, dict) else None
-    exponent = _as_int(used.get("exponent"))
-    if exponent is None and isinstance(limit, dict):
-        exponent = _as_int(limit.get("exponent"))
+    exponent = _exponent(
+        _as_int(used.get("exponent")),
+        _as_int(limit.get("exponent")) if isinstance(limit, dict) else None,
+    )
+    if exponent is None:
+        return None  # spend unknown, and nothing is stored
     currency = _as_str(used.get("currency")) or (
         _as_str(limit.get("currency")) if isinstance(limit, dict) else None
     )
     return SpendReading(
         used_minor=used_minor,
         limit_minor=limit_minor,
-        exponent=2 if exponent is None else exponent,
+        exponent=exponent,
         currency=currency or "USD",
         source="spend",
         is_enabled=_as_bool(spend.get("enabled")),
@@ -351,11 +402,13 @@ def _spend_from_spend_block(spend: dict[str, Any]) -> SpendReading | None:
 def _spend_from_extra_usage(extra: dict[str, Any]) -> SpendReading | None:
     if (used_minor := _as_int(extra.get("used_credits"))) is None:
         return None
-    exponent = _as_int(extra.get("decimal_places"))
+    exponent = _exponent(_as_int(extra.get("decimal_places")))
+    if exponent is None:
+        return None
     return SpendReading(
         used_minor=used_minor,
         limit_minor=_as_int(extra.get("monthly_limit")),
-        exponent=2 if exponent is None else exponent,
+        exponent=exponent,
         currency=_as_str(extra.get("currency")) or "USD",
         source="extra_usage",
         is_enabled=_as_bool(extra.get("is_enabled")),

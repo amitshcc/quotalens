@@ -266,3 +266,69 @@ def test_spend_last_resort_is_overage_endpoint() -> None:
 )
 def test_spend_missing_returns_none(payload: object) -> None:
     assert parse_spend(payload) is None
+
+
+# -- a hostile exponent is refused where the payload is parsed --------------------
+
+
+def _poison(exponent: object, *, both: bool = True) -> dict:
+    payload = copy.deepcopy(USAGE_LIVE_2026_09)
+    payload["spend"]["used"]["exponent"] = exponent
+    payload["spend"]["limit"]["exponent"] = exponent
+    if both:
+        payload["extra_usage"]["decimal_places"] = exponent
+    return payload
+
+
+@pytest.mark.parametrize("exponent", [60, -1, 7, 1000])
+def test_an_implausible_exponent_makes_the_spend_reading_unknown(exponent: int) -> None:
+    """It was accepted, stored, and then took every page to 500 at render time.
+
+    `format_money` refused it -- but only when something tried to draw it, by
+    which point the row was on disk and `/`, `/api/health`, `/api/quota/current`
+    and `/api/dashboard` all returned 500 for as long as it was the newest
+    overage row. README: "if the response could not be parsed, every value is
+    replaced by an em dash."
+    """
+    assert parse_spend(_poison(exponent), None) is None
+
+
+def test_the_windows_still_parse_when_only_the_spend_block_is_hostile() -> None:
+    """One bad block is not a bad payload: the readings are untouched."""
+    parsed = parse_usage(_poison(60))
+    assert {r.window for r in parsed.readings} >= {"five_hour", "seven_day"}
+
+
+def test_an_intact_extra_usage_block_still_answers(_=None) -> None:
+    """`spend` poisoned, `extra_usage` sound: the reading comes from the sound one.
+
+    Both payload paths read an exponent the server sends -- `spend.used.exponent`
+    and `extra_usage.decimal_places` -- so both are checked, not only the one the
+    audit named. Refusing one does not refuse the other.
+    """
+    reading = parse_spend(_poison(60, both=False), None)
+    assert reading is not None and reading.exponent == 2
+    assert reading.used_text == "$3.16"
+
+
+def test_an_absent_exponent_still_defaults_rather_than_refusing() -> None:
+    payload = copy.deepcopy(USAGE_LIVE_2026_09)
+    del payload["spend"]["used"]["exponent"]
+    del payload["spend"]["limit"]["exponent"]
+    del payload["extra_usage"]["decimal_places"]
+    reading = parse_spend(payload, None)
+    assert reading is not None and reading.exponent == 2
+
+
+def test_a_row_already_on_disk_with_a_bad_exponent_renders_as_an_em_dash() -> None:
+    """The belt `format_money` keeps, for a database written before the check.
+
+    Not hypothetical: the audit's reproduction stored one, and `dashboard.py`
+    raised on it for every range whose last overage row was that one.
+    """
+    from quotalens.parse import SpendReading
+
+    stored = SpendReading(316, 200, 60, "USD", "spend")
+    assert stored.used_text is None and stored.limit_text is None
+    with pytest.raises(ValueError):
+        format_money(316, 60, "USD")  # the guard itself is still there

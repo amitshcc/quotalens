@@ -424,7 +424,12 @@ def _spent_text(minor: int, rows: list) -> str:
         return EM_DASH
     from quotalens.parse import format_money
 
-    return format_money(minor, rows[-1].exponent, rows[-1].currency)
+    try:
+        return format_money(minor, rows[-1].exponent, rows[-1].currency)
+    except ValueError:
+        # A row stored before the parse-time exponent check existed. An em dash
+        # is what an unrenderable value gets; a 500 is not.
+        return EM_DASH
 
 
 def _database_row(size: int | None, period: str | None) -> str:

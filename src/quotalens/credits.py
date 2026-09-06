@@ -78,7 +78,10 @@ class Stretch:
         from quotalens.parse import format_money
 
         amount = self.amount_minor if minor is None else minor
-        return format_money(amount, self.exponent, self.currency)
+        try:
+            return format_money(amount, self.exponent, self.currency)
+        except ValueError:
+            return "\u2014"  # an old row with an exponent nobody can render
 
     def detail(self) -> str:
         """The event line. No timestamp: the event row is written *at* the start.

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import copy
 import time
 
 from fastapi.testclient import TestClient
 
+from conftest import make_client, make_handler
 from quotalens.api import create_app
 from quotalens.parse import QuotaReading
 
@@ -69,3 +71,50 @@ def test_docs_are_served_and_schema_hides_nothing_sensitive(settings, store, sec
     with _client(settings, store, secrets) as tc:
         assert tc.get("/api/docs").status_code == 200
         assert tc.get("/openapi.json").status_code == 200
+
+
+# -- a hostile spend exponent must not take the whole dashboard down --------------
+
+
+def _poisoned_usage(exponent: int = 60) -> dict:
+    from conftest import USAGE_LIVE_2026_09
+
+    payload = copy.deepcopy(USAGE_LIVE_2026_09)
+    payload["spend"]["used"]["exponent"] = exponent
+    payload["spend"]["limit"]["exponent"] = exponent
+    payload["extra_usage"]["decimal_places"] = exponent
+    return payload
+
+
+def test_a_hostile_spend_exponent_leaves_every_page_answering(settings, store, secrets) -> None:
+    """`spend.used.exponent: 60` was accepted, stored, and then 500ed everything.
+
+    Observed by the audit: the poll reported "ok", the overage row went to disk
+    with exponent 60, and `/`, `/api/health`, `/api/quota/current` and
+    `/api/dashboard` all returned 500 while that row was the newest -- against
+    "if the response could not be parsed, every value is replaced by an em dash".
+    """
+    handler = make_handler(usage=_poisoned_usage(), overage_status=404)
+    app = create_app(settings, store, secrets, client_factory=lambda c: make_client(handler, c))
+    with TestClient(app) as tc:
+        assert tc.post("/api/poll").json()["state"] == "ok"
+        for path in ("/", "/api/health", "/api/quota/current", "/api/dashboard", "/metrics"):
+            assert tc.get(path).status_code == 200, path
+        # Never stored: the row that used to sit there and re-raise on every range.
+        assert store.counts()["overage"] == 0
+        assert tc.get("/api/dashboard").json()["spend"] is None
+        # The windows in the same payload are unaffected.
+        current = tc.get("/api/quota/current").json()
+        assert {r["window"] for r in current["readings"]} >= {"five_hour", "seven_day"}
+
+
+def test_an_overage_row_written_before_the_check_still_renders(settings, store, secrets) -> None:
+    """The belt: a database from an older build. An em dash, not a 500."""
+    from quotalens.parse import SpendReading
+
+    store.record_overage(int(time.time()), SpendReading(316, 200, 60, "USD", "spend"))
+    app = create_app(settings, store, secrets)
+    with TestClient(app) as tc:
+        for path in ("/", "/api/health", "/api/quota/current", "/api/dashboard"):
+            assert tc.get(path).status_code == 200, path
+        assert "—" in tc.get("/").text
