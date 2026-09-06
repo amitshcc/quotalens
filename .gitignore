@@ -31,3 +31,16 @@ htmlcov/
 
 # local reference checkouts, never committed
 TEMP/
+
+# working prompts and the local agent definition — kept out of the public repo
+# on purpose. The versioned copies live in the private quotalens-web repo under
+# prompts/. Removed from history on 2026-09-06; see that repo for the record.
+design/prompts/
+docs/prompts/
+.claude/
+CLAUDE_CODE_PROMPT.md
+docs/V0.1.0-PROMPT.md
+docs/AUDIT-*.md
+docs/SECURITY-AUDIT-*.md
+docs/LAUNCH-READINESS-*.md
+docs/LAUNCH-TODO.md
