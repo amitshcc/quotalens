@@ -43,6 +43,13 @@ dev = [
     "ruff==0.16.*",  # same pin the lint job uses; a floating ruff reformats on upgrade
 ]
 
+[project.urls]
+Homepage = "https://quotalens.com"
+Documentation = "https://quotalens.com/install"
+Repository = "https://github.com/amitshcc/quotalens"
+Issues = "https://github.com/amitshcc/quotalens/issues"
+Changelog = "https://github.com/amitshcc/quotalens/releases"
+
 [project.scripts]
 quotalens = "quotalens.cli:main"
 

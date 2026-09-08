@@ -3,7 +3,9 @@
 [![CI](https://github.com/amitshcc/quotalens/actions/workflows/ci.yml/badge.svg)](https://github.com/amitshcc/quotalens/actions/workflows/ci.yml)
 
 Claude tells you what is consuming your quota right now, and then forgets.
-QuotaLens remembers.
+QuotaLens remembers. The short version, with the dashboard, is at
+[quotalens.com](https://quotalens.com); the install page is
+[quotalens.com/install](https://quotalens.com/install).
 
 It is a local, self-hosted monitor for Claude Pro and Max subscription usage. It
 polls your account every minute, keeps the series in a SQLite file you own, and
