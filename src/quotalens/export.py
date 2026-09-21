@@ -21,6 +21,7 @@ import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 
+from quotalens import weeks
 from quotalens.config import CLAUDE
 from quotalens.store import Store
 
@@ -69,6 +70,9 @@ EXPORTS: dict[str, ExportSpec] = {
         ts_column="started_at",
     ),
     "samples": ExportSpec("sample", ("ts", "source", "keysig", "payload"), raw=True),
+    # Derived from the week_reset events, not a table: see rows(). One row per weekly
+    # reset, the same rows /api/weeks serves.
+    "weeks": ExportSpec("weeks", weeks.EXPORT_COLUMNS, ts_column="closed_at"),
 }
 
 
@@ -91,6 +95,14 @@ def rows(
     store: Store, spec: ExportSpec, since_ts: int | None, unmasked: bool = False
 ) -> Iterator[dict[str, object]]:
     """Every row, oldest first, a page at a time so nothing is buffered."""
+    if spec.table == "weeks":
+        # Derived from events, not a SQL table. Small (one row per weekly reset), so it
+        # is built in full and filtered here rather than paged by rowid.
+        # week_rows is newest-first; the export streams oldest-first like every other table.
+        for row in reversed(weeks.week_rows(store)):
+            if since_ts is None or int(row["closed_at"]) >= since_ts:
+                yield {k: row.get(k) for k in spec.columns}
+        return
     last_rowid = 0
     columns = ", ".join(spec.columns)
     where = f" AND {spec.ts_column} >= ?" if since_ts is not None and spec.ts_column else ""

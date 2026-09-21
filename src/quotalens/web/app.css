@@ -178,6 +178,15 @@ tbody th a:hover{text-decoration:underline}
   gap:var(--sp-2) var(--sp-4);align-items:baseline}
 .pointers dt{font-family:var(--font-num);white-space:nowrap}
 .pointers dd{margin:0;color:var(--txt-dim)}
+
+/* weeks: the ledger table. Reuses .screen, .hsc, .bignum, .far; only the verdict
+   line, the caveat and the open-week tint are its own. No new tokens. */
+.weeks{margin-bottom:var(--sp-3)}
+.r-open th,.r-open td{background:var(--select)}
+.wk-verdict{margin:var(--sp-2) var(--sp-4);color:var(--txt);max-width:76ch}
+.wk-note{margin:0 var(--sp-4) var(--sp-4);font-size:var(--fs-sm)}
+.wk-note summary{color:var(--txt-far);cursor:pointer}
+.wk-note p{margin:var(--sp-2) 0 0;max-width:76ch;color:var(--txt-dim)}
 .pointers>:last-child{margin-bottom:0}
 
 /* attribution table + side panel */

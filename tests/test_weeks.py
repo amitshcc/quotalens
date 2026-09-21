@@ -282,3 +282,146 @@ def test_week_key_anchors_on_monday_01_utc() -> None:
     assert week_key(MON_A + 3600) == "2026-01-05"
     assert week_key(MON_A - 3600) == "2025-12-29", "just before Monday 01:00 is the prior week"
     assert week_key(MON_B - 1) == "2026-01-05", "the last second of the week is still the week"
+
+
+# -- the ledger rows, the verdict, and the export ---------------------------------
+
+
+def _reset(window: str, closed_at: int, closed_pct: float, cost, low, high, n, full) -> WeekReset:
+    return WeekReset(
+        window=window,
+        label=window,
+        closed_at=closed_at,
+        closed_pct=closed_pct,
+        opened_pct=0.0,
+        reset_at=iso(closed_at + 60),
+        next_reset_at=iso(closed_at + 60 + 7 * 86400),
+        reset_slip=0.5,
+        cost_per_full=cost,
+        cost_low=low,
+        cost_high=high,
+        usable_windows=n,
+        full_windows_left=full,
+    )
+
+
+def _record(store, reset: WeekReset) -> None:
+    store.record_event(WEEK_RESET_KIND, reset.detail(), ts=reset.closed_at)
+
+
+def test_week_rows_join_the_two_windows_of_one_reset(settings, store) -> None:
+    from quotalens.weeks import week_rows
+
+    close = MON_B - 60
+    _record(store, _reset("seven_day", close, 100.0, 12.0, 11.0, 13.0, 11, 8.3))
+    _record(store, _reset("limit:fable", close, 82.0, 12.8, 11.0, 14.5, 8, 7.8))
+
+    rows = week_rows(store)
+    assert len(rows) == 1
+    r = rows[0]
+    assert r["weekly_all_cost"] == 12.0 and r["weekly_all_n"] == 11
+    assert r["fable_cost"] == 12.8 and r["fable_n"] == 8
+    assert r["closed_pct"] == 100.0 and r["left_unused_pct"] == 0.0
+    assert r["full_windows_left"] == 8.3  # the weekly-all figure, not Fable's
+
+
+def test_verdict_says_do_not_overlap_when_the_iqrs_are_disjoint() -> None:
+    from quotalens.weeks import verdict
+
+    rows = [
+        {"weekly_all_cost": 9.0, "weekly_all_low": 7.1, "weekly_all_high": 11.0},
+        {"weekly_all_cost": 12.0, "weekly_all_low": 11.5, "weekly_all_high": 13.0},
+    ]
+    assert verdict(rows) == "Weekly cost per session: 9 vs 12 last week; ranges do not overlap."
+
+
+def test_verdict_says_overlap_when_the_iqrs_share_a_value() -> None:
+    from quotalens.weeks import verdict
+
+    rows = [
+        {"weekly_all_cost": 9.0, "weekly_all_low": 7.1, "weekly_all_high": 11.1},
+        {"weekly_all_cost": 12.0, "weekly_all_low": 10.0, "weekly_all_high": 14.8},
+    ]
+    assert verdict(rows).endswith("ranges overlap; no change detectable.")
+
+
+def test_verdict_needs_two_complete_weeks() -> None:
+    from quotalens.weeks import verdict
+
+    assert verdict([]) == "fewer than two complete weeks"
+    one = [{"weekly_all_cost": 9.0, "weekly_all_low": 7.0, "weekly_all_high": 11.0}]
+    assert verdict(one) == "fewer than two complete weeks"
+
+
+def test_the_api_and_export_serve_the_same_rows(settings, store, secrets) -> None:
+    import csv
+    import io
+
+    from fastapi.testclient import TestClient
+
+    from quotalens.api import create_app
+
+    _record(store, _reset("seven_day", MON_B - 60, 100.0, 12.0, 11.5, 13.0, 11, 8.3))
+    _record(store, _reset("seven_day", MON_C - 60, 99.0, 9.0, 7.1, 11.1, 13, 11.1))
+    app = create_app(settings, store, secrets)
+    app.state.qw.poller.status.state = "ok"
+
+    with TestClient(app) as tc:
+        api = tc.get("/api/weeks").json()
+        export = tc.get("/api/export.json?table=weeks").json()
+        rows_csv = list(csv.DictReader(io.StringIO(tc.get("/api/export.csv?table=weeks").text)))
+
+    assert [r["week"] for r in api["weeks"]] == [week_key(MON_C - 60), week_key(MON_B - 60)]
+    assert "ranges do not overlap" in api["verdict"]
+    # The export streams oldest-first; the API is newest-first. Same rows either way.
+    assert [r["closed_at"] for r in export["rows"]] == [str(MON_B - 60), str(MON_C - 60)] or [
+        int(r["closed_at"]) for r in export["rows"]
+    ] == [MON_B - 60, MON_C - 60]
+    assert len(rows_csv) == 2 and rows_csv[0]["weekly_all_cost"] in ("12.0", "12")
+
+
+# -- rendering the section --------------------------------------------------------
+
+
+def _render(rows, verdict_text: str):
+    from quotalens.dashboard import Dashboard, WeekRowView, WeeksView
+    from quotalens.render import _weeks
+
+    dash = object.__new__(Dashboard)
+    dash.weeks = WeeksView(
+        [WeekRowView(*r) for r in rows], verdict_text, "note text"
+    )
+    return _weeks(dash)
+
+
+def test_the_section_renders_with_two_complete_weeks() -> None:
+    open_row = ("21 Sep - 28 Sep · this week", "collecting", "collecting", "n=2",
+                "collecting", "n=1", "12%", "88%", "8.1", True)
+    week_c = ("14 Sep - 21 Sep", "21 Sep 01:00", "9", "7-11 · n=13",
+              "9", "4-14 · n=13", "100%", "0%", "11.1", False)
+    week_b = ("7 Sep - 14 Sep", "14 Sep 01:00", "12", "10-14 · n=17",
+              "11", "5-16 · n=16", "99%", "1%", "7.8", False)
+    verdict_text = "Weekly cost per session: 9 vs 12 last week; ranges do not overlap."
+    html = _render([open_row, week_c, week_b], verdict_text)
+
+    assert "Weeks — one row per weekly reset" in html
+    assert "collecting" in html and "ranges do not overlap" in html
+    assert html.count("<tr class") == 3  # three body rows; the header <tr> has no class
+    assert "Full sessions at reset" in html and "7-11 · n=13" in html
+
+
+def test_the_section_with_only_the_open_week_shows_collecting_and_says_insufficient() -> None:
+    open_row = ("21 Sep - 28 Sep · this week", "collecting", "collecting", "n=0",
+                "collecting", "", "—", "—", "—", True)
+    html = _render([open_row], "fewer than two complete weeks")
+    assert "collecting" in html
+    assert "fewer than two complete weeks" in html
+
+
+def test_an_empty_ledger_renders_nothing() -> None:
+    from quotalens.dashboard import Dashboard
+    from quotalens.render import _weeks
+
+    dash = object.__new__(Dashboard)
+    dash.weeks = None
+    assert _weeks(dash) == ""

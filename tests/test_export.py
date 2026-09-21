@@ -66,7 +66,7 @@ def test_every_table_exports_and_an_unknown_one_is_rejected(settings, store, sec
             assert body["table"] == EXPORTS[table].table
         assert tc.get("/api/export.csv?table=quota;DROP TABLE quota").status_code == 400
         assert tc.get("/api/export.json?table=nope").status_code == 400
-    assert set(EXPORTS) == {"quota", "events", "overage", "sessions", "samples"}
+    assert set(EXPORTS) == {"quota", "events", "overage", "sessions", "samples", "weeks"}
 
 
 def test_raw_samples_need_the_flag_and_carry_the_warning(settings, store, secrets) -> None:

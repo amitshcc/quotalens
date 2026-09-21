@@ -11,15 +11,22 @@ import json
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from itertools import pairwise
 from typing import Any
 
-from quotalens import credits, retention
+from quotalens import credits, retention, weeks
 from quotalens.alerts import ALERT_KIND, CLEARED_KIND, standing
 from quotalens.boost import BOOST_KIND, boosted_windows
 from quotalens.boost import recorded as recorded_boosts
-from quotalens.budget import Budget, BudgetReport, WeeklyLimit, compute_budgets
+from quotalens.budget import (
+    Budget,
+    BudgetReport,
+    WeeklyLimit,
+    compute_budgets,
+    week_key,
+    window_costs_by_week,
+)
 from quotalens.burn import BurnResult, burn_rate, min_trusted_span, split_at_resets
 from quotalens.config import Settings
 from quotalens.parse import SpendReading, humanize
@@ -375,6 +382,29 @@ class BudgetView:
 
 
 @dataclass
+class WeekRowView:
+    """One weekly reset as a ledger row, every number already a string."""
+
+    week_label: str
+    closed_text: str
+    all_cost: str  # weekly-all median cost of a full session that week
+    all_spread: str  # p25-p75 and n, in the monospace secondary style
+    fable_cost: str
+    fable_spread: str
+    used_text: str  # of the weekly pool, at the close
+    left_text: str  # 100 minus closed_pct
+    full_text: str  # full sessions a fresh week's pool buys at that cost
+    is_open: bool  # the current, still-collecting week
+
+
+@dataclass
+class WeeksView:
+    rows: list[WeekRowView]
+    verdict: str
+    note: str  # the <details> caveat: why this never says "limit raised"
+
+
+@dataclass
 class Control:
     key: str
     label: str
@@ -409,6 +439,7 @@ class Dashboard:
     history: HistoryView
     budget: BudgetReport | None = None  # the weekly limits, in session windows
     budget_view: BudgetView | None = None
+    weeks: WeeksView | None = None  # the ledger: one row per weekly reset
     cooldown_s: int = 0  # seconds until another forced poll is allowed
     events: list[dict[str, Any]] = field(default_factory=list)
     vendor_status: list[VendorStatus] = field(default_factory=list)
@@ -708,6 +739,7 @@ def build_dashboard(
         history=history,
         budget=budget,
         budget_view=_budget_view(budget, now),
+        weeks=_weeks_view(store, latest, sessions_all, now, withheld, boost_ts),
         cooldown_s=cooldown_s,
         events=events,
         vendor_status=list(vendor_status or []),
@@ -888,6 +920,117 @@ def _budget_view(report: BudgetReport | None, now: int) -> BudgetView | None:
         None,
     )
     return BudgetView(rows, _binding_note(primary, now) if primary else "", report.constraint)
+
+
+def _week_label(week: str) -> str:
+    """"31 Aug - 7 Sep" for the Monday-anchored week whose key is ``week`` (an ISO date)."""
+    start = datetime.strptime(week, "%Y-%m-%d")
+    end = start + timedelta(days=7)
+    return f"{start.day} {start:%b} – {end.day} {end:%b}"
+
+
+def _cost_cells(
+    cost: float | None, low: float | None, high: float | None, n: int, collecting: bool
+) -> tuple[str, str]:
+    """The median and its ``p25-p75`` spread and n, in the budget table's secondary style."""
+    if cost is None:
+        return ("collecting" if collecting else EM_DASH), (f"n={n}" if n else "")
+    spread = f"{low:.0f}–{high:.0f} · n={n}" if low is not None and high is not None else f"n={n}"
+    return f"{cost:.0f}", spread
+
+
+def _full_text(full: float | None) -> str:
+    return EM_DASH if full is None else f"{full:.1f}"
+
+
+def _fable_key(latest: list[QuotaRow]) -> str | None:
+    return next((r.window for r in latest if is_subcapped(r.window)), None)
+
+
+def _open_week_row(
+    latest: list[QuotaRow],
+    sessions_all: list[SessionWindow],
+    now: int,
+    withheld: bool,
+    boost_ts: Sequence[int],
+) -> WeekRowView:
+    """The current week, still open: the live running figures rather than a close."""
+    wk = week_key(now)
+    all_costs = window_costs_by_week(sessions_all, "seven_day", now, boost_ts).get(wk, [])
+    all_sum = weeks.summarize(all_costs)
+    fable_key = _fable_key(latest)
+    fable_costs = (
+        window_costs_by_week(sessions_all, fable_key, now, boost_ts).get(wk, [])
+        if fable_key
+        else []
+    )
+    fable_sum = weeks.summarize(fable_costs)
+    seven = next((r for r in latest if r.window == "seven_day"), None)
+    pct = None if withheld or seven is None else seven.pct
+    all_cost, all_spread = _cost_cells(
+        all_sum.cost_per_full, all_sum.cost_low, all_sum.cost_high, all_sum.usable_windows, True
+    )
+    fable_cost, fable_spread = _cost_cells(
+        fable_sum.cost_per_full,
+        fable_sum.cost_low,
+        fable_sum.cost_high,
+        fable_sum.usable_windows,
+        True,
+    )
+    return WeekRowView(
+        f"{_week_label(wk)} · this week",
+        "collecting",
+        all_cost,
+        all_spread,
+        fable_cost,
+        fable_spread,
+        EM_DASH if pct is None else f"{pct:.0f}%",
+        EM_DASH if pct is None else f"{max(0.0, 100.0 - pct):.0f}%",
+        _full_text(all_sum.full_windows_left),
+        True,
+    )
+
+
+def _weeks_view(
+    store: Store,
+    latest: list[QuotaRow],
+    sessions_all: list[SessionWindow],
+    now: int,
+    withheld: bool,
+    boost_ts: Sequence[int],
+) -> WeeksView | None:
+    """The ledger table: the open week first, then every recorded reset, most recent first."""
+    rows_data = weeks.week_rows(store)
+    rows = [_open_week_row(latest, sessions_all, now, withheld, boost_ts)]
+    for r in rows_data:
+        all_cost, all_spread = _cost_cells(
+            r["weekly_all_cost"],
+            r["weekly_all_low"],
+            r["weekly_all_high"],
+            r["weekly_all_n"],
+            False,
+        )
+        fable_cost, fable_spread = _cost_cells(
+            r["fable_cost"], r["fable_low"], r["fable_high"], r["fable_n"], False
+        )
+        rows.append(
+            WeekRowView(
+                _week_label(r["week"]),
+                f"{day_month(local(int(r['closed_at'])))} {clock(int(r['closed_at']))}",
+                all_cost,
+                all_spread,
+                fable_cost,
+                fable_spread,
+                f"{r['closed_pct']:.0f}%",
+                f"{r['left_unused_pct']:.0f}%",
+                _full_text(r["full_windows_left"]),
+                False,
+            )
+        )
+    # Nothing recorded and no session windows to cost the open week from: no section.
+    if len(rows) == 1 and rows[0].all_cost in (EM_DASH, "collecting") and rows[0].all_spread == "":
+        return None
+    return WeeksView(rows, weeks.verdict(rows_data), weeks.LEDGER_NOTE)
 
 
 def _change_over_range(rows: list[QuotaRow], rng: ResolvedRange) -> str:
@@ -1637,6 +1780,26 @@ def as_json(dash: Dashboard) -> dict[str, Any]:
             "status": dash.spend.status_text,
         },
         "budget": None if dash.budget is None else dash.budget.as_dict(),
+        "weeks": None
+        if dash.weeks is None
+        else {
+            "verdict": dash.weeks.verdict,
+            "rows": [
+                {
+                    "week": r.week_label,
+                    "closed": r.closed_text,
+                    "weekly_all": r.all_cost,
+                    "weekly_all_spread": r.all_spread,
+                    "fable": r.fable_cost,
+                    "fable_spread": r.fable_spread,
+                    "used": r.used_text,
+                    "left_unused": r.left_text,
+                    "full_sessions_at_reset": r.full_text,
+                    "open": r.is_open,
+                }
+                for r in dash.weeks.rows
+            ],
+        },
         "notes": dash.notes,
         "diagnostics": dash.diagnostics,
         "events": dash.events,

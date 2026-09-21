@@ -20,6 +20,7 @@ from quotalens.dashboard import (
     Dashboard,
     SeriesView,
     SessionRowView,
+    WeekRowView,
     WindowView,
     clock,
 )
@@ -351,6 +352,7 @@ def _main(dash: Dashboard) -> str:
         + _toolbar(dash)
         + _chart(dash)
         + _history(dash)
+        + _weeks(dash)
         + _attribution()
         + "</div>"
         + _side(dash)
@@ -907,6 +909,49 @@ def _spark(r: SessionRowView) -> str:
         '<svg class="sp" viewBox="0 0 60 18" width="60" height="18" aria-hidden="true">'
         f'<polyline points="{r.spark}" fill="none" stroke="var(--s1)" '
         'stroke-width="var(--trace-ghost)"/></svg>'
+    )
+
+
+def _weeks(dash: Dashboard) -> str:
+    """The ledger, below History: one row per weekly reset, most recent first.
+
+    The cost per session is the week's median with its p25-p75 spread and n, in the same
+    monospace secondary style the budget table uses. The verdict compares the two newest
+    complete weeks; the note says why that is all it says.
+    """
+    w = dash.weeks
+    if w is None or not w.rows:
+        return ""
+    body = "".join(_week_row(r) for r in w.rows)
+    verdict = f'<p class="wk-verdict m">{e(w.verdict)}</p>' if w.verdict else ""
+    note = (
+        '<details class="wk-note"><summary>What a shift here means</summary>'
+        f'<p class="far">{e(w.note)}</p></details>'
+    )
+    return (
+        '<section class="screen weeks"><div class="hsc"><table>'
+        "<caption>Weeks — one row per weekly reset, most recent first. "
+        "Cost per session is the week's median, with its p25–p75 spread and n</caption>"
+        "<thead><tr><th>Week</th><th>Closed at</th>"
+        '<th class="n">Weekly all cost/session</th>'
+        '<th class="n">Fable cost/session</th>'
+        '<th class="n">Used</th><th class="n">Left unused</th>'
+        '<th class="n">Full sessions at reset</th></tr></thead>'
+        f"<tbody>{body}</tbody></table></div>{verdict}{note}</section>"
+    )
+
+
+def _week_row(r: WeekRowView) -> str:
+    mark = ' <span class="far">collecting</span>' if r.is_open else ""
+    return (
+        f'<tr class="{"r-open" if r.is_open else ""}">'
+        f'<th scope="row">{e(r.week_label)}{mark}</th>'
+        f'<td class="m">{e(r.closed_text)}</td>'
+        f'<td class="n">{e(r.all_cost)}{_note(r.all_spread)}</td>'
+        f'<td class="n">{e(r.fable_cost)}{_note(r.fable_spread)}</td>'
+        f'<td class="n">{e(r.used_text)}</td>'
+        f'<td class="n">{e(r.left_text)}</td>'
+        f'<td class="n bignum">{e(r.full_text)}</td></tr>'
     )
 
 

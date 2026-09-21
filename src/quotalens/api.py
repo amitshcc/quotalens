@@ -600,6 +600,17 @@ def create_app(
             **({} if report is None else report.as_dict()),
         }
 
+    @app.get("/api/weeks")
+    def weeks_ledger() -> dict[str, Any]:
+        """One row per weekly reset, most recent first, plus the two-week verdict.
+
+        Its own route rather than a key on the budget payload: the budget answers a
+        question about the week you are in, this answers one about the weeks behind you,
+        and it changes on a different clock. Same rows as ``table=weeks`` in the export.
+        """
+        rows = weeks.week_rows(state.store)
+        return {"now_ts": int(time.time()), "weeks": rows, "verdict": weeks.verdict(rows)}
+
     @app.get("/api/burn")
     def burn(
         window: str | None = Query(None, max_length=100),

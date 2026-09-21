@@ -242,11 +242,31 @@ def _stats(per_full: list[float]) -> tuple[float | None, float | None, float | N
     return round(float(median(per_full)), 2), round(q1, 2), round(q3, 2)
 
 
-def week_reset(transition: ResetTransition, week_costs: Sequence[Any]) -> WeekReset:
-    """Enrich a bare transition with the just-closed week's cost, as it stood then."""
+@dataclass(frozen=True)
+class WeekCost:
+    """A week's cost of a full session: median, its spread, and the sessions it buys."""
+
+    cost_per_full: float | None
+    cost_low: float | None  # p25
+    cost_high: float | None  # p75
+    usable_windows: int
+    full_windows_left: float | None  # sessions a fresh week's pool buys at this cost
+
+
+def summarize(week_costs: Sequence[Any]) -> WeekCost:
+    """The median, spread and full-session capacity for one week's session windows.
+
+    Shared by the recorded ledger and the live open-week row, so the two cannot end up
+    computing the same figure two ways.
+    """
     per_full = sorted(c.per_full_window for c in week_costs)
     cost, low, high = _stats(per_full)
-    full_left = round(100.0 / cost, 2) if cost else None
+    return WeekCost(cost, low, high, len(per_full), round(100.0 / cost, 2) if cost else None)
+
+
+def week_reset(transition: ResetTransition, week_costs: Sequence[Any]) -> WeekReset:
+    """Enrich a bare transition with the just-closed week's cost, as it stood then."""
+    summary = summarize(week_costs)
     return WeekReset(
         window=transition.window,
         label=transition.label,
@@ -256,11 +276,11 @@ def week_reset(transition: ResetTransition, week_costs: Sequence[Any]) -> WeekRe
         reset_at=transition.reset_at,
         next_reset_at=transition.next_reset_at,
         reset_slip=reset_slip_s(transition.reset_at, transition.next_reset_at),
-        cost_per_full=cost,
-        cost_low=low,
-        cost_high=high,
-        usable_windows=len(per_full),
-        full_windows_left=full_left,
+        cost_per_full=summary.cost_per_full,
+        cost_low=summary.cost_low,
+        cost_high=summary.cost_high,
+        usable_windows=summary.usable_windows,
+        full_windows_left=summary.full_windows_left,
     )
 
 
@@ -273,6 +293,113 @@ def ledger(store: Any) -> list[WeekReset]:
     """The recorded resets as :class:`WeekReset`, most recent close first."""
     out = [WeekReset.from_detail(e.detail) for e in recorded(store)]
     return sorted((r for r in out if r is not None), key=lambda r: r.closed_at, reverse=True)
+
+
+WEEKLY_ALL_WINDOW = "seven_day"  # the "Weekly all models" column in the ledger table
+
+# What the section's <details> may not say. The ratio moving cannot tell a larger weekly
+# pool from a re-weighted session pool — both pools carry the same model prices, so mix
+# cancels — so the ledger shows the shift and its spread and claims nothing stronger.
+LEDGER_NOTE = (
+    "A shift here is the weekly pool getting larger relative to the session pool, or the "
+    "session pool being re-weighted. The ratio cannot tell those apart, so this never says "
+    "the limit was raised — only that the cost per session moved, and by how much."
+)
+
+
+def _is_fable(window: str) -> bool:
+    return window.startswith("limit:") and "fable" in window
+
+
+def _cols(reset: WeekReset | None) -> dict[str, Any]:
+    """One window's cost columns, or nulls when that window did not reset this week."""
+    if reset is None:
+        return {"cost_per_full": None, "cost_low": None, "cost_high": None, "usable_windows": 0}
+    return {
+        "cost_per_full": reset.cost_per_full,
+        "cost_low": reset.cost_low,
+        "cost_high": reset.cost_high,
+        "usable_windows": reset.usable_windows,
+    }
+
+
+def week_rows(store: Any) -> list[dict[str, Any]]:
+    """One flat row per weekly reset, most recent first: what /api/weeks and the export serve.
+
+    The two windows recorded at one reset (weekly-all and Fable) are joined into a single
+    row, keyed by the shared close moment. The weekly-all reading drives the pool figures
+    (percent closed, sessions left), because it measures the whole pool.
+    """
+    by_close: dict[int, dict[str, WeekReset]] = {}
+    for reset in ledger(store):
+        by_close.setdefault(reset.closed_at, {})[reset.window] = reset
+    rows: list[dict[str, Any]] = []
+    for closed_at in sorted(by_close, reverse=True):
+        group = by_close[closed_at]
+        primary = group.get(WEEKLY_ALL_WINDOW) or next(iter(group.values()))
+        fable = next((r for w, r in group.items() if _is_fable(w)), None)
+        allc = _cols(group.get(WEEKLY_ALL_WINDOW))
+        fablec = _cols(fable)
+        rows.append(
+            {
+                "week": week_key(closed_at),
+                "closed_at": closed_at,
+                "closed_pct": primary.closed_pct,
+                "left_unused_pct": round(100.0 - primary.closed_pct, 1),
+                "reset_slip_s": primary.reset_slip,
+                "weekly_all_cost": allc["cost_per_full"],
+                "weekly_all_low": allc["cost_low"],
+                "weekly_all_high": allc["cost_high"],
+                "weekly_all_n": allc["usable_windows"],
+                "fable_cost": fablec["cost_per_full"],
+                "fable_low": fablec["cost_low"],
+                "fable_high": fablec["cost_high"],
+                "fable_n": fablec["usable_windows"],
+                "full_windows_left": (group.get(WEEKLY_ALL_WINDOW) or primary).full_windows_left,
+            }
+        )
+    return rows
+
+
+def _overlaps(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """Do two weeks' inter-quartile ranges share any value?"""
+    return not (
+        a["weekly_all_high"] < b["weekly_all_low"] or b["weekly_all_high"] < a["weekly_all_low"]
+    )
+
+
+def verdict(rows: list[dict[str, Any]]) -> str:
+    """The one sentence, from the newest two complete weeks. Nothing stronger — see LEDGER_NOTE."""
+    complete = [
+        r for r in rows if r["weekly_all_cost"] is not None and r["weekly_all_low"] is not None
+    ]
+    if len(complete) < 2:
+        return "fewer than two complete weeks"
+    new, old = complete[0], complete[1]
+    a, b = new["weekly_all_cost"], old["weekly_all_cost"]
+    tail = (
+        "ranges overlap; no change detectable."
+        if _overlaps(new, old)
+        else "ranges do not overlap."
+    )
+    return f"Weekly cost per session: {a:.0f} vs {b:.0f} last week; {tail}"
+
+
+EXPORT_COLUMNS = (
+    "week",
+    "closed_at",
+    "closed_pct",
+    "left_unused_pct",
+    "weekly_all_cost",
+    "weekly_all_low",
+    "weekly_all_high",
+    "weekly_all_n",
+    "fable_cost",
+    "fable_low",
+    "fable_high",
+    "fable_n",
+    "full_windows_left",
+)
 
 
 def _sessions(store: Any) -> list[SessionWindow]:
