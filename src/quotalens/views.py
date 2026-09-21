@@ -18,7 +18,11 @@ RANGE_PRESETS: dict[str, int] = {
     "24h": 24 * 3600,
     "7d": 7 * 86400,
 }
-RANGE_KEYS = (*RANGE_PRESETS, "all")
+# Neighbours of the presets, not durations: the current and previous weekly windows,
+# resolved from the newest weekly resets_at so the x-axis runs Monday to Monday.
+WEEK_RANGES = ("week", "lastweek")
+WEEK_LABELS = {"week": "this week", "lastweek": "last week"}
+RANGE_KEYS = (*RANGE_PRESETS, *WEEK_RANGES, "all")
 LOOKBACKS: dict[str, int] = {"5m": 300, "15m": 900, "1h": 3600, "6h": 6 * 3600}
 REFRESH: dict[str, int] = {"off": 0, "10s": 10, "30s": 30, "1m": 60, "5m": 300}
 SORTS = ("consumed",)  # the default order, most recent first, has no key
@@ -122,13 +126,26 @@ def resolve_range(
     oldest_ts: int | None,
     now: int,
     session: tuple[int, int] | None = None,
+    *,
+    this_week: tuple[int, int] | None = None,
+    last_week: tuple[int, int] | None = None,
+    weekly_only: bool = False,
 ) -> ResolvedRange:
     """Pick the concrete window.
 
     Auto = the current 5-hour session window, start to reset, when one is running;
-    otherwise the smallest preset that covers all the data.
+    otherwise the smallest preset that covers all the data. ``week``/``lastweek`` are the
+    weekly windows (Monday to Monday), and a weekly-only series selection with an ``auto``
+    range resolves to ``week`` so the weekly lines read as one climb.
     """
     data_span = max(0, now - oldest_ts) if oldest_ts is not None else 0
+    collecting_now = oldest_ts is None or data_span < COLLECTING_UNDER_S
+    if opts.range_key == "week" and this_week is not None:
+        return ResolvedRange(*this_week, "week", "this week", False, collecting_now, data_span)
+    if opts.range_key == "lastweek" and last_week is not None:
+        return ResolvedRange(*last_week, "lastweek", "last week", False, collecting_now, data_span)
+    if opts.range_key == AUTO and weekly_only and this_week is not None:
+        return ResolvedRange(*this_week, "week", "this week", True, collecting_now, data_span)
     if opts.range_key == AUTO and session is not None and session[1] > now:
         collecting = oldest_ts is None or data_span < COLLECTING_UNDER_S
         return ResolvedRange(

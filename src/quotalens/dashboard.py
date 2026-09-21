@@ -413,6 +413,17 @@ class Control:
 
 
 @dataclass
+class SeriesChip:
+    """A chip above the chart that isolates one series (or, for All, shows every series)."""
+
+    key: str  # the window key, or "" for the All chip
+    label: str
+    href: str  # a plain click: show this series alone (All clears every hide)
+    toggle_href: str  # a shift-click: add or remove this series from what is shown
+    active: bool  # the series is currently visible (All: nothing is hidden)
+
+
+@dataclass
 class Dashboard:
     now: int
     epistemic: Epistemic
@@ -435,6 +446,7 @@ class Dashboard:
     range_controls: list[Control]
     lookback_controls: list[Control]
     refresh_controls: list[Control]
+    series_chips: list[SeriesChip]
     lookback_s: int
     history: HistoryView
     budget: BudgetReport | None = None  # the weekly limits, in session windows
@@ -517,7 +529,24 @@ def build_dashboard(
     sessions_all = [window_from_row(r) for r in store.sessions(limit=500, order="recent")]
     current = next((w for w in sessions_all if w.is_current), None)
     session = (current.started_at, current.ends_at) if current else None
-    rng = resolve_range(view, oldest, now, session)
+    this_week, last_week = _weekly_windows(latest)
+    # A weekly-only series selection (session and everything non-weekly hidden) wants the
+    # Monday-to-Monday axis, so an auto range resolves to the current weekly window.
+    visible = [w for w in order if w not in view.hidden]
+    weekly_only = bool(visible) and all(weeks.is_weekly_window(w) for w in visible)
+    rng = resolve_range(
+        view,
+        oldest,
+        now,
+        session,
+        this_week=this_week,
+        last_week=last_week,
+        weekly_only=weekly_only,
+    )
+    # Chips in slot order (Session, Weekly all, then model limits), the order the meters
+    # are in, rather than the payload order the chart happens to receive.
+    chip_order = sorted(order, key=lambda w: slots.get(w, 9))
+    series_chips = _series_chips(chip_order, labels={r.window: r.label for r in latest}, view=view)
     # Fetch a little before the range so the reset split and the burn lookback have context.
     fetch_from = min(rng.start, now - max(lookback_s * 4, HERO_HOURS * 3600))
     if current:
@@ -735,6 +764,7 @@ def build_dashboard(
         refresh_controls=[
             Control(k, k, view.href(refresh_key=k), REFRESH[k] == refresh_s) for k in REFRESH
         ],
+        series_chips=series_chips,
         lookback_s=lookback_s,
         history=history,
         budget=budget,
@@ -815,6 +845,52 @@ def _polled_text(last_ok: int | None, now: int) -> str:
         return "never polled"
     age = now - last_ok
     return f"polled {age}s ago" if age < 120 else f"last ok {clock(last_ok)}"
+
+
+WEEK_LENGTH_S = 7 * 86400
+
+
+def _weekly_windows(
+    latest: list[QuotaRow],
+) -> tuple[tuple[int, int] | None, tuple[int, int] | None]:
+    """(this_week, last_week) as (start, end) epochs, from the newest weekly resets_at.
+
+    The current weekly window runs from the newest weekly reset minus seven days to that
+    reset; last week is the seven days before it. ``None`` when no weekly reset is known.
+    """
+    resets = [
+        int(dt.timestamp())
+        for row in latest
+        if weeks.is_weekly_window(row.window) and (dt := parse_iso(row.resets_at)) is not None
+    ]
+    if not resets:
+        return None, None
+    end = max(resets)
+    this_week = (end - WEEK_LENGTH_S, end)
+    return this_week, (this_week[0] - WEEK_LENGTH_S, this_week[0])
+
+
+def _series_chips(order: list[str], labels: dict[str, str], view: ViewOptions) -> list[SeriesChip]:
+    """The picker above the chart: All, then one chip per chartable series in slot order.
+
+    Each chip's plain link isolates its series (every other one hidden); its ``toggle_href``
+    adds or removes just that one, for the shift-click path. All clears every hide. The
+    labels come from the readings, so a fourth weekly limit gets a fifth chip for free.
+    """
+    everyone = frozenset(order)
+    clear = view.href(hidden=frozenset())
+    chips = [SeriesChip("", "All", clear, clear, not view.hidden)]
+    for window in order:
+        chips.append(
+            SeriesChip(
+                window,
+                short_label(window, labels.get(window)),
+                view.href(hidden=everyone - {window}),  # show this one alone
+                view.href(hidden=view.toggled(window)),  # add/remove just this one
+                window not in view.hidden,
+            )
+        )
+    return chips
 
 
 def weekly_limits(rows: list[QuotaRow], withheld: bool = False) -> list[WeeklyLimit]:

@@ -10,6 +10,7 @@ Switch what it returns while running:
     curl -X POST http://127.0.0.1:8799/mode/429        # rate limited (Retry-After 30)
     curl -X POST http://127.0.0.1:8799/mode/down       # connection closed -> stale later
     curl -X POST http://127.0.0.1:8799/mode/reset      # the session window rolls over now
+    curl -X POST http://127.0.0.1:8799/mode/weekreset  # the weekly windows roll over now
 
 Standard library only. Binds loopback only. Not part of the installed package.
 """
@@ -19,10 +20,18 @@ from __future__ import annotations
 import json
 import sys
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-STATE = {"mode": "ok", "pct": 20.0, "session_end": time.time() + 3 * 3600, "weekly": 40.0}
+STATE = {
+    "mode": "ok",
+    "pct": 20.0,
+    "session_end": time.time() + 3 * 3600,
+    "weekly": 40.0,
+    # A stable weekly reset time in STATE, so resets_at only moves when a week actually
+    # rolls over (the weekreset mode). Recomputing it each poll would drift it forward.
+    "weekly_end": time.time() + 3 * 86400,
+}
 
 
 def _iso(ts: float) -> str:
@@ -37,7 +46,7 @@ def _usage() -> dict:
     STATE["pct"] = min(100.0, STATE["pct"] + 0.5)  # half a point per poll
     STATE["weekly"] = min(100.0, STATE["weekly"] + 0.1)
     end = STATE["session_end"]
-    weekly_end = (datetime.now(UTC) + timedelta(days=3)).isoformat()
+    weekly_end = _iso(STATE["weekly_end"])
     pct = round(STATE["pct"], 1)
     return {
         "five_hour": {"utilization": pct, "resets_at": _iso(end)},
@@ -96,6 +105,13 @@ class Handler(BaseHTTPRequestHandler):
             mode = self.path.split("/", 2)[2]
             if mode == "reset":
                 STATE["session_end"] = time.time()
+                mode = "ok"
+            elif mode == "weekreset":
+                # Roll the weekly windows over: a new resets_at seven days out and the
+                # level back to zero. The poller sees resets_at move and records a
+                # week_reset event, so the whole ledger path runs end to end.
+                STATE["weekly_end"] = time.time() + 7 * 86400
+                STATE["weekly"] = 0.0
                 mode = "ok"
             STATE["mode"] = mode
             self._send(200, json.dumps({"mode": STATE["mode"]}).encode())

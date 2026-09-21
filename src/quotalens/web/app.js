@@ -4,6 +4,7 @@
   "use strict";
   var root = document.documentElement;
   var KEY = "quotalens-theme";
+  var HIDE_KEY = "quotalens-hide"; // the last series choice, next to the theme
   root.dataset.js = "1"; // progressive enhancement: hides no-script-only controls
   try {
     var saved = localStorage.getItem(KEY);
@@ -25,6 +26,24 @@
   function setQuery(query, push) {
     var url = query ? "/?" + query : "/";
     if (push) history.pushState({ q: query }, "", url); else history.replaceState({ q: query }, "", url);
+    saveHide(query);
+  }
+  /* Persist the series choice next to the theme. Read back only when the URL carries
+     no hide= of its own, so a shared link always wins over the last local choice. */
+  function saveHide(query) {
+    try { localStorage.setItem(HIDE_KEY, new URLSearchParams(query).get("hide") || ""); }
+    catch (err) { /* private mode or blocked storage: the URL is the only state */ }
+  }
+  function restoreHide() {
+    try {
+      var params = new URLSearchParams(currentQuery());
+      if (params.has("hide")) return false;
+      var saved = localStorage.getItem(HIDE_KEY);
+      if (!saved) return false;
+      params.set("hide", saved);
+      navigate("/?" + params.toString(), false);
+      return true;
+    } catch (err) { return false; }
   }
   function fragmentUrl() {
     var q = currentQuery();
@@ -154,6 +173,16 @@
   // list is adding it to "the SPA swallows this click", so check what the link
   // is for before you extend it.
   document.addEventListener("click", function (ev) {
+    // Series chips are handled first, because shift-click is meaningful here (toggle one
+    // series in or out) rather than the new-tab gesture it is for every other link.
+    var chip = ev.target.closest ? ev.target.closest("a.sq") : null;
+    if (chip) {
+      if (ev.metaKey || ev.ctrlKey || ev.button !== 0) return; // still let new-tab clicks through
+      ev.preventDefault();
+      var toggle = chip.dataset.toggleHref;
+      navigate(ev.shiftKey && toggle ? toggle : chip.getAttribute("href"), true);
+      return;
+    }
     var target = ev.target.closest ? ev.target.closest("#t, a.rb, a.el-link, a.sess, th a[data-sort]") : null;
     if (!target) return;
     if (target.id === "t") { toggleTheme(); return; }
@@ -273,6 +302,7 @@
   document.addEventListener("DOMContentLoaded", function () {
     adoptServerCooldown();
     setInterval(function () { tick(); applyCooldown(); }, 1000);
+    restoreHide(); // apply the last series choice when the URL does not carry its own
     schedule();
   });
 })();

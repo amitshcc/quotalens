@@ -111,10 +111,10 @@ button:hover{background:var(--hover);color:var(--txt)}
   font-size:var(--fs-sm);color:var(--txt-dim)}
 .ctl{display:inline-flex;align-items:center;gap:var(--sp-1);margin:0}
 .ctl .lbl{margin-right:var(--sp-1)}
-.rb{color:var(--txt-dim);text-decoration:none;padding:2px var(--sp-2);border:var(--hair) solid transparent;
+.rb,.sq{color:var(--txt-dim);text-decoration:none;padding:2px var(--sp-2);border:var(--hair) solid transparent;
   border-radius:var(--r-1);font-family:var(--font-num);font-size:var(--fs-xs)}
-.rb:hover{background:var(--hover);color:var(--txt)}
-.rb.on{color:var(--txt);border-color:var(--hair-firm);background:var(--chrome)}
+.rb:hover,.sq:hover{background:var(--hover);color:var(--txt)}
+.rb.on,.sq.on{color:var(--txt);border-color:var(--hair-firm);background:var(--chrome)}
 button:disabled{opacity:.5;cursor:default}
 select{font:inherit;font-family:var(--font-num);font-size:var(--fs-xs);color:var(--txt);background:var(--chrome);
   border:var(--hair) solid var(--hair-firm);border-radius:var(--r-1);padding:2px var(--sp-2)}

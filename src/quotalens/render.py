@@ -613,11 +613,38 @@ def _toolbar(dash: Dashboard) -> str:
     """
     return (
         '<nav class="toolbar" aria-label="Chart controls">'
+        + _series_picker(dash)
         + _range_form(dash)
         + _controls("lookback", dash.lookback_controls, "lookback")
         + '<span class="spacer"></span>'
         + _controls("refresh", dash.refresh_controls, "auto")
         + "</nav>"
+    )
+
+
+def _series_picker(dash: Dashboard) -> str:
+    """Chips left of the range control: click shows one series, shift-click toggles it.
+
+    Real links onto the existing ``hide=`` URLs, so the picker works with no JavaScript;
+    ``app.js`` intercepts them like every other view link and reads ``data-toggle-href``
+    for the shift-click path.
+    """
+    chips = dash.series_chips
+    if not chips:
+        return ""
+    links = []
+    for c in chips:
+        cls = "sq on" if c.active else "sq"
+        current = ' aria-current="true"' if c.active else ""
+        # No data-series here: it would print the raw window key (e.g. limit:fable) in the
+        # page, which the display never does. The hrefs carry the key URL-encoded instead.
+        links.append(
+            f'<a class="{cls}" href="{e(c.href)}" data-toggle-href="{e(c.toggle_href)}"{current}>'
+            f"{e(c.label)}</a>"
+        )
+    return (
+        '<span class="ctl series" role="group" aria-label="series">'
+        f'<span class="lbl">series</span>{"".join(links)}</span>'
     )
 
 
