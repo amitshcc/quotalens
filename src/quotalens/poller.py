@@ -14,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from quotalens import credits, notify, retention
+from quotalens import credits, notify, retention, weeks
 from quotalens.alerts import (
     ALERT_KIND,
     CLEARED_KIND,
@@ -369,6 +369,7 @@ class Poller:
         for name, check in (
             ("reset_model", self._check_reset_model),
             ("threshold", self._check_threshold),
+            ("week_reset", lambda n, pa: self._check_week_reset(n, previous, pa)),
             ("notify", lambda n, pa: self._check_notify(n, previous, pa)),
             ("credits", lambda n, _pa: self._check_credits(n)),
         ):
@@ -400,6 +401,18 @@ class Poller:
             log.info("quota boost: %s", boost.detail())
             if boost.window == RATE_WINDOW:
                 self._rate_window_boosted = True
+
+    def _check_week_reset(self, now: int, previous: list[QuotaRow], parsed: UsageParse) -> None:
+        """Record each weekly window's reset once, with the just-closed week's cost.
+
+        Like ``_check_boost``, detected here so the ledger, the API and the export read
+        one conclusion. A reading the parser had to recover is not trusted enough to
+        pin a week's cost on, so the generic fallback is skipped.
+        """
+        for reset in weeks.record_live(
+            self._store, previous, parsed.readings, now, not parsed.fallback_used
+        ):
+            log.info("week reset: %s closed at %s", reset.window, reset.closed_at)
 
     def adopt(self, settings: Settings) -> None:
         """Take a new settings value without restarting.

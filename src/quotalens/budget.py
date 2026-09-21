@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from statistics import median
 
 from quotalens.boost import boosted_windows
@@ -168,6 +169,51 @@ def window_costs(
         weekly_pts = max(0.0, delta.end - delta.start)
         out.append(WindowCost(window.started_at, session_pct, weekly_pts, weekly_pts / session_pct))
     return out
+
+
+# Every observed weekly reset landed at exactly Monday 01:00 UTC (see the v2 analysis
+# in design/prompts/25-v2-weeks.md). The week a session belongs to is the one that
+# Monday-01:00Z opens, so the ledger and the chart's Monday-to-Monday axis agree.
+WEEK_ANCHOR_HOUR_UTC = 1
+
+
+def week_key(ts: int) -> str:
+    """ISO date of the Monday whose 01:00 UTC opens the reset week containing ``ts``."""
+    dt = datetime.fromtimestamp(ts, tz=UTC) - timedelta(hours=WEEK_ANCHOR_HOUR_UTC)
+    monday = (dt - timedelta(days=dt.weekday())).date()
+    return monday.isoformat()
+
+
+def window_costs_by_week(
+    windows: list[SessionWindow],
+    key: str,
+    now: int,
+    boost_ts: Sequence[int] = (),
+) -> dict[str, list[WindowCost]]:
+    """:func:`window_costs`, bucketed by the reset week each session window falls in.
+
+    ``key`` is the weekly limit whose cost is measured, exactly as :func:`window_costs`
+    takes it. The bucket is keyed by :func:`week_key`.
+
+    A session window that straddles a weekly reset — a Monday-01:00Z boundary lands
+    strictly inside it — belongs to neither week and is dropped, the way the analysis
+    did: its weekly delta spans two pools and is a cost for neither. (The signature in
+    the prompt reads ``(windows, boost_ts, limits)``; a single-limit ``key`` mirrors
+    :func:`window_costs` and is what every caller here needs.)
+    """
+    costs = {c.started_at: c for c in window_costs(windows, key, now, boost_ts)}
+    by_week: dict[str, list[WindowCost]] = {}
+    for window in windows:
+        cost = costs.get(window.started_at)
+        if cost is None:
+            continue
+        # ends_at is the reset instant; the window's readings are strictly before it,
+        # so classify its close by ends_at - 1 to keep a window that ends exactly on a
+        # Monday boundary inside the week it was worked in, not the empty next one.
+        if week_key(window.started_at) != week_key(window.ends_at - 1):
+            continue  # a weekly reset falls inside it: a cost for neither week
+        by_week.setdefault(week_key(window.started_at), []).append(cost)
+    return by_week
 
 
 def compute_budget(

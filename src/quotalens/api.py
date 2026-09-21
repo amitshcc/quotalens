@@ -25,7 +25,7 @@ from fastapi.responses import (
     StreamingResponse,
 )
 
-from quotalens import __version__, notify, origin_guard, retention, status
+from quotalens import __version__, notify, origin_guard, retention, status, weeks
 from quotalens.burn import burn_rate
 from quotalens.config import (
     CONFIG_KEYS_BY_NAME,
@@ -177,6 +177,10 @@ def create_app(
         # keep_underivable: retention may have removed the quota rows behind older
         # windows, and this table is then the only record of them.
         rebuild_sessions(store, int(time.time()), keep_underivable=True)
+        # Weekly resets are recomputable from the samples and needed by the ledger, so
+        # they backfill on start the way session windows do rather than waiting for a
+        # command. Idempotent: a repeat start writes nothing.
+        weeks.backfill(store, int(time.time()))
         if settings.poll_enabled:
             poller.start()
         status_task = asyncio.create_task(_watch_status(watcher))

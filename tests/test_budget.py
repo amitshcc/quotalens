@@ -10,6 +10,7 @@ difference to the result is not tested by asserting the result.
 from __future__ import annotations
 
 import time
+from datetime import UTC, datetime
 
 import pytest
 
@@ -19,7 +20,9 @@ from quotalens.budget import (
     WeeklyLimit,
     compute_budget,
     compute_budgets,
+    week_key,
     window_costs,
+    window_costs_by_week,
 )
 from quotalens.runway import MIN_COMPARE_WINDOWS, SESSION_LENGTH_S
 from quotalens.sessions import Delta, SessionWindow
@@ -361,3 +364,72 @@ def test_the_note_still_gives_the_clock_when_the_budget_is_unknown() -> None:
 def test_the_sub_cap_constraint_survives_the_rewording() -> None:
     html = _panel([limit(93.0), limit(100.0, "limit:fable", subcap=True)], clean_history(10.0))
     assert "none of the 7% left on Weekly — all models can be used on it" in html
+
+
+# -- cost per week, not one median for all time -----------------------------------
+
+# A Monday, so the week arithmetic is legible. 2026-01-05 is a Monday.
+MON_A = int(datetime(2026, 1, 5, 1, 0, 0, tzinfo=UTC).timestamp())
+MON_B = MON_A + 7 * 86400
+NOW_WK = MON_B + 30 * 86400  # long after both weeks, so every window is complete
+
+
+def at(started_at: int, weekly_pts: float, *, key: str = "seven_day") -> SessionWindow:
+    """A complete session window run to 100%, starting at ``started_at``."""
+    return SessionWindow(
+        started_at=started_at,
+        ends_at=started_at + SESSION_LENGTH_S,
+        is_current=False,
+        peak_pct=100.0,
+        final_pct=100.0,
+        samples=300,
+        first_ts=started_at,
+        last_ts=started_at + SESSION_LENGTH_S,
+        deltas={key: Delta(10.0, 10.0 + weekly_pts, False)},
+        covered_s=SESSION_LENGTH_S,
+    )
+
+
+def test_windows_are_grouped_by_the_reset_week_they_fall_in() -> None:
+    windows = [at(MON_A + 3600 + i * 20000, 10.0) for i in range(3)]
+    windows += [at(MON_B + 3600 + i * 20000, 20.0) for i in range(2)]
+    by_week = window_costs_by_week(windows, "seven_day", NOW_WK)
+
+    assert set(by_week) == {"2026-01-05", "2026-01-12"}
+    assert [c.per_full_window for c in by_week["2026-01-05"]] == [10.0, 10.0, 10.0]
+    assert [c.per_full_window for c in by_week["2026-01-12"]] == [20.0, 20.0]
+
+
+def test_a_window_that_straddles_a_reset_belongs_to_neither_week() -> None:
+    """Its weekly delta spans two pools, so it costs neither. Dropped, as the analysis did."""
+    inside_a = at(MON_A + 3600, 10.0)
+    straddler = at(MON_B - 3600, 10.0)  # begins in week A, ends after Monday 01:00 in week B
+    by_week = window_costs_by_week([inside_a, straddler], "seven_day", NOW_WK)
+
+    assert week_key(straddler.started_at) != week_key(straddler.ends_at - 1)
+    assert set(by_week) == {"2026-01-05"}
+    assert len(by_week["2026-01-05"]) == 1
+
+
+def test_the_per_window_exclusions_still_apply_within_a_week() -> None:
+    """A reset inside a window is dropped before the week bucket sees it."""
+    good = at(MON_A + 3600, 10.0)
+    started = MON_A + 3600 + SESSION_LENGTH_S + 600
+    reset_inside = SessionWindow(
+        started_at=started,
+        ends_at=started + SESSION_LENGTH_S,
+        is_current=False,
+        peak_pct=100.0,
+        final_pct=100.0,
+        samples=300,
+        first_ts=started,
+        last_ts=started + SESSION_LENGTH_S,
+        deltas={"seven_day": Delta(90.0, 5.0, True)},  # the weekly limit reset inside it
+        covered_s=SESSION_LENGTH_S,
+    )
+    by_week = window_costs_by_week([good, reset_inside], "seven_day", NOW_WK)
+    assert len(by_week["2026-01-05"]) == 1
+
+
+def test_a_week_with_no_costable_windows_is_absent() -> None:
+    assert window_costs_by_week([], "seven_day", NOW_WK) == {}
