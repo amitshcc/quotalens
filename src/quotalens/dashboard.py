@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from itertools import pairwise
 from typing import Any
 
-from quotalens import credits, retention, weeks
+from quotalens import credits, retention, subcap, weeks
 from quotalens.alerts import ALERT_KIND, CLEARED_KIND, standing
 from quotalens.boost import BOOST_KIND, boosted_windows
 from quotalens.boost import recorded as recorded_boosts
@@ -706,6 +706,9 @@ def build_dashboard(
     violation = store.recent_events(limit=1, kind=MODEL_VIOLATION_KIND)
     if violation:
         diagnostics.append(violation[0].detail)
+    subcap_detail = subcap.latest_detail(store)
+    if subcap_detail:
+        diagnostics.append(subcap_detail)
     if chart.projection_note:
         diagnostics.append(chart.projection_note)
     if status.ignored_blocks:

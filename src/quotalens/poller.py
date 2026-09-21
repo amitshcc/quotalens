@@ -14,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from quotalens import credits, notify, retention, weeks
+from quotalens import credits, notify, retention, subcap, weeks
 from quotalens.alerts import (
     ALERT_KIND,
     CLEARED_KIND,
@@ -37,7 +37,12 @@ from quotalens.client import (
 from quotalens.config import PRUNE_EVERY_S, Settings
 from quotalens.parse import ParseError, SpendReading, UsageParse, parse_spend, parse_usage
 from quotalens.secrets import Redactor, SecretStore, SecretStoreError
-from quotalens.sessions import MODEL_VIOLATION_KIND, RATE_WINDOW, reset_model_violation
+from quotalens.sessions import (
+    MODEL_VIOLATION_KIND,
+    RATE_WINDOW,
+    reset_model_violation,
+    window_from_row,
+)
 from quotalens.sessions import rebuild_recent as rebuild_recent_sessions
 from quotalens.store import QuotaRow, Store
 
@@ -370,6 +375,7 @@ class Poller:
             ("reset_model", self._check_reset_model),
             ("threshold", self._check_threshold),
             ("week_reset", lambda n, pa: self._check_week_reset(n, previous, pa)),
+            ("subcap", self._check_subcap),
             ("notify", lambda n, pa: self._check_notify(n, previous, pa)),
             ("credits", lambda n, _pa: self._check_credits(n)),
         ):
@@ -413,6 +419,36 @@ class Poller:
             self._store, previous, parsed.readings, now, not parsed.fallback_used
         ):
             log.info("week reset: %s closed at %s", reset.window, reset.closed_at)
+
+    def _check_subcap(self, now: int, parsed: UsageParse) -> None:
+        """Verify the 'Fable's 100% is half of weekly' model against this poll's data.
+
+        Invariant 1 uses the current readings; invariant 2 uses the current session
+        window's deltas. A violation is recorded (once per window per day) and surfaced in
+        Diagnostics; if it ever fires, the budget note stops claiming the rule holds.
+        """
+        all_pct = next((r.pct for r in parsed.readings if r.window == "seven_day"), None)
+        fable_key = next(
+            (
+                r.window
+                for r in parsed.readings
+                if r.window.startswith("limit:") and "fable" in r.window
+            ),
+            None,
+        )
+        if fable_key is None:
+            return  # no Fable meter on this plan: the rule does not apply
+        fable_pct = next((r.pct for r in parsed.readings if r.window == fable_key), None)
+        delta_all = delta_fable = None
+        window_start = now
+        rows = self._store.sessions(limit=1, order="recent")
+        if rows:
+            window = window_from_row(rows[0])
+            window_start = window.started_at
+            da, df = window.deltas.get("seven_day"), window.deltas.get(fable_key)
+            delta_all = None if da is None or da.reset else da.end - da.start
+            delta_fable = None if df is None or df.reset else df.end - df.start
+        subcap.check(self._store, all_pct, fable_pct, delta_all, delta_fable, window_start, now)
 
     def adopt(self, settings: Settings) -> None:
         """Take a new settings value without restarting.
