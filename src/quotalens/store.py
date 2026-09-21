@@ -370,6 +370,23 @@ class Store:
                 (ts if ts is not None else now_ts(), kind, detail),
             )
 
+    def delete_events(self, kind: str, timestamps: Sequence[int]) -> int:
+        """Remove events of ``kind`` at these timestamps. Returns the count removed.
+
+        For a derived event whose *shape* changed and must be recomputed -- the backfill
+        upgrades stale ``week_reset`` rows this way rather than leaving two schemas in the
+        table. Nothing else is touched.
+        """
+        stamps = sorted({int(t) for t in timestamps})
+        if not stamps:
+            return 0
+        marks = ",".join("?" * len(stamps))
+        with self._tx() as cur:
+            cur.execute(
+                f"DELETE FROM event WHERE kind = ? AND ts IN ({marks})", (kind, *stamps)
+            )
+            return cur.rowcount
+
     def replace_sessions(self, windows: Iterable[Any], derivable_from: int | None = None) -> None:
         """Replace the derived session windows in one transaction (idempotent).
 

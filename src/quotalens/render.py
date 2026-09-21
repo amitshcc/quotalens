@@ -950,18 +950,18 @@ def _weeks(dash: Dashboard) -> str:
     if w is None or not w.rows:
         return ""
     body = "".join(_week_row(r) for r in w.rows)
-    verdict = f'<p class="wk-verdict m">{e(w.verdict)}</p>' if w.verdict else ""
+    verdict = f'<p class="wk-verdict">{e(w.verdict)}</p>' if w.verdict else ""
     note = (
         '<details class="wk-note"><summary>What a shift here means</summary>'
         f'<p class="far">{e(w.note)}</p></details>'
     )
     return (
         '<section class="screen weeks"><div class="hsc"><table>'
-        "<caption>Weeks — one row per weekly reset, most recent first. "
-        "Cost per session is the week's median, with its p25–p75 spread and n</caption>"
+        "<caption>Weeks — one row per week, most recent first. "
+        "“One full session used” is how much of the week a full 5-hour session cost, "
+        "as a median with its usual range</caption>"
         "<thead><tr><th>Week</th><th>Closed at</th>"
-        '<th class="n">Weekly all cost/session</th>'
-        '<th class="n">Fable cost/session</th>'
+        '<th class="n">One full session used</th>'
         '<th class="n">Used</th><th class="n">Left unused</th>'
         '<th class="n">Full sessions at reset</th></tr></thead>'
         f"<tbody>{body}</tbody></table></div>{verdict}{note}</section>"
@@ -970,15 +970,20 @@ def _weeks(dash: Dashboard) -> str:
 
 def _week_row(r: WeekRowView) -> str:
     mark = ' <span class="far">collecting</span>' if r.is_open else ""
+    # "One full session used": weekly-all primary + its usual range, then a Fable line
+    # in the same cell when the plan has a Fable meter.
+    used = f'<span class="rt">{e(r.used_primary)}</span>{_note(r.used_secondary)}'
+    if r.fable_primary:
+        used += f'<br><span class="rt">{e(r.fable_primary)}</span>{_note(r.fable_secondary)}'
+    reset = f'<span class="rt">{e(r.reset_primary)}</span>{_note(r.reset_secondary)}'
     return (
         f'<tr class="{"r-open" if r.is_open else ""}">'
         f'<th scope="row">{e(r.week_label)}{mark}</th>'
         f'<td class="m">{e(r.closed_text)}</td>'
-        f'<td class="n">{e(r.all_cost)}{_note(r.all_spread)}</td>'
-        f'<td class="n">{e(r.fable_cost)}{_note(r.fable_spread)}</td>'
+        f'<td class="n">{used}</td>'
         f'<td class="n">{e(r.used_text)}</td>'
         f'<td class="n">{e(r.left_text)}</td>'
-        f'<td class="n bignum">{e(r.full_text)}</td></tr>'
+        f'<td class="n">{reset}</td></tr>'
     )
 
 

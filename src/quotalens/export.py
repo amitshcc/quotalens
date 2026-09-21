@@ -100,7 +100,9 @@ def rows(
         # is built in full and filtered here rather than paged by rowid.
         # week_rows is newest-first; the export streams oldest-first like every other table.
         for row in reversed(weeks.week_rows(store)):
-            if since_ts is None or int(row["closed_at"]) >= since_ts:
+            closed = row.get("closed_at")
+            # The still-open current week has no close time; keep it (it is the newest row).
+            if since_ts is None or closed is None or int(closed) >= since_ts:
                 yield {k: row.get(k) for k in spec.columns}
         return
     last_rowid = 0
