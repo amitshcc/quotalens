@@ -518,6 +518,12 @@ def _budget(dash: Dashboard) -> str:
     notes = "".join(
         f'<p class="far">{e(text)}</p>' for text in (view.binding, view.constraint) if text
     )
+    note = (
+        '<details class="wk-note"><summary>Why the two meters differ</summary>'
+        f'<p class="far">{e(view.note)}</p></details>'
+        if view.note
+        else ""
+    )
     return (
         '<section class="screen budget"><table>'
         "<caption>What your remaining weekly headroom will buy, in 5-hour sessions</caption>"
@@ -526,7 +532,7 @@ def _budget(dash: Dashboard) -> str:
         '<th class="n">Full sessions left</th>'
         '<th class="n">At your typical session</th>'
         '<th class="n">Each full session costs</th></tr></thead>'
-        f"<tbody>{''.join(rows)}</tbody></table>{notes}</section>"
+        f"<tbody>{''.join(rows)}</tbody></table>{notes}{note}</section>"
     )
 
 

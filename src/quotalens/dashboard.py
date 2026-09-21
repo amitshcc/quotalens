@@ -378,7 +378,8 @@ class BudgetRowView:
 class BudgetView:
     rows: list[BudgetRowView]
     binding: str  # which of budget and clock runs out first, in words
-    constraint: str  # how a spent sub-cap limits the headroom that is left
+    constraint: str  # which meter binds, shown under the table
+    note: str = ""  # the <details> caveat about the Fable half-of-pool model, when present
 
 
 @dataclass
@@ -772,7 +773,7 @@ def build_dashboard(
         lookback_s=lookback_s,
         history=history,
         budget=budget,
-        budget_view=_budget_view(budget, now),
+        budget_view=_budget_view(budget, now, subcap_unverified=subcap.any_recorded(store)),
         weeks=_weeks_view(store, latest, sessions_all, now, withheld, boost_ts),
         cooldown_s=cooldown_s,
         events=events,
@@ -929,23 +930,40 @@ def _sessions_text(value: float | None) -> str:
 
 
 def _binding_note(item: Budget, now: int) -> str:
-    """Which of the two constraints runs out first. That is the finding, not the numbers."""
+    """The clock versus the budget, said as two facts, not one sum. Which runs out first."""
     if item.clock_windows is None or item.reset_ts is None:
         return ""
     when_text = when(local(item.reset_ts), now)
-    time_for = f"There is time for {item.clock_windows:.1f} more sessions before this resets "
     if item.full_windows is None:
-        return f"{time_for}{when_text}."
-    budget_for = f"and budget for {item.full_windows:.1f}"
-    verdict = (
-        "the clock is what runs out"
-        if item.clock_windows < item.full_windows
-        else "the budget is what runs out"
+        return f"The clock fits {item.clock_windows:.1f} more sessions before {when_text}."
+    binds = "budget" if item.full_windows < item.clock_windows else "clock"
+    return (
+        f"The clock fits {item.clock_windows:.1f} more sessions before {when_text}. "
+        f"The budget covers {item.full_windows:.1f} at your measured cost. "
+        f"The {binds} runs out first."
     )
-    return f"{time_for}{when_text}, {budget_for} — {verdict}."
 
 
-def _budget_view(report: BudgetReport | None, now: int) -> BudgetView | None:
+# The <details> note under the budget table, in the register of SUBCAP_NOTE. It names no
+# plan on purpose: it applies to every plan that includes a Fable meter, and to none that
+# does not (Pro and standard seats), which is why it is shown only when a Fable meter exists.
+BUDGET_SUBCAP_NOTE = (
+    "Fable usage counts toward the one weekly pool and may use up to 50% of it, so the "
+    "Fable meter's 100% is half the pool and it is consumed only by Fable models, while the "
+    "all-models meter is consumed by everything. At a model mix around half Fable the two "
+    "meters move at about the same speed, and the all-models meter — which starts from the "
+    "same 100% but drains from everything — runs out first. Fable would show fewer sessions "
+    "than all-models only when Fable is well over half of usage."
+)
+BUDGET_SUBCAP_UNVERIFIED = (
+    " The continuous check of this rule against your readings has fired, so it may not hold "
+    "for this account — see Diagnostics."
+)
+
+
+def _budget_view(
+    report: BudgetReport | None, now: int, subcap_unverified: bool = False
+) -> BudgetView | None:
     """Word the budget for the page. The derivation decides; this only names things.
 
     Every unknown carries its reason into the cell. "—" cannot be told apart from
@@ -999,7 +1017,13 @@ def _budget_view(report: BudgetReport | None, now: int) -> BudgetView | None:
         (b for b in report.budgets if not b.subcap and b.clock_windows is not None),
         None,
     )
-    return BudgetView(rows, _binding_note(primary, now) if primary else "", report.constraint)
+    # The half-of-pool caveat only makes sense — and is only true — where a Fable meter exists.
+    note = ""
+    if any(b.subcap for b in report.budgets):
+        note = BUDGET_SUBCAP_NOTE + (BUDGET_SUBCAP_UNVERIFIED if subcap_unverified else "")
+    return BudgetView(
+        rows, _binding_note(primary, now) if primary else "", report.constraint, note
+    )
 
 
 def _week_label(week: str) -> str:

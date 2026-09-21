@@ -294,22 +294,38 @@ def compute_budget(
     )
 
 
-def constraint_note(budgets: list[Budget]) -> str:
-    """What the meters cannot say on their own: that one limit forbids spending another.
+def _short_label(label: str) -> str:
+    """"Weekly — Fable" -> "Fable", so the constraint sentence reads naturally."""
+    return label.replace("Weekly — ", "")
 
-    Fable is half the weekly pool. When Fable is spent and the weekly pool is not,
-    the remaining pool is real but cannot be spent on Fable models — and two
-    meters that each look fine on their own will not tell you that.
+
+def constraint_note(budgets: list[Budget]) -> str:
+    """Which meter actually binds, since two meters that each look fine will not say so.
+
+    When a sub-cap (Fable) is spent while the pool is not, that is the finding: the
+    remaining pool is real but cannot be spent on Fable. Otherwise the finding is which
+    of the meters runs out first in sessions — the all-models meter usually, because it
+    drains from everything while Fable is only half the pool and only Fable models.
     """
     spent = [b for b in budgets if b.subcap and b.headroom_pct == 0.0]
     parents = [b for b in budgets if not b.subcap and (b.headroom_pct or 0.0) > 0.0]
-    if not spent or not parents:
-        return ""
-    names = " and ".join(b.label for b in spent)
-    parent = parents[0]
+    if spent and parents:
+        names = " and ".join(b.label for b in spent)
+        parent = parents[0]
+        return (
+            f"{names} is spent, so none of the {parent.headroom_pct:.0f}% left on "
+            f"{parent.label} can be used on it."
+        )
+    known = [b for b in budgets if b.full_windows is not None]
+    if len(known) < 2:
+        return ""  # nothing to compare (a Pro seat has one meter, so no note)
+    binding = min(known, key=lambda b: b.full_windows or 0.0)
+    loosest = max((b for b in known if b is not binding), key=lambda b: b.full_windows or 0.0)
+    other = _short_label(loosest.label)
     return (
-        f"{names} is spent, so none of the {parent.headroom_pct:.0f}% left on "
-        f"{parent.label} can be used on it."
+        f"{binding.label} is the limit that binds: {binding.full_windows:.1f} sessions. "
+        f"{other} alone would allow {loosest.full_windows:.1f}, so at your current model mix "
+        f"the {other} cap is not what stops you."
     )
 
 
