@@ -171,3 +171,36 @@ def test_settings_dialog_links_about(app) -> None:
         html = tc.get("/").text
     dialog = re.search(r"<dialog.*?</dialog>", html, re.S).group(0)
     assert '<a href="/about" id="about-link">About</a>' in dialog
+
+
+# -- the API --------------------------------------------------------------------
+
+
+def test_api_version_and_health(app, pypi, monkeypatch) -> None:
+    monkeypatch.setattr(updates, "upgrade_command", lambda prefix=None: "pip install -U quotalens")
+    with TestClient(app) as tc:
+        before = tc.get("/api/version").json()
+        assert before == {
+            "current": __version__,
+            "latest": None,
+            "checked_ts": None,
+            "error": None,
+            "update_available": False,
+            "upgrade_command": "pip install -U quotalens",
+        }
+        assert tc.get("/api/health").json()["latest_version"] is None
+        checked = tc.post("/api/version/check").json()
+        assert checked["accepted"] is True and checked["latest"] == "99.0.0"
+        assert checked["update_available"] is True and checked["checked_ts"]
+        health = tc.get("/api/health").json()
+        assert health["latest_version"] == "99.0.0"
+        assert health["update_checked_ts"] == checked["checked_ts"]
+        again = tc.post("/api/version/check").json()
+    assert again["accepted"] is False and 0 < again["retry_in_s"] <= 60
+    assert pypi.calls == 1  # the second press never left the machine
+
+
+def test_api_version_check_is_origin_guarded(app, pypi) -> None:
+    with TestClient(app) as tc:
+        res = tc.post("/api/version/check", headers={"Origin": EVIL})
+    assert res.status_code == 403 and pypi.calls == 0

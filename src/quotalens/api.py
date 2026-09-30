@@ -557,10 +557,13 @@ def create_app(
         overall = "never_polled" if never_polled else poller_status.state
         now = int(time.time())
         collector = collector_state(poller_status, state.settings.poll_interval_s, now)
+        update = updates.stored_state(state.store)
         return {
             "status": overall,
             "version": __version__,
             "profile": state.settings.profile or "default",
+            "latest_version": update.latest,
+            "update_checked_ts": update.checked_ts,
             "now_ts": now,
             "started_ts": poller_status.started_ts,
             "uptime_s": now - poller_status.started_ts,
@@ -580,6 +583,35 @@ def create_app(
                 "Run `quotalens probe`."
             ),
         }
+
+    def _version_body(accepted: bool | None = None, retry_in_s: int = 0) -> dict[str, Any]:
+        update = updates.stored_state(state.store)
+        body: dict[str, Any] = {
+            "current": update.current,
+            "latest": update.latest,
+            "checked_ts": update.checked_ts,
+            "error": update.error,
+            "update_available": update.available,
+            "upgrade_command": updates.upgrade_command(),
+        }
+        if accepted is not None:
+            body["accepted"] = accepted
+            body["retry_in_s"] = retry_in_s
+        return body
+
+    @app.get("/api/version")
+    def version() -> dict[str, Any]:
+        """The installed version and what PyPI last said; read from the database, no request."""
+        return _version_body()
+
+    @app.post("/api/version/check")
+    async def version_check() -> dict[str, Any]:
+        """Ask PyPI now. Skips the 24 h rule, not the 60 s one (`accepted` says which)."""
+        now = int(time.time())
+        wait = updates.manual_wait(state.store, now)
+        if not wait:
+            await asyncio.to_thread(updates.check, state.store, now, True)
+        return _version_body(accepted=not wait, retry_in_s=wait)
 
     @app.get("/api/quota/current")
     def quota_current() -> dict[str, Any]:

@@ -19,3 +19,9 @@ def test_every_anchor_link_resolves_to_a_heading():
     anchors = set(re.findall(r"\]\(#([^)]+)\)", README))
     assert anchors, "README has no anchor links"
     assert anchors <= headings, anchors - headings
+
+
+def test_readme_says_what_the_update_check_sends_and_how_to_stop_it():
+    assert "asks pypi.org for the latest version" in README
+    assert "QUOTALENS_NO_UPDATE_CHECK=1" in README
+    assert "It never updates itself." in README

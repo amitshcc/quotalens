@@ -366,6 +366,31 @@ valid session cookie, so QuotaLens talks to claude.ai through
 browser's TLS and HTTP/2 fingerprint. If you ever see a `blocked` state on
 `/api/health`, try `QUOTALENS_IMPERSONATE=safari` (default `chrome`).
 
+Once a day it asks pypi.org for the latest version (`User-Agent:
+quotalens/<version>`, nothing else). Turn it off in Settings or with
+`QUOTALENS_NO_UPDATE_CHECK=1`. It never updates itself.
+
+## About and updates
+
+`/about` (the footer's version number links to it) shows the installed version,
+the latest one PyPI reported and when it was last asked, the Python and install
+method, the data directory, database, profile and port, and the links. **Check
+for updates** asks now; it skips the daily schedule but not a one-minute limit
+between asks. When a newer release exists the footer adds "X available" and the
+settings gear gets a small neutral dot. No banner, no colour.
+
+The page shows the command to run for how you installed it (`pipx upgrade
+quotalens`, `uv tool upgrade quotalens` or `pip install -U quotalens`); QuotaLens
+never runs it. A failed check (offline, PyPI down) is recorded, shown as
+"Couldn't reach PyPI at 14:05", and retried at the next daily slot; it is never
+an alert. Only plain release numbers are compared (`2.0.1` over `2.0.0`);
+pre-releases are ignored.
+
+`GET /api/version` returns `{current, latest, checked_ts, error,
+update_available, upgrade_command}` from what was last stored, and
+`POST /api/version/check` asks now. `/api/health` also carries `latest_version`
+and `update_checked_ts`.
+
 ## Security note
 
 The session cookie is equivalent to your claude.ai password. QuotaLens stores
