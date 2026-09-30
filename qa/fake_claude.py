@@ -31,6 +31,7 @@ STATE = {
     # A stable weekly reset time in STATE, so resets_at only moves when a week actually
     # rolls over (the weekreset mode). Recomputing it each poll would drift it forward.
     "weekly_end": time.time() + 3 * 86400,
+    "grant_end": time.time() + 36 * 86400,
 }
 
 
@@ -52,6 +53,15 @@ def _usage() -> dict:
         "five_hour": {"utilization": pct, "resets_at": _iso(end)},
         "seven_day": {"utilization": round(STATE["weekly"], 1), "resets_at": weekly_end},
         "nimbus_quill": {"utilization": 0.0, "resets_at": None},
+        # A credit grant, not a quota window: a dollar credit with an expiry, never charted.
+        "iguana_necktie": {
+            "utilization": 8.5,
+            "resets_at": _iso(STATE["grant_end"]),
+            "limit_dollars": 250,
+            "used_dollars": 21.25,
+            "remaining_dollars": 228.75,
+            "locked_reason": None,
+        },
         "limits": [
             {
                 "kind": "session",
