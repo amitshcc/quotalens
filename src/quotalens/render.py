@@ -295,7 +295,15 @@ def render_app(dash: Dashboard) -> str:
     return _header(dash) + _main(dash)
 
 
+# A dot in the gear's top-right corner, outside the teeth, in the chrome colour:
+# neutral on purpose. The presentation attributes stand in for CSS, which has no
+# bytes left in its budget.
+UPDATE_DOT = '<circle cx="14.2" cy="1.8" r="1.7" fill="currentColor" stroke="none"/>'
+
+
 def _header(dash: Dashboard) -> str:
+    dot = UPDATE_DOT if dash.update_latest else ""
+    gear_title = "Settings (update available)" if dash.update_latest else "Settings"
     fallback = f"last ok {dash.polled_text[8:]}" if dash.polled_text.startswith("last ok") else ""
     ts = dash.last_success_ts or 0
     q = dash.view.query()
@@ -332,12 +340,12 @@ def _header(dash: Dashboard) -> str:
         # It is a button now, which since the dialog landed is also the honest
         # markup. The <a> stays for the no-JavaScript path and CSS shows exactly
         # one of them -- the same `.go` idiom the range form already uses.
-        '<a href="/settings" id="settings-link" class="go" title="Settings" '
-        'aria-label="Settings">'
-        '<svg class="ic" aria-hidden="true"><use href="#i-settings"/></svg></a>'
-        '<button type="button" id="settings-btn" class="jso" title="Settings" '
-        'aria-label="Settings">'
-        '<svg class="ic" aria-hidden="true"><use href="#i-settings"/></svg></button>'
+        f'<a href="/settings" id="settings-link" class="go" title="{gear_title}" '
+        f'aria-label="{gear_title}">'
+        f'<svg class="ic" aria-hidden="true"><use href="#i-settings"/>{dot}</svg></a>'
+        f'<button type="button" id="settings-btn" class="jso" title="{gear_title}" '
+        f'aria-label="{gear_title}">'
+        f'<svg class="ic" aria-hidden="true"><use href="#i-settings"/>{dot}</svg></button>'
         '<button id="t" type="button" aria-label="Switch theme">'
         '<svg class="ic ic-sun" aria-hidden="true"><use href="#i-sun"/></svg>'
         '<svg class="ic ic-moon" aria-hidden="true"><use href="#i-moon"/></svg>theme</button>'
@@ -1339,12 +1347,18 @@ def _vendor_logo(vendor: StatusVendor) -> str:
     return f'<img class="vl" src="{e(url)}" alt="" aria-hidden="true" width="16" height="16">'
 
 
+def _update_hint(dash: Dashboard) -> str:
+    if not dash.update_latest:
+        return ""
+    return f' \u00b7 <a href="/about">{e(dash.update_latest)} available</a>'
+
+
 def _footer(dash: Dashboard) -> str:
     return (
         "<footer>"
         f'<span><span class="far">Address</span> {e(dash.footer["bind"])}</span>'
         f'<span><span class="far">Database</span> {e(dash.footer["db"])}</span>'
-        f"<span>QuotaLens {e(__version__)}</span></footer>"
+        f'<span><a href="/about">QuotaLens {e(__version__)}</a>{_update_hint(dash)}</span></footer>'
     )
 
 
@@ -1493,6 +1507,7 @@ def render_settings_dialog() -> str:
         # dialog into one form would put retention inside the same submit, which
         # is exactly what must not happen.
         '<footer class="sfoot">'
+        '<a href="/about" id="about-link">About</a>'
         '<form method="dialog"><button value="cancel">Cancel</button></form>'
         '<button type="submit" form="settings-form">Save changes</button>'
         "</footer></dialog>"

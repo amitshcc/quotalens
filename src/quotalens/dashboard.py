@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from itertools import pairwise
 from typing import Any
 
-from quotalens import credits, retention, subcap, weeks
+from quotalens import credits, retention, subcap, updates, weeks
 from quotalens.alerts import ALERT_KIND, CLEARED_KIND, standing
 from quotalens.boost import BOOST_KIND, boosted_windows
 from quotalens.boost import recorded as recorded_boosts
@@ -469,6 +469,9 @@ class Dashboard:
     cooldown_s: int = 0  # seconds until another forced poll is allowed
     events: list[dict[str, Any]] = field(default_factory=list)
     vendor_status: list[VendorStatus] = field(default_factory=list)
+    # The newer release PyPI last reported, or None. Says nothing on its own: it
+    # is a footer link and a dot on the gear, never a banner (WP-32).
+    update_latest: str | None = None
     alert_standing: bool = False  # a burn alert fired and has not cleared
     grants: list[GrantView] = field(default_factory=list)  # credit grants, not windows
     surfaces: SurfaceSection | None = None  # the vendor's weekly split; None keeps the pointer
@@ -511,6 +514,11 @@ def _display_host(host: str) -> str:
     what is actually bound.
     """
     return "localhost" if host in {"127.0.0.1", "::1"} else host
+
+
+def _update_latest(store: Store) -> str | None:
+    state = updates.stored_state(store)
+    return state.latest if state.available else None
 
 
 def build_dashboard(
@@ -808,6 +816,7 @@ def build_dashboard(
         cooldown_s=cooldown_s,
         events=events,
         vendor_status=list(vendor_status or []),
+        update_latest=_update_latest(store),
         alert_standing=alert_standing,
     )
 

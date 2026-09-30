@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from quotalens import __version__, status, updates
 from quotalens.api import create_app
-from quotalens.render import ICONS
+from quotalens.render import ICONS, UPDATE_DOT
 
 EVIL = "https://evil.example"
 PYPI_NEWER = {"info": {"version": "99.0.0"}}
@@ -136,3 +136,38 @@ def test_about_csp_matches_the_dashboard(app) -> None:
         assert tc.get("/about").headers.get("content-security-policy") == tc.get("/").headers.get(
             "content-security-policy"
         )
+
+
+# -- the entry points -----------------------------------------------------------
+
+
+def _footer(html: str) -> str:
+    return re.search(r"<footer>.*?</footer>", html, re.S).group(0)
+
+
+def test_footer_links_about(app) -> None:
+    with TestClient(app) as tc:
+        html = tc.get("/").text
+    assert f'<a href="/about">QuotaLens {__version__}</a>' in _footer(html)
+    assert "available" not in _footer(html)
+    assert "Settings (update available)" not in html and UPDATE_DOT not in html
+
+
+def test_footer_update_hint(app, pypi) -> None:
+    with TestClient(app) as tc:
+        tc.post("/about/check", follow_redirects=False)
+        html = tc.get("/").text
+        fragment = tc.get("/api/dashboard/fragment").text
+    assert '<a href="/about">99.0.0 available</a>' in _footer(html)
+    header = html.split("</header>")[0]
+    assert header.count(UPDATE_DOT) == 2  # the gear link and the gear button
+    assert "amber" not in UPDATE_DOT and "warn" not in UPDATE_DOT
+    assert "Settings (update available)" in header
+    assert "99.0.0 available" in fragment  # the refresh keeps it
+
+
+def test_settings_dialog_links_about(app) -> None:
+    with TestClient(app) as tc:
+        html = tc.get("/").text
+    dialog = re.search(r"<dialog.*?</dialog>", html, re.S).group(0)
+    assert '<a href="/about" id="about-link">About</a>' in dialog

@@ -210,6 +210,7 @@
         var body = document.getElementById("sd-body");
         if (!dlg || !body) return;
         body.innerHTML = html;
+        setDialogMode("Settings", SETTINGS_SUB, false);
         if (!dlg.open) dlg.showModal();
       })
       .catch(function () { window.location.href = "/settings"; });
@@ -232,6 +233,40 @@
       })
       .catch(function () { form.submit(); });
   }
+
+  /* About in the dialog: the same fragment the page serves. Settings' own Save is
+     disabled while it shows, and openSettings puts it back. */
+  var SETTINGS_SUB = "Changes take effect from the next poll.";
+  function setDialogMode(title, sub, saveDisabled) {
+    var t = document.getElementById("sd-title");
+    var s = document.getElementById("sd-sub");
+    var save = document.querySelector(".sfoot button[form=settings-form]");
+    if (t) t.textContent = title;
+    if (s) s.textContent = sub;
+    if (save) save.disabled = saveDisabled;
+  }
+  function openAbout() {
+    var dlg = settingsDialog();
+    if (!dlg || !dlg.showModal) return false;
+    fetch("/about?fragment=1", { headers: { "X-Requested-With": "fetch" } })
+      .then(function (r) { return r.text(); })
+      .then(function (html) {
+        var dlg2 = settingsDialog();
+        var body = document.getElementById("sd-body");
+        if (!dlg2 || !body) return;
+        body.innerHTML = html;
+        setDialogMode("About", "", true);
+        if (!dlg2.open) dlg2.showModal();
+      })
+      .catch(function () { window.location.href = "/about"; });
+    return true;
+  }
+  document.addEventListener("click", function (ev) {
+    var link = ev.target.closest && ev.target.closest("#about-link, footer a[href='/about']");
+    if (!link) return;
+    if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.button !== 0) return;
+    if (openAbout()) ev.preventDefault();
+  });
 
   /* About. One fragment serves the page and the dialog; the check is a real form
      and this only sends it in place, so with no JavaScript it posts and redirects. */
