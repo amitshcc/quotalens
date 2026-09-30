@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import IO, Any
 
-from quotalens import __version__, retention, service
+from quotalens import __version__, profiles, retention, service
 from quotalens.client import ClaudeClient, ClientError, has_session_key
 from quotalens.config import (
     CONFIG_KEYS,
@@ -636,6 +636,17 @@ def _flags(args: argparse.Namespace) -> dict[str, object]:
     }
 
 
+def cmd_profiles(args: argparse.Namespace, settings: Settings, secrets: SecretStore) -> int:
+    rows = profiles.list_profiles(args.data_dir)
+    if args.json:
+        print(json.dumps([r.as_dict() for r in rows], indent=2))
+    elif rows:
+        print(profiles.format_table(rows))
+    else:
+        print(f"no profiles in {args.data_dir}")
+    return 0
+
+
 def cmd_config(args: argparse.Namespace, settings: Settings, secrets: SecretStore) -> int:
     path = config_path(settings.profile, args.config_dir)
     if args.action == "list":
@@ -782,6 +793,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     svc.add_argument("--interval", type=int, help="poll interval for the installed service")
 
+    prof = sub.add_parser("profiles", help="every profile in the data directory")
+    prof.add_argument("action", choices=["list"])
+    prof.add_argument("--json", action="store_true", help="print a JSON list instead of a table")
+
     cfg = sub.add_parser("config", help="read and write the persisted settings")
     cfg.add_argument("action", choices=["list", "get", "set", "unset"])
     cfg.add_argument("key", nargs="?", help="one of: " + ", ".join(k.name for k in CONFIG_KEYS))
@@ -834,6 +849,7 @@ def main(argv: Sequence[str] | None = None, secrets: SecretStore | None = None) 
         "forget": cmd_forget,
         "rescan": cmd_rescan,
         "config": cmd_config,
+        "profiles": cmd_profiles,
     }
     try:
         return handlers[args.command](args, settings, secrets)
