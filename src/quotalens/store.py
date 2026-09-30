@@ -26,7 +26,7 @@ from quotalens.parse import (
 )
 from quotalens.retention import TS_COLUMN
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 # Statements that bring an older database up to each version, in order.
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
@@ -46,6 +46,7 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
         + ")",
     ),
     7: (),  # surface_share is created by the CREATE statements
+    8: (),  # update_check is created by the CREATE statements
 }
 
 _SCHEMA = """
@@ -133,6 +134,13 @@ CREATE TABLE IF NOT EXISTS surface_share (
     percent REAL NOT NULL,
     PRIMARY KEY (ts, key)
 );
+-- the daily PyPI check; one row, overwritten
+CREATE TABLE IF NOT EXISTS update_check (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    checked_ts INTEGER,
+    latest TEXT,
+    error TEXT
+);
 -- detected climbs, threshold crossings, poll failures
 CREATE TABLE IF NOT EXISTS event (
     ts INTEGER NOT NULL,
@@ -141,6 +149,13 @@ CREATE TABLE IF NOT EXISTS event (
 );
 CREATE INDEX IF NOT EXISTS event_ts ON event (ts);
 """
+
+
+@dataclass(frozen=True)
+class UpdateCheckRow:
+    checked_ts: int | None
+    latest: str | None
+    error: str | None
 
 
 @dataclass(frozen=True)
@@ -509,6 +524,28 @@ class Store:
             cur.execute(
                 "INSERT INTO event (ts, kind, detail) VALUES (?, ?, ?)",
                 (ts if ts is not None else now_ts(), kind, detail),
+            )
+
+    def has_event(self, kind: str, detail: str) -> bool:
+        with self._tx() as cur:
+            row = cur.execute(
+                "SELECT 1 FROM event WHERE kind = ? AND detail = ? LIMIT 1", (kind, detail)
+            ).fetchone()
+        return row is not None
+
+    def read_update_check(self) -> UpdateCheckRow | None:
+        with self._tx() as cur:
+            row = cur.execute(
+                "SELECT checked_ts, latest, error FROM update_check WHERE id = 1"
+            ).fetchone()
+        return None if row is None else UpdateCheckRow(row[0], row[1], row[2])
+
+    def write_update_check(self, checked_ts: int, latest: str | None, error: str | None) -> None:
+        with self._tx() as cur:
+            cur.execute(
+                "INSERT OR REPLACE INTO update_check (id, checked_ts, latest, error) "
+                "VALUES (1, ?, ?, ?)",
+                (checked_ts, latest, error),
             )
 
     def delete_events(self, kind: str, timestamps: Sequence[int]) -> int:

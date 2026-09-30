@@ -37,6 +37,7 @@ CHECK_INTERVAL_S = 86400
 MANUAL_MIN_INTERVAL_S = 60
 FIRST_CHECK_DELAY_S = 300  # after start, so the first poll is never the thing it waits behind
 FETCH_TIMEOUT_S = 10.0
+EVENT_KIND = "update_available"
 ENV_OPT_OUT = "QUOTALENS_NO_UPDATE_CHECK"
 USER_AGENT_SITE = "https://quotalens.com"
 
@@ -51,6 +52,10 @@ class UpdateStore(Protocol):
     def write_update_check(
         self, checked_ts: int, latest: str | None, error: str | None
     ) -> None: ...
+
+    def has_event(self, kind: str, detail: str) -> bool: ...
+
+    def record_event(self, kind: str, detail: str, ts: int | None = None) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -138,7 +143,18 @@ def check(
         error = str(exc) or type(exc).__name__
         log.info("update check failed: %s", error)
     store.write_update_check(now, latest, error)
-    return UpdateState(now, latest, current, error)
+    state = UpdateState(now, latest, current, error)
+    _note_available(store, state, now)
+    return state
+
+
+def _note_available(store: UpdateStore, state: UpdateState, now: int) -> None:
+    """One event per new ``latest``, not one per daily check that still sees it."""
+    if not state.available:
+        return
+    detail = f"{state.current} -> {state.latest}"
+    if not store.has_event(EVENT_KIND, detail):
+        store.record_event(EVENT_KIND, detail, now)
 
 
 def _latest_from(payload: object) -> str:

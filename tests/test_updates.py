@@ -2,31 +2,19 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import pytest
 
 from quotalens import status, updates
+from quotalens.store import SCHEMA_VERSION, Store, UpdateCheckRow
 
 NOW = 1_000_000
 
 
-@dataclass
-class Row:
-    checked_ts: int | None
-    latest: str | None
-    error: str | None
-
-
-class FakeStore:
-    def __init__(self) -> None:
-        self.row: Row | None = None
-
-    def read_update_check(self) -> Row | None:
-        return self.row
-
-    def write_update_check(self, checked_ts: int, latest: str | None, error: str | None) -> None:
-        self.row = Row(checked_ts, latest, error)
+@pytest.fixture
+def store():
+    s = Store(":memory:")
+    yield s
+    s.close()
 
 
 @pytest.fixture
@@ -59,23 +47,20 @@ def test_is_newer() -> None:
     assert not updates.is_newer("3.0.0", "2.0.0.dev1")
 
 
-def test_due_24h() -> None:
-    store = FakeStore()
+def test_due_24h(store) -> None:
     assert updates.due(store, NOW)
     store.write_update_check(NOW, "2.0.0", None)
     assert not updates.due(store, NOW + updates.CHECK_INTERVAL_S - 1)
     assert updates.due(store, NOW + updates.CHECK_INTERVAL_S)
 
 
-def test_not_due_means_no_request(asked) -> None:
-    store = FakeStore()
+def test_not_due_means_no_request(store, asked) -> None:
     store.write_update_check(NOW, "2.0.0", None)
     state = updates.check(store, NOW + 10, current="2.0.0")
     assert asked == [] and state.latest == "2.0.0"
 
 
-def test_manual_rate_limit_60s(asked) -> None:
-    store = FakeStore()
+def test_manual_rate_limit_60s(store, asked) -> None:
     updates.check(store, NOW, force=True, current="2.0.0")
     updates.check(store, NOW + 59, force=True, current="2.0.0")
     assert len(asked) == 1
@@ -84,36 +69,36 @@ def test_manual_rate_limit_60s(asked) -> None:
     assert len(asked) == 2
 
 
-def test_manual_bypasses_the_24h_rule(asked) -> None:
-    store = FakeStore()
+def test_manual_bypasses_the_24h_rule(store, asked) -> None:
     store.write_update_check(NOW - 120, "2.0.0", None)
     state = updates.check(store, NOW, force=True, current="2.0.0")
     assert len(asked) == 1 and state.latest == "2.1.0" and state.available
 
 
-def test_request_carries_only_a_user_agent(asked) -> None:
-    updates.check(FakeStore(), NOW, force=True, current="2.0.0")
+def test_request_carries_only_a_user_agent(store, asked) -> None:
+    updates.check(store, NOW, force=True, current="2.0.0")
     url, headers = asked[0]
     assert url == "https://pypi.org/pypi/quotalens/json" and "?" not in url
     assert headers == {"User-Agent": "quotalens/2.0.0 (+https://quotalens.com)"}
 
 
-def test_fetch_failure_recorded_not_raised(monkeypatch) -> None:
+def test_fetch_failure_recorded_not_raised(store, monkeypatch) -> None:
     def boom(url, timeout_s=5.0, headers=None):
         raise status.StatusFetchError("HTTP 503")
 
     monkeypatch.setattr(status, "fetch", boom)
-    store = FakeStore()
     store.write_update_check(NOW - 100_000, "2.0.0", None)
     state = updates.check(store, NOW, current="2.0.0")
     assert state.error == "HTTP 503" and state.latest == "2.0.0" and state.checked_ts == NOW
-    assert store.row == Row(NOW, "2.0.0", "HTTP 503")  # retried at the next 24 h slot
+    assert store.read_update_check() == UpdateCheckRow(
+        NOW, "2.0.0", "HTTP 503"
+    )  # retried at the next 24 h slot
     assert not updates.due(store, NOW + 3600)
 
 
-def test_unusable_answer_is_a_failure(monkeypatch) -> None:
+def test_unusable_answer_is_a_failure(store, monkeypatch) -> None:
     monkeypatch.setattr(status, "fetch", lambda *a, **k: {"info": {"version": "3.0.0rc1"}})
-    state = updates.check(FakeStore(), NOW, force=True, current="2.0.0")
+    state = updates.check(store, NOW, force=True, current="2.0.0")
     assert state.error and state.latest is None and not state.available
 
 
@@ -134,3 +119,45 @@ def test_upgrade_command_by_install_method() -> None:
         "uv tool upgrade quotalens"
     )
     assert updates.upgrade_command("/usr/lib/python3") == "pip install -U quotalens"
+
+
+def test_update_check_row_roundtrip(store) -> None:
+    assert store.read_update_check() is None
+    store.write_update_check(NOW, "2.1.0", None)
+    store.write_update_check(NOW + 5, "2.1.0", "HTTP 503")  # one row, overwritten
+    assert store.read_update_check() == UpdateCheckRow(NOW + 5, "2.1.0", "HTTP 503")
+    assert store.query("SELECT COUNT(*) FROM update_check")[0][0] == 1
+    assert store.query("SELECT MAX(version) FROM schema_version")[0][0] == SCHEMA_VERSION
+
+
+def test_update_available_event_once(asked, store, monkeypatch) -> None:
+    updates.check(store, NOW, force=True, current="2.0.0")
+    updates.check(store, NOW + 100, force=True, current="2.0.0")  # same latest, no second event
+    events = store.recent_events(kind="update_available")
+    assert [e.detail for e in events] == ["2.0.0 -> 2.1.0"]
+    monkeypatch.setattr(status, "fetch", lambda *a, **k: {"info": {"version": "2.2.0"}})
+    updates.check(store, NOW + 200, force=True, current="2.0.0")
+    details = {e.detail for e in store.recent_events(kind="update_available")}
+    assert details == {"2.0.0 -> 2.1.0", "2.0.0 -> 2.2.0"}
+
+
+def test_no_event_when_up_to_date(asked, store) -> None:
+    updates.check(store, NOW, force=True, current="2.1.0")
+    assert store.recent_events(kind="update_available") == []
+
+
+def test_v7_database_migrates(tmp_path) -> None:
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    s = Store(path)
+    s.close()
+    conn = sqlite3.connect(path)
+    conn.execute("DROP TABLE update_check")
+    conn.execute("DELETE FROM schema_version WHERE version = ?", (SCHEMA_VERSION,))
+    conn.commit()
+    conn.close()
+    again = Store(path)
+    assert again.read_update_check() is None
+    assert again.query("SELECT MAX(version) FROM schema_version")[0][0] == SCHEMA_VERSION
+    again.close()
