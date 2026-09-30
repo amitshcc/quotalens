@@ -303,6 +303,8 @@ UPDATE_DOT = '<circle cx="14.2" cy="1.8" r="1.7" fill="currentColor" stroke="non
 
 def _header(dash: Dashboard) -> str:
     dot = UPDATE_DOT if dash.update_latest else ""
+    # Without a viewBox the dot's coordinates are pixels and it falls outside an 11px icon.
+    box = ' viewBox="0 0 16 16"' if dot else ""
     gear_title = "Settings (update available)" if dash.update_latest else "Settings"
     fallback = f"last ok {dash.polled_text[8:]}" if dash.polled_text.startswith("last ok") else ""
     ts = dash.last_success_ts or 0
@@ -342,10 +344,10 @@ def _header(dash: Dashboard) -> str:
         # one of them -- the same `.go` idiom the range form already uses.
         f'<a href="/settings" id="settings-link" class="go" title="{gear_title}" '
         f'aria-label="{gear_title}">'
-        f'<svg class="ic" aria-hidden="true"><use href="#i-settings"/>{dot}</svg></a>'
+        f'<svg class="ic" aria-hidden="true"{box}><use href="#i-settings"/>{dot}</svg></a>'
         f'<button type="button" id="settings-btn" class="jso" title="{gear_title}" '
         f'aria-label="{gear_title}">'
-        f'<svg class="ic" aria-hidden="true"><use href="#i-settings"/>{dot}</svg></button>'
+        f'<svg class="ic" aria-hidden="true"{box}><use href="#i-settings"/>{dot}</svg></button>'
         '<button id="t" type="button" aria-label="Switch theme">'
         '<svg class="ic ic-sun" aria-hidden="true"><use href="#i-sun"/></svg>'
         '<svg class="ic ic-moon" aria-hidden="true"><use href="#i-moon"/></svg>theme</button>'

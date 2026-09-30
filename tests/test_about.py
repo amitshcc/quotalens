@@ -118,6 +118,7 @@ def test_about_check_is_rate_limited_and_says_so(app, pypi) -> None:
 def test_about_no_external_requests_in_html(app) -> None:
     with TestClient(app) as tc:
         html = tc.get("/about").text
+    assert html.count('class="fform"') == 1  # one grid, so every label column lines up
     assert not re.findall(r'\bsrc="https?://', html)
     assert not re.findall(r'<link[^>]+href="https?://', html)
     allowed = {
@@ -161,6 +162,7 @@ def test_footer_update_hint(app, pypi) -> None:
     assert '<a href="/about">99.0.0 available</a>' in _footer(html)
     header = html.split("</header>")[0]
     assert header.count(UPDATE_DOT) == 2  # the gear link and the gear button
+    assert header.count('viewBox="0 0 16 16"') == 2  # else the dot is drawn in pixels and clipped
     assert "amber" not in UPDATE_DOT and "warn" not in UPDATE_DOT
     assert "Settings (update available)" in header
     assert "99.0.0 available" in fragment  # the refresh keeps it

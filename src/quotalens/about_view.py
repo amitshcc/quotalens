@@ -113,11 +113,10 @@ def render_about(view: AboutView) -> str:
         + _row("Latest", _latest(state))
         + upgrade
         + _row("Last checked", _last_checked(state))
-        + "</div>"
-        '<form method="post" action="/about/check" id="about-check-form" class="ctl">'
+        + '<form method="post" action="/about/check" id="about-check-form" class="ctl">'
         '<button type="submit" id="about-check">Check for updates</button></form>'
         + note
-        + '<div class="fform"><p class="cap">Details</p>'
+        + '<p class="cap">Details</p>'
         + _row("Python", e(view.python))
         + _row("Installed with", e(view.install_method))
         + _row("Data directory", e(view.data_dir))
@@ -131,10 +130,9 @@ def render_about(view: AboutView) -> str:
         + _link("Source", SOURCE)
         + _link("Report an issue", ISSUES, "github.com/amitshcc/quotalens/issues")
         + _row("Licence", "MIT")
-        + "</div>"
-        f'<p class="far">{e(DISCLAIMER)} '
+        + f'<p class="far">{e(DISCLAIMER)} '
         f'<a href="{TERMS}" target="_blank" rel="noopener noreferrer">'
-        "The Terms, stated plainly</a>.</p></section>"
+        "The Terms, stated plainly</a>.</p></div></section>"
     )
 
 
