@@ -9,6 +9,8 @@ from quotalens.parse import (
     CreditGrant,
     ParseError,
     QuotaReading,
+    SurfaceBreakdown,
+    SurfaceShare,
     format_money,
     overage_pct,
     parse_spend,
@@ -403,3 +405,46 @@ def test_null_codename_blocks_ignored() -> None:
 def test_grant_only_payload_is_not_a_reading_via_fallback() -> None:
     with pytest.raises(ParseError):
         parse_usage({"iguana_necktie": IGUANA})
+
+
+BREAKDOWN = {
+    "as_of": "2026-09-30T17:45:05.940314+00:00",
+    "window_started_at": "2026-09-28T01:00:00.900649+00:00",
+    "rows": [
+        {"key": "claude_code", "display_name": "Claude Code", "percent": 23},
+        {"key": "chat", "display_name": "Chats", "percent": 1},
+        {"key": "cowork", "display_name": "Cowork", "percent": 76},
+        {"key": "other", "display_name": "Other", "percent": 0},
+    ],
+}
+
+
+def test_breakdown_parsed() -> None:
+    parsed = parse_usage({**USAGE_LIVE_2026_09, "seven_day_breakdown": BREAKDOWN})
+    assert parsed.breakdown == SurfaceBreakdown(
+        as_of="2026-09-30T17:45:05.940314+00:00",
+        window_started_at="2026-09-28T01:00:00.900649+00:00",
+        rows=[
+            SurfaceShare("claude_code", "Claude Code", 23.0),
+            SurfaceShare("chat", "Chats", 1.0),
+            SurfaceShare("cowork", "Cowork", 76.0),
+            SurfaceShare("other", "Other", 0.0),
+        ],
+    )
+    assert "seven_day_breakdown" not in {r.window for r in parsed.readings}
+
+
+def test_breakdown_missing_is_none() -> None:
+    assert parse_usage(USAGE_LIVE_2026_09).breakdown is None
+    for bad in (None, "x", [], {}, {"rows": "no"}, {"rows": [{"key": "a"}, 3]}):
+        payload = {**USAGE_LIVE_2026_09, "seven_day_breakdown": bad}
+        assert parse_usage(payload).breakdown is None
+
+
+def test_breakdown_sum_not_100_kept_as_given() -> None:
+    block = {
+        **BREAKDOWN,
+        "rows": [{"key": "a", "display_name": "A", "percent": 40}, {"key": "b", "percent": 35.5}],
+    }
+    parsed = parse_usage({**USAGE_LIVE_2026_09, "seven_day_breakdown": block})
+    assert [(r.label, r.percent) for r in parsed.breakdown.rows] == [("A", 40.0), ("b", 35.5)]

@@ -66,6 +66,24 @@ class CreditGrant:
 
 
 @dataclass(frozen=True)
+class SurfaceShare:
+    """One surface's share of this week's usage (shares sum to ~100, not of the limit)."""
+
+    key: str
+    label: str
+    percent: float
+
+
+@dataclass(frozen=True)
+class SurfaceBreakdown:
+    """The vendor's own weekly split by surface (``seven_day_breakdown``)."""
+
+    as_of: str | None
+    window_started_at: str | None
+    rows: list[SurfaceShare]
+
+
+@dataclass(frozen=True)
 class IgnoredBlock:
     key: str
     reason: str
@@ -77,6 +95,7 @@ class UsageParse:
     ignored: list[IgnoredBlock] = field(default_factory=list)
     fallback_used: bool = False  # readings came from the generic tree walk
     grants: list[CreditGrant] = field(default_factory=list)
+    breakdown: SurfaceBreakdown | None = None
 
 
 @dataclass(frozen=True)
@@ -242,6 +261,38 @@ def parse_grants(payload: Any) -> list[CreditGrant]:
     return [grant for grant in found if grant is not None]
 
 
+BREAKDOWN_KEY = "seven_day_breakdown"
+
+
+def parse_breakdown(payload: Any) -> SurfaceBreakdown | None:
+    """The per-surface weekly split, or None when absent or unusable. Never raises.
+
+    Percentages are kept as given: a sum other than 100 is the vendor's rounding,
+    not ours to correct. Rows without a key or a number are skipped.
+    """
+    block = payload.get(BREAKDOWN_KEY) if isinstance(payload, dict) else None
+    rows_raw = block.get("rows") if isinstance(block, dict) else None
+    if not isinstance(rows_raw, list):
+        return None
+    rows: list[SurfaceShare] = []
+    for raw in rows_raw:
+        if not isinstance(raw, dict):
+            continue
+        key = _as_str(raw.get("key"))
+        percent = _pct_of(raw)
+        if key is None or percent is None:
+            continue
+        label = _as_str(raw.get("display_name")) or key
+        rows.append(SurfaceShare(key, label, percent))
+    if not rows:
+        return None
+    return SurfaceBreakdown(
+        as_of=_as_str(block.get("as_of")),
+        window_started_at=_as_str(block.get("window_started_at")),
+        rows=rows,
+    )
+
+
 def _severity_of(obj: dict[str, Any]) -> str | None:
     raw = _as_str(obj.get("severity"))
     return raw.lower() if raw and raw.lower() in SEVERITIES else None
@@ -382,12 +433,15 @@ def parse_usage(payload: Any) -> UsageParse:
     readings, ignored = _top_level_windows(payload)
     readings = _fold_limits(payload, readings, ignored)
     grants = parse_grants(payload)
+    breakdown = parse_breakdown(payload)
     if readings:
-        return UsageParse(_dedupe(readings), ignored, grants=grants)
+        return UsageParse(_dedupe(readings), ignored, grants=grants, breakdown=breakdown)
     fallback: list[QuotaReading] = []
     _walk(payload, (), fallback, 0)
     if fallback:
-        return UsageParse(_dedupe(fallback), ignored, fallback_used=True, grants=grants)
+        return UsageParse(
+            _dedupe(fallback), ignored, fallback_used=True, grants=grants, breakdown=breakdown
+        )
     keys = sorted(str(k) for k in payload)[:20]
     raise ParseError(f"usage payload had no recognizable quota fields; top-level keys: {keys}")
 
