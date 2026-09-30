@@ -521,6 +521,12 @@ def _budget(dash: Dashboard) -> str:
     notes = "".join(
         f'<p class="far">{e(text)}</p>' for text in (view.binding, view.constraint) if text
     )
+    if dash.pace is not None and dash.pace.shown:
+        # Under the table, in words, and always with its spread and what it rests on.
+        notes += (
+            f'<p class="pace">{e(dash.pace.sentence)} '
+            f'<span class="far">{e(dash.pace.basis)}</span></p>'
+        )
     note = (
         '<details class="wk-note"><summary>Why the two meters differ</summary>'
         f'<p class="far">{e(view.note)}</p></details>'

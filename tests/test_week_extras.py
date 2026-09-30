@@ -7,13 +7,16 @@ persists it.
 
 from __future__ import annotations
 
+import re
 import time
 from datetime import UTC, datetime
 
+import pytest
 from fastapi.testclient import TestClient
 
 from quotalens.api import create_app
 from quotalens.dashboard import GHOST_KEY, _series_chips
+from quotalens.pace import HIDDEN_EARLY, HIDDEN_NO_HISTORY, compute_pace
 from quotalens.parse import QuotaReading
 from quotalens.views import ViewOptions
 
@@ -90,3 +93,119 @@ def test_picking_a_series_keeps_the_ghost_toggle() -> None:
     assert chips[""].active, "All is about series; the overlay being off does not unset it"
     assert GHOST_KEY in chips[""].href
     assert GHOST_KEY in chips["seven_day"].href
+
+
+# -- task 2: the pace projection -------------------------------------------------
+
+HOUR = 3600
+
+
+def _seed_history(store, reset: int, prior_close: float, now_pct: float, elapsed_h: int) -> int:
+    """Three complete prior weeks climbing evenly to ``prior_close``, then this week so far.
+
+    Returns ``now``. Readings every hour, with this week's reset on every current row.
+    """
+    start = reset - WEEK
+    for k in (3, 2, 1):
+        w_start = start - k * WEEK
+        for h in range(0, 168):
+            pct = round(prior_close * h / 167)
+            store.record_quota(
+                w_start + h * HOUR,
+                [QuotaReading("seven_day", "7-day", pct, _iso(w_start + WEEK), "normal", False)],
+            )
+    for h in range(0, elapsed_h + 1):
+        pct = round(now_pct * h / elapsed_h) if elapsed_h else now_pct
+        store.record_quota(
+            start + h * HOUR,
+            [QuotaReading("seven_day", "7-day", pct, _iso(reset), "normal", False)],
+        )
+    return start + elapsed_h * HOUR
+
+
+RESET = 1_790_557_200 + WEEK  # a Monday 01:00Z
+
+
+def test_pace_hidden_first_24h(store) -> None:
+    now = _seed_history(store, RESET, prior_close=90, now_pct=15, elapsed_h=23)
+    p = compute_pace(store, now)
+    assert not p.shown and p.reason == HIDDEN_EARLY and p.sentence == ""
+    # One hour later it shows, and says it is an estimate.
+    store.record_quota(
+        now + HOUR, [QuotaReading("seven_day", "7-day", 16, _iso(RESET), "normal", False)]
+    )
+    later = compute_pace(store, now + HOUR)
+    assert later.shown and later.basis.startswith("An estimate from how the last 3 complete")
+
+
+def test_pace_runs_out(store) -> None:
+    # 50% two days in, and every prior week used another ~70 points from here on.
+    now = _seed_history(store, RESET, prior_close=100, now_pct=50, elapsed_h=48)
+    p = compute_pace(store, now)
+    assert p.shown and p.runs_out and p.end_pct == 100
+    assert p.runs_out_low_ts <= p.runs_out_ts <= RESET
+    assert re.fullmatch(
+        r"At this pace the week runs out around \w{3} \d\d:\d\d "
+        r"\(\w{3} \d\d:\d\d – (\w{3} \d\d:\d\d|not before the reset)\)\.",
+        p.sentence,
+    ), p.sentence
+    # Prior weeks went on to use 100 - 29 = 71 points from hour 48: 50 + 71 crosses 100
+    # at hour 48 + 50/(100/167) ~= 131.5, so hour 132 of the prior climb.
+    assert p.runs_out_ts == RESET - WEEK + 132 * HOUR
+    body = p.as_dict()
+    assert body["estimate"] is True and body["weeks_used"] == 3
+
+
+def test_pace_finishes_under_100(store) -> None:
+    # 20% three days in; prior weeks closed at 60 and used 60 - 26 = 34 from hour 72.
+    now = _seed_history(store, RESET, prior_close=60, now_pct=20, elapsed_h=72)
+    p = compute_pace(store, now)
+    assert p.shown and not p.runs_out and p.runs_out_ts is None
+    assert p.end_pct == pytest.approx(20 + 60 - round(60 * 72 / 167))
+    assert p.end_low <= p.end_pct <= p.end_high < 100
+    assert p.sentence == (
+        f"At this pace the week ends near {p.end_pct:.0f}% ({p.end_low:.0f}–{p.end_high:.0f}%)."
+    )
+
+
+def test_pace_ignores_incomplete_and_boosted_weeks(store) -> None:
+    start = RESET - WEEK
+    # Last week: the collector joined 60 hours in -- not a complete week.
+    for h in range(60, 168):
+        store.record_quota(
+            start - WEEK + h * HOUR,
+            [QuotaReading("seven_day", "7-day", h / 2, _iso(start), "normal", False)],
+        )
+    # The week before: complete, but boosted -- 90 -> 1 on day four, reset unchanged.
+    for h in range(0, 168):
+        store.record_quota(
+            start - 2 * WEEK + h * HOUR,
+            [
+                QuotaReading(
+                    "seven_day",
+                    "7-day",
+                    h / 2 if h < 96 else 1,
+                    _iso(start - WEEK),
+                    "normal",
+                    False,
+                )
+            ],
+        )
+    for h in range(0, 49):
+        store.record_quota(
+            start + h * HOUR,
+            [QuotaReading("seven_day", "7-day", h / 2, _iso(RESET), "normal", False)],
+        )
+    p = compute_pace(store, start + 48 * HOUR)
+    assert not p.shown and p.reason == HIDDEN_NO_HISTORY
+
+
+def test_pace_sits_under_the_budget_table(settings, store, secrets) -> None:
+    now = int(time.time())
+    reset = (now // HOUR) * HOUR + 2 * 86400
+    _seed_history(store, reset, prior_close=100, now_pct=50, elapsed_h=5 * 24 - 2)
+    with TestClient(_app(settings, store, secrets, now)) as tc:
+        html = tc.get("/").text
+    budget = html.split('<section class="screen budget">', 1)[1].split("</section>", 1)[0]
+    assert '<p class="pace">At this pace the week ' in budget
+    assert "An estimate from how the last 3 complete weeks" in budget
