@@ -170,6 +170,15 @@ never have to work out which port a profile got. If something else already holds
 it, the error names the port, the profile and the `--port` flag that settles it.
 `QUOTALENS_PROFILE` works too, for a service unit.
 
+Every profile must be an account that is yours. Anthropic's Consumer Terms
+(section 2) forbid sharing your login or credentials with anyone else or
+making your account available to anyone else, so a profile holding someone
+else's cookie breaks their terms, not just yours. And the
+[Usage Policy](https://www.anthropic.com/legal/aup) forbids using several
+accounts to get around a product's limits. QuotaLens shows each account's
+own state; it does not suggest which account to switch to, and it is not
+meant for rotating work across accounts.
+
 ## Running it as a service
 
 One command makes it start on its own every time you log in, and one undoes it:
@@ -544,6 +553,11 @@ Two facts that bear on the risk, neither of which changes the clause:
 
 You are the one accepting that risk, not me. Decide with the clause in front of
 you.
+
+Two more clauses matter if you run more than one profile: section 2 of the
+same Terms (your credentials are yours alone) and the Usage Policy's rule
+against using multiple accounts to circumvent product restrictions. See
+[Two accounts](#two-accounts).
 
 Unofficial, and not affiliated with or endorsed by Anthropic. It uses
 undocumented endpoints that may change without notice, and it only observes: it
