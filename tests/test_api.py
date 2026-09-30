@@ -178,3 +178,31 @@ def test_breakdown_endpoint(settings, store, secrets) -> None:
         ("cowork", 76.0, 38),
         ("chat", 24.0, 12),
     ]
+
+
+def test_events_since_exclusive_ascending(settings, store, secrets) -> None:
+    for ts, kind in [(100, "a"), (200, "b"), (200, "a"), (300, "a")]:
+        store.record_event(kind, f"d{ts}", ts=ts)
+    with _client(settings, store, secrets) as tc:
+        body = tc.get("/api/events", params={"since": 100}).json()
+        paged = tc.get("/api/events", params={"since": 100, "limit": 1}).json()
+        kinded = tc.get("/api/events", params={"since": 0, "kind": "b"}).json()
+        empty = tc.get("/api/events", params={"since": 300}).json()
+        bad = tc.get("/api/events", params={"since": -1})
+    assert [e["ts"] for e in body["events"]] == [200, 200, 300]
+    assert [e["kind"] for e in body["events"]] == ["b", "a", "a"]
+    assert body["next_since"] == 300
+    assert len(paged["events"]) == 1 and paged["next_since"] == 200
+    assert [e["kind"] for e in kinded["events"]] == ["b"]
+    assert empty["events"] == [] and empty["next_since"] == 300
+    assert bad.status_code == 422
+
+
+def test_events_without_since_unchanged(settings, store, secrets) -> None:
+    for ts in (100, 200, 300):
+        store.record_event("a", "d", ts=ts)
+    with _client(settings, store, secrets) as tc:
+        body = tc.get("/api/events").json()
+    assert [e["ts"] for e in body["events"]] == [300, 200, 100]
+    assert "next_since" not in body
+

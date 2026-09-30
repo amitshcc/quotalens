@@ -474,10 +474,20 @@ def create_app(
     def events(
         limit: int = Query(50, ge=1, le=500),
         kind: str | None = Query(None, max_length=40),
+        since: int | None = Query(None, ge=0),
     ) -> dict[str, Any]:
-        """Anomalies, threshold crossings and poll failures, newest first."""
-        rows = state.store.recent_events(limit=limit, kind=kind)
-        return {"events": [e.as_dict() for e in rows], "now_ts": int(time.time())}
+        """Anomalies, threshold crossings and poll failures, newest first.
+
+        With ``since`` (exclusive) they come oldest first and ``next_since`` is the
+        cursor to pass back.
+        """
+        now = int(time.time())
+        if since is None:
+            rows = state.store.recent_events(limit=limit, kind=kind)
+            return {"events": [e.as_dict() for e in rows], "now_ts": now}
+        rows = state.store.events_since(since, limit, kind)
+        next_since = rows[-1].ts if rows else since
+        return {"events": [e.as_dict() for e in rows], "next_since": next_since, "now_ts": now}
 
     @app.get("/api/export.csv", include_in_schema=True)
     def export_csv(

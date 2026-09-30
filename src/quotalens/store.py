@@ -675,6 +675,19 @@ class Store:
             rows = cur.execute(sql, params).fetchall()
         return [EventRow(**dict(r)) for r in rows]
 
+    def events_since(self, since: int, limit: int = 50, kind: str | None = None) -> list[EventRow]:
+        """Events with ``ts > since``, oldest first, so a follower can page forward."""
+        sql = "SELECT ts, kind, detail FROM event WHERE ts > ?"
+        params: list[Any] = [since]
+        if kind is not None:
+            sql += " AND kind = ?"
+            params.append(kind)
+        sql += " ORDER BY ts ASC, rowid ASC LIMIT ?"
+        params.append(limit)
+        with self._tx() as cur:
+            rows = cur.execute(sql, params).fetchall()
+        return [EventRow(**dict(r)) for r in rows]
+
     def oldest_ts(self) -> int | None:
         with self._tx() as cur:
             row = cur.execute("SELECT MIN(ts) AS t FROM quota").fetchone()
