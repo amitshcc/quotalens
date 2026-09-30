@@ -29,6 +29,7 @@ from quotalens.budget import (
 )
 from quotalens.burn import BurnResult, burn_rate, min_trusted_span, split_at_resets
 from quotalens.config import Settings
+from quotalens.grants import GrantView, build_grant_views
 from quotalens.parse import SpendReading, humanize
 from quotalens.poller import PollerStatus
 from quotalens.runway import HourBar, Runway, compute_runway, hour_strip, median_peak
@@ -458,6 +459,7 @@ class Dashboard:
     events: list[dict[str, Any]] = field(default_factory=list)
     vendor_status: list[VendorStatus] = field(default_factory=list)
     alert_standing: bool = False  # a burn alert fired and has not cleared
+    grants: list[GrantView] = field(default_factory=list)  # credit grants, not windows
 
 
 # -- builders -------------------------------------------------------------------
@@ -749,6 +751,7 @@ def build_dashboard(
         burn=burn,
         chart=chart,
         spend=spend,
+        grants=build_grant_views(store.latest_grants(), now, withheld),
         polled_text=_polled_text(status.last_success_ts, now),
         last_success_ts=status.last_success_ts,
         health_message=epistemic.message,

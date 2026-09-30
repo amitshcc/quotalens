@@ -24,6 +24,7 @@ from quotalens.dashboard import (
     WindowView,
     clock,
 )
+from quotalens.grants import GrantView
 from quotalens.runway import fmt_span
 from quotalens.settings_view import NOTIFY_GROUP, SettingsView
 from quotalens.status import StatusVendor, VendorStatus
@@ -1021,6 +1022,25 @@ def _attribution(provider: Provider = CLAUDE) -> str:
     )
 
 
+def _grant_block(g: GrantView) -> str:
+    """A credit grant under Usage credits: figure, a thin neutral bar, what is left, when it ends.
+
+    The bar is an SVG rect rather than a styled element, so nothing here needs an inline
+    style, and it takes the ordinary hairline colour: amber is the session window and
+    nothing else, and a credit is not a window.
+    """
+    bar = (
+        '<div class="bar"><svg width="100%" height="4" viewBox="0 0 100 1" '
+        'preserveAspectRatio="none" aria-hidden="true">'
+        f'<rect width="{g.bar_pct:.1f}" height="1"/></svg></div>'
+    )
+    detail = f'<p class="far">{e(g.detail)}</p>' if g.detail else ""
+    return (
+        f'<div class="rule"></div><dl class="grant"><dt>{e(g.label)}</dt>'
+        f'<dd class="m">{e(g.figure)}</dd></dl>{bar}{detail}'
+    )
+
+
 def _side(dash: Dashboard) -> str:
     rows = "".join(f"<dt>{e(k)}</dt><dd>{e(v)}</dd>" for k, v in dash.side.items())
     spend = ""
@@ -1050,6 +1070,7 @@ def _side(dash: Dashboard) -> str:
             f'<div class="v m spend-pct"{style}>{pct}</div>{bar}'
             + (f'<p class="far">{e(s.status_text)}</p>' if s.status_text else "")
         )
+    spend += "".join(_grant_block(g) for g in dash.grants)
     diag = ""
     if dash.diagnostics:
         diag = '<div class="rule"></div><dl><dt>Diagnostics</dt><dd></dd></dl>' + "".join(

@@ -696,3 +696,69 @@ def test_the_boost_tooltip_does_not_repeat_itself_to_a_screen_reader(
     with TestClient(app) as tc:
         html = tc.get("/").text
     assert '<div id="boost-tip" class="readout-box bt" aria-hidden="true" hidden>' in html
+
+
+# -- credit grants --------------------------------------------------------------
+
+
+def _grant_row(store, now: int, expires_in: int, **over) -> str:
+    """Store one grant expiring ``expires_in`` seconds from ``now``; returns its local "4 Nov"."""
+    from quotalens.parse import CreditGrant
+
+    expires = datetime.fromtimestamp(now + expires_in, UTC)
+    fields = dict(
+        key="iguana_necktie",
+        label="Cloud session credit",
+        used_minor=2129,
+        limit_minor=25000,
+        remaining_minor=22871,
+        pct=8.5,
+        expires_at=expires.isoformat(),
+        locked_reason=None,
+    )
+    store.record_grants(now, [CreditGrant(**{**fields, **over})])
+    local = expires.astimezone()
+    return f"{local.day} {local:%b}"
+
+
+def _grant_page(settings, store, secrets, now: int) -> str:
+    _seed(store, now)
+    app = create_app(settings, store, secrets)
+    st = app.state.qw.poller.status
+    st.state, st.last_success_ts = "ok", now
+    with TestClient(app) as tc:
+        return tc.get("/").text
+
+
+def test_grant_row_renders(settings, store, secrets) -> None:
+    now = int(time.time())
+    day = _grant_row(store, now, 36 * 86400)
+    html = _grant_page(settings, store, secrets, now)
+    assert "Cloud session credit" in html
+    assert "$21.29 of $250" in html
+    assert f"$228.71 left · expires {day}" in html
+    assert '<rect width="8.5"' in html
+    assert "locked" not in html.split("Cloud session credit")[1].split("</aside>")[0]
+
+
+def test_grant_row_shows_why_it_is_locked(settings, store, secrets) -> None:
+    now = int(time.time())
+    _grant_row(store, now, 36 * 86400, locked_reason="org_disabled")
+    html = _grant_page(settings, store, secrets, now)
+    assert "· locked: org_disabled" in html
+
+
+def test_expired_grant_row(settings, store, secrets) -> None:
+    now = int(time.time())
+    day = _grant_row(store, now, -2 * 86400)
+    html = _grant_page(settings, store, secrets, now)
+    assert f"expired {day} · $228.71 unused" in html
+    assert "left ·" not in html.split("Cloud session credit")[1].split("</aside>")[0]
+
+
+def test_grant_row_absent_after_7_days(settings, store, secrets) -> None:
+    now = int(time.time())
+    _grant_row(store, now, -8 * 86400)
+    html = _grant_page(settings, store, secrets, now)
+    assert "Cloud session credit" not in html
+    assert store.latest_grants()  # the row stays in the database
