@@ -130,6 +130,8 @@ def test_about_no_external_requests_in_html(app) -> None:
 
 
 def test_about_csp_matches_the_dashboard(app) -> None:
+    # No Content-Security-Policy header is sent today (both sides are None); this
+    # pins that /about neither adds one nor differs from /.
     with TestClient(app) as tc:
         assert tc.get("/about").headers.get("content-security-policy") == tc.get("/").headers.get(
             "content-security-policy"
