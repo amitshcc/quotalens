@@ -26,6 +26,7 @@ from quotalens.dashboard import (
     clock,
 )
 from quotalens.grants import GrantView
+from quotalens.heatmap import DAYS, Heatmap
 from quotalens.runway import fmt_span
 from quotalens.settings_view import NOTIFY_GROUP, SettingsView
 from quotalens.status import StatusVendor, VendorStatus
@@ -356,6 +357,7 @@ def _main(dash: Dashboard) -> str:
         + _chart(dash)
         + _history(dash)
         + _weeks(dash)
+        + _heatmap(dash.heatmap)
         + _attribution(dash.surfaces)
         + "</div>"
         + _side(dash)
@@ -1001,6 +1003,79 @@ def _weeks(dash: Dashboard) -> str:
         '<th class="n">Full sessions at reset</th>'
         '<th class="n">Mostly</th></tr></thead>'
         f"<tbody>{body}</tbody></table></div>{verdict}{note}</section>"
+    )
+
+
+# The heatmap's grid, in the chart's own width so both columns line up.
+HEAT_L, HEAT_T, HEAT_CELL_H, HEAT_GAP = 40, 16, 16, 2
+HEAT_CELL_W = (CHART_W - HEAT_L) / 24
+# Achromatic: --txt at rising opacity, one step per ramp level. Zero is the grid
+# colour, so an empty hour still reads as a collected one; never amber.
+HEAT_OPACITY = (0.18, 0.38, 0.62, 0.9)
+
+
+def _heat_fill(level: int | None) -> str:
+    if level is None:
+        return 'fill="url(#gap)"'
+    if level == 0:
+        return 'fill="var(--grid)"'
+    return f'fill="var(--txt)" fill-opacity="{HEAT_OPACITY[level - 1]}"'
+
+
+def _heatmap(heat: Heatmap | None) -> str:
+    """When you use it: weekly-all points per hour, weekday by local hour, 7 x 24.
+
+    Fills are SVG presentation attributes and the hatch is the chart's own pattern,
+    so the section adds no CSS. Every cell carries its figure in a ``<title>``.
+    """
+    if heat is None:
+        return ""
+    head = '<section class="screen pointers heat"><p class="cap">When you use it</p>'
+    if heat.collecting:
+        return (
+            head + f'<p class="far">Collecting: {heat.weeks_used} of 2 complete weeks so far. '
+            "This shows when in the week you use your quota once there are two.</p></section>"
+        )
+    rows_h = 7 * (HEAT_CELL_H + HEAT_GAP)
+    legend_y = HEAT_T + rows_h + 14
+    height = legend_y + 12
+    cells, ticks = [], []
+    for h in range(0, 24, 3):
+        x = HEAT_L + h * HEAT_CELL_W
+        ticks.append(f'<text x="{x:.1f}" y="11" class="ax">{h:02d}</text>')
+    for d, day in enumerate(DAYS):
+        y = HEAT_T + d * (HEAT_CELL_H + HEAT_GAP)
+        ticks.append(f'<text x="0" y="{y + 12}" class="ax">{day}</text>')
+        for h, value in enumerate(heat.cells[d]):
+            x = HEAT_L + h * HEAT_CELL_W
+            what = "not collected" if value is None else f"{value:.1f} points/hour"
+            cells.append(
+                f'<rect x="{x:.1f}" y="{y}" width="{HEAT_CELL_W - HEAT_GAP:.1f}" '
+                f'height="{HEAT_CELL_H}" {_heat_fill(heat.level(value))}>'
+                f"<title>{day} {h:02d}:00: {what}</title></rect>"
+            )
+    # The legend, in points per hour: each swatch is labelled with its upper edge.
+    legend = [f'<text x="0" y="{legend_y + 9}" class="ax">points/hour</text>']
+    x = HEAT_L + 64
+    for level, label in [(0, "0"), *((k + 1, f"≤{v:g}") for k, v in enumerate(heat.edges()))]:
+        if level == len(heat.edges()):
+            label = f">{heat.edges()[-2]:g}"  # the top step also holds everything above it
+        legend.append(
+            f'<rect x="{x:.1f}" y="{legend_y}" width="12" height="10" {_heat_fill(level)}/>'
+            f'<text x="{x + 16:.1f}" y="{legend_y + 9}" class="ax">{e(label)}</text>'
+        )
+        x += 64
+    weeks = f"{heat.weeks_used} complete week{'s' if heat.weeks_used != 1 else ''}"
+    label = (
+        f"Weekly — all models points gained per hour, by weekday and local hour, averaged "
+        f"over the last {weeks}"
+    )
+    return (
+        head + f'<svg width="100%" viewBox="0 0 {CHART_W} {height}" role="img" '
+        f'aria-label="{e(label)}">{"".join(ticks)}{"".join(cells)}{"".join(legend)}</svg>'
+        f'<p class="far">{e(label)}, in {e(heat.tz or "local time")}. '
+        "An hour the collector missed is left out of its average, not counted as zero.</p>"
+        "</section>"
     )
 
 

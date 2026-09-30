@@ -30,6 +30,7 @@ from quotalens.budget import (
 from quotalens.burn import BurnResult, burn_rate, min_trusted_span, split_at_resets
 from quotalens.config import Settings
 from quotalens.grants import GrantView, build_grant_views
+from quotalens.heatmap import Heatmap, compute_heatmap
 from quotalens.pace import Pace, compute_pace
 from quotalens.parse import SpendReading, humanize
 from quotalens.poller import PollerStatus
@@ -472,6 +473,7 @@ class Dashboard:
     grants: list[GrantView] = field(default_factory=list)  # credit grants, not windows
     surfaces: SurfaceSection | None = None  # the vendor's weekly split; None keeps the pointer
     ghost_chip: SeriesChip | None = None  # "vs last week", on the week range when there is one
+    heatmap: Heatmap | None = None  # when in the week weekly-all is used; after Weeks
     pace: Pace | None = None  # weekly-all at the reset, projected: an estimate
 
 
@@ -802,6 +804,7 @@ def build_dashboard(
         budget_view=_budget_view(budget, now, subcap_unverified=subcap.any_recorded(store)),
         weeks=_weeks_view(store, latest, sessions_all, now, withheld, boost_ts),
         pace=compute_pace(store, now, withheld),
+        heatmap=compute_heatmap(store, now),
         cooldown_s=cooldown_s,
         events=events,
         vendor_status=list(vendor_status or []),

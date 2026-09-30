@@ -16,8 +16,10 @@ from fastapi.testclient import TestClient
 
 from quotalens.api import create_app
 from quotalens.dashboard import GHOST_KEY, _series_chips
+from quotalens.heatmap import compute_heatmap
 from quotalens.pace import HIDDEN_EARLY, HIDDEN_NO_HISTORY, compute_pace
 from quotalens.parse import QuotaReading
+from quotalens.render import _heatmap as render_heatmap
 from quotalens.views import ViewOptions
 
 WEEK = 7 * 86400
@@ -209,3 +211,59 @@ def test_pace_sits_under_the_budget_table(settings, store, secrets) -> None:
     budget = html.split('<section class="screen budget">', 1)[1].split("</section>", 1)[0]
     assert '<p class="pace">At this pace the week ' in budget
     assert "An estimate from how the last 3 complete weeks" in budget
+
+
+# -- task 3: the heatmap ---------------------------------------------------------
+
+
+def _seed_weeks_with_a_burst(store, n_weeks: int, burst_offset_s: int) -> list[int]:
+    """``n_weeks`` complete weeks read every 10 minutes: flat, except +2 points at one
+    moment ``burst_offset_s`` into each week, and +1 more twenty minutes later.
+    Returns the burst timestamps."""
+    start = RESET - WEEK
+    bursts = []
+    for k in range(n_weeks, 0, -1):
+        w_start = start - k * WEEK
+        burst = w_start + burst_offset_s
+        bursts.append(burst)
+        for t in range(w_start, w_start + WEEK, 600):
+            pct = 10 + (2 if t >= burst else 0) + (1 if t >= burst + 1200 else 0)
+            store.record_quota(
+                t, [QuotaReading("seven_day", "7-day", pct, _iso(w_start + WEEK), "normal", False)]
+            )
+    # This week has begun, so the ones above are behind it.
+    store.record_quota(
+        start + HOUR, [QuotaReading("seven_day", "7-day", 1, _iso(RESET), "normal", False)]
+    )
+    return bursts
+
+
+def test_heatmap_shape(store) -> None:
+    # 50 h 5 min into the week: the burst and the +1 after it land in one local hour.
+    bursts = _seed_weeks_with_a_burst(store, 2, 50 * HOUR + 300)
+    heat = compute_heatmap(store, RESET - WEEK + 2 * HOUR)
+    assert not heat.collecting and heat.weeks_used == 2
+    assert len(heat.cells) == 7 and all(len(row) == 24 for row in heat.cells)
+    local = datetime.fromtimestamp(bursts[0]).astimezone()
+    day, hour = local.weekday(), local.hour
+    assert heat.cells[day][hour] == pytest.approx(3.0)  # 3 points each week, averaged
+    others = [
+        v for d, row in enumerate(heat.cells) for h, v in enumerate(row) if (d, h) != (day, hour)
+    ]
+    assert all(v == 0 for v in others), "nothing else gained, and every hour was collected"
+    body = heat.as_dict()
+    assert [r["day"] for r in body["rows"]] == ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    assert body["rows"][day]["hours"][hour] == 3.0 and body["unit"] == "points per hour"
+    # Rendered: 168 cells, a legend in points per hour, and no amber.
+    html = render_heatmap(heat)
+    assert html.count("<rect x=") == 168 + 1 + 4
+    assert ">points/hour</text>" in html and "--s1" not in html and "--lit" not in html
+
+
+def test_heatmap_collecting(store) -> None:
+    _seed_weeks_with_a_burst(store, 1, 50 * HOUR)
+    heat = compute_heatmap(store, RESET - WEEK + 2 * HOUR)
+    assert heat.collecting and heat.weeks_used == 1
+    html = render_heatmap(heat)
+    assert "When you use it" in html and "Collecting: 1 of 2 complete weeks" in html
+    assert "<svg" not in html
