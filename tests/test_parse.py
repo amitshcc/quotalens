@@ -6,6 +6,7 @@ import pytest
 
 from conftest import OVERAGE_DOCUMENTED, USAGE_DOCUMENTED, USAGE_LIVE_2026_09
 from quotalens.parse import (
+    CreditGrant,
     ParseError,
     QuotaReading,
     format_money,
@@ -332,3 +333,73 @@ def test_a_row_already_on_disk_with_a_bad_exponent_renders_as_an_em_dash() -> No
     assert stored.used_text is None and stored.limit_text is None
     with pytest.raises(ValueError):
         format_money(316, 60, "USD")  # the guard itself is still there
+
+
+# -- credit grants --------------------------------------------------------------
+
+IGUANA = {
+    "utilization": 8.51794,
+    "resets_at": "2026-11-05T07:59:00+00:00",
+    "limit_dollars": 250,
+    "used_dollars": 21.29485,
+    "remaining_dollars": 228.70515,
+    "locked_reason": None,
+}
+NULL_CODENAMES = [
+    "seven_day_cowork",
+    "seven_day_omelette",
+    "tangelo",
+    "omelette_promotional",
+    "nimbus_quill",
+    "cinder_cove",
+    "copper_kite",
+    "harbor_lantern",
+    "wattle_ember",
+    "amber_ladder",
+    "juniper_tide",
+    "cedar_ember",
+    "amber_gauge",
+]
+
+
+def test_grant_shape_is_not_a_window() -> None:
+    payload = {**USAGE_LIVE_2026_09, "iguana_necktie": IGUANA}
+    parsed = parse_usage(payload)
+    assert "iguana_necktie" not in {r.window for r in parsed.readings}
+    assert "iguana_necktie" not in {b.key for b in parsed.ignored}
+    assert parsed.grants == [
+        CreditGrant(
+            key="iguana_necktie",
+            label="Cloud session credit",
+            used_minor=2129,
+            limit_minor=25000,
+            remaining_minor=22871,
+            pct=8.51794,
+            expires_at="2026-11-05T07:59:00+00:00",
+            locked_reason=None,
+        )
+    ]
+
+
+def test_unknown_grant_key_label() -> None:
+    block = {**IGUANA, "locked_reason": "org_disabled"}
+    parsed = parse_usage({**USAGE_LIVE_2026_09, "zebra_lantern": block})
+    (grant,) = parsed.grants
+    assert grant.label == "zebra lantern (unrecognised)"
+    assert grant.locked_reason == "org_disabled"
+    assert "zebra_lantern" not in {r.window for r in parsed.readings}
+
+
+def test_null_codename_blocks_ignored() -> None:
+    before = parse_usage(USAGE_LIVE_2026_09)
+    # nimbus_quill is already in the live fixture with a utilization and no reset.
+    payload = {**{key: None for key in NULL_CODENAMES}, **USAGE_LIVE_2026_09}
+    parsed = parse_usage(payload)
+    assert parsed.readings == before.readings
+    assert parsed.grants == []
+    assert parsed.ignored == before.ignored
+
+
+def test_grant_only_payload_is_not_a_reading_via_fallback() -> None:
+    with pytest.raises(ParseError):
+        parse_usage({"iguana_necktie": IGUANA})

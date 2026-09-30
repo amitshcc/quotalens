@@ -49,6 +49,23 @@ class QuotaReading:
 
 
 @dataclass(frozen=True)
+class CreditGrant:
+    """A dollar credit with an expiry (the Claude Code cloud-session credit), not a quota window.
+
+    Money is minor units of USD: the block says ``limit_dollars`` and carries no currency.
+    """
+
+    key: str
+    label: str
+    used_minor: int
+    limit_minor: int
+    remaining_minor: int
+    pct: float  # percentage points of the limit used
+    expires_at: str | None  # the block's ``resets_at``: for a grant that is its expiry
+    locked_reason: str | None = None
+
+
+@dataclass(frozen=True)
 class IgnoredBlock:
     key: str
     reason: str
@@ -59,6 +76,7 @@ class UsageParse:
     readings: list[QuotaReading]
     ignored: list[IgnoredBlock] = field(default_factory=list)
     fallback_used: bool = False  # readings came from the generic tree walk
+    grants: list[CreditGrant] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -100,6 +118,10 @@ def _money_or_none(minor: int, reading: SpendReading) -> str | None:
         return format_money(minor, reading.exponent, reading.currency)
     except ValueError:
         return None
+
+
+GRANT_CURRENCY = "USD"
+_GRANT_LABELS = {"iguana_necktie": "Cloud session credit"}
 
 
 class ParseError(ValueError):
@@ -160,6 +182,65 @@ def _pct_of(obj: dict[str, Any]) -> float | None:
     return None
 
 
+def _limit_dollars(obj: dict[str, Any]) -> float | None:
+    limit = _as_number(obj.get("limit_dollars"))
+    return limit if limit is not None and limit > 0 else None
+
+
+def is_grant_block(obj: Any, key: str = "") -> bool:
+    """A credit grant is recognised by shape: a positive ``limit_dollars``, not by its codename.
+
+    The one exception is a window we already know by name (``five_hour`` and the
+    weeklies): a dollar-denominated variant of those is still a window.
+    """
+    return key not in _WINDOW_LABELS and isinstance(obj, dict) and _limit_dollars(obj) is not None
+
+
+def grant_label(key: str) -> str:
+    return _GRANT_LABELS.get(key) or f"{key.replace('_', ' ')} (unrecognised)"
+
+
+def _minor(dollars: float) -> int:
+    return round(dollars * 100)
+
+
+def _grant_from_block(key: str, block: dict[str, Any]) -> CreditGrant | None:
+    limit = _limit_dollars(block)
+    if limit is None:
+        return None
+    used = _as_number(block.get("used_dollars"))
+    remaining = _as_number(block.get("remaining_dollars"))
+    if used is None and remaining is None:
+        return None  # nothing to say about how much of it is gone
+    if used is None:
+        used = limit - (remaining or 0.0)
+    if remaining is None:
+        remaining = limit - used
+    pct = _pct_of(block)
+    return CreditGrant(
+        key=key,
+        label=grant_label(key),
+        used_minor=_minor(used),
+        limit_minor=_minor(limit),
+        remaining_minor=_minor(remaining),
+        pct=pct if pct is not None else round(used / limit * 100, 2),
+        expires_at=_reset_of(block),
+        locked_reason=_as_str(block.get("locked_reason")),
+    )
+
+
+def parse_grants(payload: Any) -> list[CreditGrant]:
+    """Every credit grant in a ``/usage`` payload; empty for anything else."""
+    if not isinstance(payload, dict):
+        return []
+    found = (
+        _grant_from_block(key, value)
+        for key, value in payload.items()
+        if key != "limits" and is_grant_block(value, key)
+    )
+    return [grant for grant in found if grant is not None]
+
+
 def _severity_of(obj: dict[str, Any]) -> str | None:
     raw = _as_str(obj.get("severity"))
     return raw.lower() if raw and raw.lower() in SEVERITIES else None
@@ -188,7 +269,12 @@ def _top_level_windows(payload: dict[str, Any]) -> tuple[list[QuotaReading], lis
     readings: list[QuotaReading] = []
     ignored: list[IgnoredBlock] = []
     for key, value in payload.items():
-        if key == "limits" or key in NOT_A_WINDOW or not isinstance(value, dict):
+        if (
+            key == "limits"
+            or key in NOT_A_WINDOW
+            or not isinstance(value, dict)
+            or is_grant_block(value, key)
+        ):
             continue
         pct = _pct_of(value)
         if pct is None:
@@ -272,6 +358,8 @@ def _walk(node: Any, path: tuple[str, ...], out: list[QuotaReading], depth: int)
     if depth > MAX_WALK_DEPTH:
         return
     if isinstance(node, dict):
+        if is_grant_block(node, path[-1] if path else ""):
+            return  # a dollar credit, not a quota window
         pct = _pct_of(node)
         if pct is not None and path:
             key = "/".join(path)
@@ -292,12 +380,13 @@ def parse_usage(payload: Any) -> UsageParse:
         raise ParseError(f"usage payload is {type(payload).__name__}, expected object")
     readings, ignored = _top_level_windows(payload)
     readings = _fold_limits(payload, readings, ignored)
+    grants = parse_grants(payload)
     if readings:
-        return UsageParse(_dedupe(readings), ignored)
+        return UsageParse(_dedupe(readings), ignored, grants=grants)
     fallback: list[QuotaReading] = []
     _walk(payload, (), fallback, 0)
     if fallback:
-        return UsageParse(_dedupe(fallback), ignored, fallback_used=True)
+        return UsageParse(_dedupe(fallback), ignored, fallback_used=True, grants=grants)
     keys = sorted(str(k) for k in payload)[:20]
     raise ParseError(f"usage payload had no recognizable quota fields; top-level keys: {keys}")
 
