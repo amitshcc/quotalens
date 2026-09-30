@@ -1649,6 +1649,16 @@ def render_settings(view: SettingsView) -> str:
         '<p class="cap">Sources</p>',
         _checkbox_group(view),
         "</div></div>",
+        '<p class="cap">Updates</p>',
+        '<div class="grp">',
+        _field(
+            "update_check",
+            "Check for updates daily",
+            view.values["update_check"],
+            note="Asks pypi.org for the latest version once a day. Nothing else is sent.",
+            kind="checkbox",
+        ),
+        "</div>",
         '<p class="cap">Advanced — command line only</p>',
         _readonly(
             "Port",

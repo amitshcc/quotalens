@@ -14,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from quotalens import credits, grants, notify, retention, subcap, weeks
+from quotalens import credits, grants, notify, retention, subcap, updates, weeks
 from quotalens.alerts import (
     ALERT_KIND,
     CLEARED_KIND,
@@ -214,6 +214,8 @@ class Poller:
         self._task: asyncio.Task[None] | None = None
         self._lock: asyncio.Lock | None = None  # created lazily on the running loop
         self._last_forced_ts: float | None = None
+        self._started_ts = int(clock())
+        self._update_task: asyncio.Task[Any] | None = None
 
     def _default_factory(self, cookie: str) -> ClaudeClient:
         return ClaudeClient(
@@ -279,6 +281,7 @@ class Poller:
                 log.exception("poll loop error")
                 delay = self.schedule.on_failure()
             self.status.next_poll_ts = int(self._clock() + delay)
+            self._maybe_check_updates(int(self._clock()))
             with contextlib.suppress(asyncio.TimeoutError, TimeoutError):
                 await asyncio.wait_for(self._stop.wait(), timeout=delay)
 
@@ -695,6 +698,33 @@ class Poller:
         self._pruning = True
         task = asyncio.create_task(asyncio.to_thread(self.prune_now, now))
         task.add_done_callback(self._prune_finished)
+
+    def _maybe_check_updates(self, now: int) -> None:
+        """Ask PyPI about a newer release, at most daily, never inside a poll.
+
+        Runs after the reading is stored and in a worker thread, so a slow or dead
+        index cannot delay a poll. The first check waits out
+        ``FIRST_CHECK_DELAY_S`` from start. ``updates.check`` never raises; the
+        callback is for anything that somehow does.
+        """
+        if not updates.enabled(self._settings.update_check):
+            return
+        if now - self._started_ts < updates.FIRST_CHECK_DELAY_S:
+            return
+        if self._update_task is not None and not self._update_task.done():
+            return
+        if not updates.due(self._store, now):
+            return
+        task = asyncio.create_task(asyncio.to_thread(updates.check, self._store, now))
+        task.add_done_callback(self._update_finished)
+        self._update_task = task
+
+    def _update_finished(self, task: asyncio.Task[Any]) -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            log.warning("update check task failed: %s", self._redactor.redact(str(exc)))
 
     def _prune_finished(self, task: asyncio.Task[None]) -> None:
         self._pruning = False

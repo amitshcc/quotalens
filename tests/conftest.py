@@ -38,7 +38,7 @@ def _no_status_network(monkeypatch):
     """
     from quotalens import status as status_mod
 
-    def refuse(url, timeout_s=status_mod.CHECK_TIMEOUT_S):
+    def refuse(url, timeout_s=status_mod.CHECK_TIMEOUT_S, headers=None):
         raise AssertionError(f"a test tried to reach {url}")
 
     monkeypatch.setattr(status_mod, "fetch", refuse)

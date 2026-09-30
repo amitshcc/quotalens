@@ -161,3 +161,81 @@ def test_v7_database_migrates(tmp_path) -> None:
     assert again.read_update_check() is None
     assert again.query("SELECT MAX(version) FROM schema_version")[0][0] == SCHEMA_VERSION
     again.close()
+
+
+# -- the schedule and the setting -----------------------------------------------
+
+
+def _poller(settings, store, secrets, clock):
+    from quotalens.poller import Poller
+    from quotalens.secrets import Redactor
+
+    return Poller(settings, store, secrets, Redactor(), clock=clock)
+
+
+def _run_update_tick(poller, now: int) -> None:
+    import asyncio
+
+    async def tick() -> None:
+        poller._maybe_check_updates(now)
+        if poller._update_task is not None:
+            await poller._update_task
+
+    asyncio.run(tick())
+
+
+def test_poller_checks_once_five_minutes_after_start(settings, store, secrets, asked, monkeypatch):
+    monkeypatch.delenv(updates.ENV_OPT_OUT, raising=False)
+    poller = _poller(settings, store, secrets, lambda: NOW)
+    _run_update_tick(poller, NOW + updates.FIRST_CHECK_DELAY_S - 1)
+    assert asked == []  # never inside the first minutes
+    _run_update_tick(poller, NOW + updates.FIRST_CHECK_DELAY_S)
+    assert len(asked) == 1 and store.read_update_check().latest == "2.1.0"
+    _run_update_tick(poller, NOW + updates.FIRST_CHECK_DELAY_S + 60)
+    assert len(asked) == 1  # a restart or a later poll does not re-ask inside 24 h
+
+
+def test_poller_does_not_check_when_off(settings, store, secrets, asked, monkeypatch):
+    monkeypatch.delenv(updates.ENV_OPT_OUT, raising=False)
+    off = settings.with_overrides(update_check=False)
+    poller = _poller(off, store, secrets, lambda: NOW)
+    _run_update_tick(poller, NOW + 10_000)
+    assert asked == [] and store.read_update_check() is None
+
+
+def test_poller_does_not_check_when_env_says_no(settings, store, secrets, asked, monkeypatch):
+    monkeypatch.setenv(updates.ENV_OPT_OUT, "1")
+    poller = _poller(settings, store, secrets, lambda: NOW)
+    _run_update_tick(poller, NOW + 10_000)
+    assert asked == []
+
+
+def test_settings_update_check_roundtrip(settings, store, secrets, tmp_path) -> None:
+    from starlette.testclient import TestClient
+
+    from quotalens.api import create_app
+    from quotalens.config import config_path, read_config_file
+
+    form = {
+        "interval": "60",
+        "lookback": "15",
+        "burn_alert": "20.0",
+        "sample_keep": "20000",
+        "webhook_url": "",
+        "notify_thresholds": "50,75,90",
+        "status_vendors": "claude",
+        "status_row": "1",
+        "notify_credits": "1",
+    }
+    assert settings.update_check is True
+    app = create_app(settings, store, secrets, config_dir=tmp_path)
+    with TestClient(app) as tc:
+        page = tc.get("/settings").text
+        assert "Check for updates daily" in page
+        assert "Asks pypi.org for the latest version once a day. Nothing else is sent." in page
+        tc.post("/settings", data=form, follow_redirects=False)  # box unticked
+        assert read_config_file(config_path("", tmp_path))["update_check"] is False
+        assert app.state.qw.settings.update_check is False
+        tc.post("/settings", data={**form, "update_check": "1"}, follow_redirects=False)
+        assert read_config_file(config_path("", tmp_path))["update_check"] is True
+        assert app.state.qw.settings.update_check is True
