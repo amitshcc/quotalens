@@ -762,3 +762,43 @@ def test_grant_row_absent_after_7_days(settings, store, secrets) -> None:
     html = _grant_page(settings, store, secrets, now)
     assert "Cloud session credit" not in html
     assert store.latest_grants()  # the row stays in the database
+
+
+def _this_week_breakdown(store, now: int, rows=None):
+    from quotalens.budget import week_key
+    from quotalens.parse import SurfaceBreakdown, SurfaceShare
+
+    monday = datetime.fromisoformat(week_key(now)).replace(hour=1, tzinfo=UTC)
+    shares = rows or [
+        SurfaceShare("claude_code", "Claude Code", 23.0),
+        SurfaceShare("chat", "Chats", 1.0),
+        SurfaceShare("cowork", "Cowork", 76.0),
+        SurfaceShare("other", "Other", 0.0),
+    ]
+    iso = datetime.fromtimestamp(now, UTC).isoformat()
+    store.record_breakdown(now, SurfaceBreakdown(iso, monday.isoformat(), shares))
+
+
+def test_where_quota_went_breakdown(settings, store, secrets) -> None:
+    now = int(time.time())
+    _this_week_breakdown(store, now)
+    html = _grant_page(settings, store, secrets, now)
+    section = html.split("Where the quota went")[1].split("</section>")[0]
+    assert "Share of this week" in section
+    # the seeded Weekly - all models meter reads 38%: 76% of it is 29% of the limit
+    assert "Cowork" in section and "76%" in section and "≈ 29%" in section
+    assert section.index("Claude Code") < section.index("Chats") < section.index("Cowork")
+    assert "Anthropic's own split of this week's usage, as of " in section
+    assert "≈ is share × Weekly — all models; an estimate." in section
+    assert "For per-skill and per-project detail: <code>claude /usage</code>" in section
+    assert 'fill="var(--s2)"' in section and 'fill="var(--txt-far)"' in section  # other = muted
+    assert "var(--s1)" not in section and "style=" not in section  # amber is the session only
+
+
+def test_where_quota_went_fallback(settings, store, secrets) -> None:
+    now = int(time.time())
+    html = _grant_page(settings, store, secrets, now)  # no split stored
+    assert "what spent it" in html and "Share of this week" not in html
+    # a split stored for an earlier week is not where this week's quota went
+    _this_week_breakdown(store, now - 14 * 86400)
+    assert "Share of this week" not in _grant_page(settings, store, secrets, now)

@@ -54,6 +54,7 @@ from quotalens.state import (
 )
 from quotalens.status import VendorStatus
 from quotalens.store import QuotaRow, Store
+from quotalens.surfaces import SurfaceSection, build_section, mostly_by_week
 from quotalens.views import (
     LOOKBACKS,
     RANGE_KEYS,
@@ -398,6 +399,7 @@ class WeekRowView:
     reset_primary: str  # full sessions the budget table showed at that Monday's reset
     reset_secondary: str  # "11.1 at last week's rate", the sharper signal
     is_open: bool  # the current, still-collecting week
+    mostly_text: str = "—"  # top surface at the close, "Cowork 76%"; a dash before collection
 
 
 @dataclass
@@ -460,6 +462,7 @@ class Dashboard:
     vendor_status: list[VendorStatus] = field(default_factory=list)
     alert_standing: bool = False  # a burn alert fired and has not cleared
     grants: list[GrantView] = field(default_factory=list)  # credit grants, not windows
+    surfaces: SurfaceSection | None = None  # the vendor's weekly split; None keeps the pointer
 
 
 # -- builders -------------------------------------------------------------------
@@ -752,6 +755,12 @@ def build_dashboard(
         chart=chart,
         spend=spend,
         grants=build_grant_views(store.latest_grants(), now, withheld),
+        surfaces=build_section(
+            store,
+            now,
+            next((r.pct for r in latest if r.window == "seven_day"), None),
+            withheld,
+        ),
         polled_text=_polled_text(status.last_success_ts, now),
         last_success_ts=status.last_success_ts,
         health_message=epistemic.message,
@@ -1061,6 +1070,11 @@ def _fable_cell(
     return f"Fable {cost:.0f}%", _spread_text(low, high, n)
 
 
+def _mostly_text(top: dict[str, Any] | None) -> str:
+    """"Cowork 76%": the week's largest surface; a dash for a week with no split stored."""
+    return EM_DASH if top is None else f"{top['label']} {top['percent']:.0f}%"
+
+
 def _reset_cells(at_reset: float | None, at_last_weeks_rate: float | None) -> tuple[str, str]:
     """(primary, secondary): the figure the reader saw at the reset, then last week's rate."""
     primary = EM_DASH if at_reset is None else f"{at_reset:.1f}"
@@ -1088,6 +1102,7 @@ def _weeks_view(
     current week's cost is computed live from the windows so far.
     """
     rows_data = {r["week"]: r for r in weeks.week_rows(store)}
+    mostly = mostly_by_week(store)
     current_wk = week_key(now)
     fable_key = _fable_key(latest)
     has_fable = fable_key is not None
@@ -1160,6 +1175,7 @@ def _weeks_view(
                 reset_primary,
                 reset_secondary,
                 is_open,
+                _mostly_text(mostly.get(wk)),
             )
         )
     # Nothing to show: the only row is the current week with no cost and no reset figure.
@@ -1939,6 +1955,7 @@ def as_json(dash: Dashboard) -> dict[str, Any]:
                     "full_sessions_at_reset": r.reset_primary,
                     "full_sessions_at_last_weeks_rate": r.reset_secondary,
                     "open": r.is_open,
+                    "mostly": r.mostly_text,
                 }
                 for r in dash.weeks.rows
             ],

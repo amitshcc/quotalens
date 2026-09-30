@@ -28,6 +28,7 @@ from quotalens.grants import GrantView
 from quotalens.runway import fmt_span
 from quotalens.settings_view import NOTIFY_GROUP, SettingsView
 from quotalens.status import StatusVendor, VendorStatus
+from quotalens.surfaces import SurfaceSection
 from quotalens.views import AUTO, RANGE_KEYS
 
 ICONS = (
@@ -354,7 +355,7 @@ def _main(dash: Dashboard) -> str:
         + _chart(dash)
         + _history(dash)
         + _weeks(dash)
-        + _attribution()
+        + _attribution(dash.surfaces)
         + "</div>"
         + _side(dash)
         + "</div>"
@@ -970,7 +971,8 @@ def _weeks(dash: Dashboard) -> str:
         "<thead><tr><th>Week</th><th>Closed at</th>"
         '<th class="n">One full session used</th>'
         '<th class="n">Used</th><th class="n">Left unused</th>'
-        '<th class="n">Full sessions at reset</th></tr></thead>'
+        '<th class="n">Full sessions at reset</th>'
+        '<th class="n">Mostly</th></tr></thead>'
         f"<tbody>{body}</tbody></table></div>{verdict}{note}</section>"
     )
 
@@ -990,11 +992,12 @@ def _week_row(r: WeekRowView) -> str:
         f'<td class="n">{used}</td>'
         f'<td class="n">{e(r.used_text)}</td>'
         f'<td class="n">{e(r.left_text)}</td>'
-        f'<td class="n">{reset}</td></tr>'
+        f'<td class="n">{reset}</td>'
+        f'<td class="n">{e(r.mostly_text)}</td></tr>'
     )
 
 
-def _attribution(provider: Provider = CLAUDE) -> str:
+def _attribution(surfaces: SurfaceSection | None = None, provider: Provider = CLAUDE) -> str:
     """Where attribution actually lives, since it is not going to live here.
 
     ``docs/MVP-SCOPE.md`` puts per-project attribution out indefinitely, so the slot
@@ -1003,6 +1006,8 @@ def _attribution(provider: Provider = CLAUDE) -> str:
     second provider's own command joins this list without the prose around it
     changing.
     """
+    if surfaces is not None:
+        return _surface_section(surfaces, provider)
     return (
         '<section class="screen pointers">'
         '<p class="cap">Where the quota went</p>'
@@ -1018,6 +1023,47 @@ def _attribution(provider: Provider = CLAUDE) -> str:
         '<p class="far">QuotaLens does not duplicate it. Quota is pooled across '
         "every surface you use, so a local log can show that a project correlates with "
         "a climb, but it cannot attribute pooled quota to that project.</p>"
+        "</section>"
+    )
+
+
+def _surface_section(sec: SurfaceSection, provider: Provider) -> str:
+    """The vendor's own split of this week's usage: one stacked bar and a table of shares.
+
+    Colours are SVG presentation attributes (``var(--s2)`` and so on), the way the
+    sparkline does it, so the page needs no inline style and the stylesheet no new rule.
+    The command pointer stays, as one line under the figures.
+    """
+    total = sum(r.percent for r in sec.rows) or 1.0
+    x, rects, body = 0.0, [], []
+    for r in sec.rows:
+        width = r.percent / total * 100
+        fill = f"var({r.colour})"
+        if width > 0:
+            rects.append(f'<rect x="{x:.2f}" width="{width:.2f}" height="1" fill="{fill}"/>')
+        x += width
+        swatch = (
+            f'<svg width="8" height="8" viewBox="0 0 1 1" aria-hidden="true">'
+            f'<rect width="1" height="1" fill="{fill}"/></svg> '
+        )
+        body.append(
+            f'<tr><th scope="row">{swatch}{e(r.label)}</th>'
+            f'<td class="n">{e(r.share_text)}</td>'
+            f'<td class="n">{e(r.limit_text or "—")}</td></tr>'
+        )
+    return (
+        '<section class="screen pointers">'
+        '<p class="cap">Where the quota went</p>'
+        '<svg width="100%" height="8" viewBox="0 0 100 1" preserveAspectRatio="none" '
+        f'role="img" aria-label="Share of this week\'s usage by surface">{"".join(rects)}</svg>'
+        "<table><thead><tr><th>Surface</th>"
+        '<th class="n">Share of this week</th>'
+        '<th class="n">≈ of the week\'s limit</th></tr></thead>'
+        f"<tbody>{''.join(body)}</tbody></table>"
+        "<p class=\"far\">Anthropic's own split of this week's usage, "
+        f"as of {e(clock(sec.as_of_ts))}."
+        " ≈ is share × Weekly — all models; an estimate.</p>"
+        f"<p>For per-skill and per-project detail: <code>{e(provider.usage_command)}</code></p>"
         "</section>"
     )
 
