@@ -206,3 +206,10 @@ def test_events_without_since_unchanged(settings, store, secrets) -> None:
     assert [e["ts"] for e in body["events"]] == [300, 200, 100]
     assert "next_since" not in body
 
+
+def test_health_has_profile(settings, store, secrets) -> None:
+    with _client(settings, store, secrets) as tc:
+        assert tc.get("/api/health").json()["profile"] == "default"
+        named = _client(settings.with_overrides(profile="work"), store, secrets)
+        with named as tc2:
+            assert tc2.get("/api/health").json()["profile"] == "work"

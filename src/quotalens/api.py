@@ -535,6 +535,7 @@ def create_app(
         return {
             "status": overall,
             "version": __version__,
+            "profile": state.settings.profile or "default",
             "now_ts": now,
             "started_ts": poller_status.started_ts,
             "uptime_s": now - poller_status.started_ts,
