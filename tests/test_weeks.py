@@ -504,3 +504,30 @@ def test_an_empty_ledger_renders_nothing() -> None:
     dash = object.__new__(Dashboard)
     dash.weeks = None
     assert _weeks(dash) == ""
+
+
+def test_weeks_mostly_column(settings, store, secrets) -> None:
+    from fastapi.testclient import TestClient
+
+    from quotalens.api import create_app
+    from quotalens.parse import SurfaceBreakdown, SurfaceShare
+
+    _record(store, _reset("seven_day", MON_B - 60, 100.0, 12.0, 11.5, 13.0, 11, 8.2, 8.3))
+    _record(store, _reset("seven_day", MON_C - 60, 99.0, 9.0, 7.1, 11.1, 13, 8.5, 11.1))
+    started = datetime.fromtimestamp(MON_B, UTC).isoformat()  # the week MON_C closes
+    early = [SurfaceShare("chat", "Chats", 60.0), SurfaceShare("cowork", "Cowork", 40.0)]
+    final = [SurfaceShare("chat", "Chats", 24.0), SurfaceShare("cowork", "Cowork", 76.0)]
+    store.record_breakdown(MON_B + 3600, SurfaceBreakdown(None, started, early))
+    # the last split stored is the one at the close
+    store.record_breakdown(MON_C - 120, SurfaceBreakdown(None, started, final))
+    app = create_app(settings, store, secrets)
+    app.state.qw.poller.status.state = "ok"
+
+    with TestClient(app) as tc:
+        rows = {r["week"]: r for r in tc.get("/api/weeks").json()["weeks"]}
+        html = tc.get("/").text
+    assert rows[week_key(MON_B)]["mostly"] == {"label": "Cowork", "percent": 76.0}
+    assert rows[week_key(MON_A)]["mostly"] is None  # before the block was collected
+    assert "<th" in html and ">Mostly</th>" in html
+    assert '<td class="n">Cowork 76%</td>' in html
+    assert '<td class="n">—</td></tr>' in html
