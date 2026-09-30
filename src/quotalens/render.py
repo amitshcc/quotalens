@@ -231,12 +231,12 @@ def chip(kind: str, text: str) -> str:
     )
 
 
-def render_settings_page(view: SettingsView) -> str:
-    """The same shell, so the settings page inherits the theme and the tokens."""
+def render_shell(title: str, inner: str) -> str:
+    """A plain page in the dashboard's theme: the header with a way back, then ``inner``."""
     return (
         '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width,initial-scale=1">\n'
-        "<title>QuotaLens settings</title>\n"
+        f"<title>{e(title)}</title>\n"
         '<link rel="icon" href="/favicon.svg" type="image/svg+xml">\n'
         '<link rel="stylesheet" href="/static/tokens.css">\n'
         '<link rel="stylesheet" href="/static/app.css">\n'
@@ -247,14 +247,19 @@ def render_settings_page(view: SettingsView) -> str:
         '<button id="t" type="button" aria-label="Switch theme">'
         '<svg class="ic ic-sun" aria-hidden="true"><use href="#i-sun"/></svg>'
         '<svg class="ic ic-moon" aria-hidden="true"><use href="#i-moon"/></svg>'
-        "theme</button></div></header>"
+        "theme</button></div></header>" + inner + "</div></div>\n"
+        "</body>\n</html>\n"
+    )
+
+
+def render_settings_page(view: SettingsView) -> str:
+    """The same shell, so the settings page inherits the theme and the tokens."""
+    return render_shell(
+        "QuotaLens settings",
         # The dialog says this in its header; the page has no dialog header, so
         # it says it here. Once per surface, never once per field.
         '<p class="cap" id="sd-title">Settings</p>'
-        '<p class="far lede">Changes take effect from the next poll.</p>'
-        + render_settings(view)
-        + "</div></div>\n"
-        "</body>\n</html>\n"
+        '<p class="far lede">Changes take effect from the next poll.</p>' + render_settings(view),
     )
 
 

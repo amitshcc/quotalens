@@ -233,6 +233,20 @@
       .catch(function () { form.submit(); });
   }
 
+  /* About. One fragment serves the page and the dialog; the check is a real form
+     and this only sends it in place, so with no JavaScript it posts and redirects. */
+  function submitAboutCheck(form) {
+    var btn = form.querySelector("button");
+    if (btn) { btn.disabled = true; btn.textContent = "Checking\u2026"; }
+    fetch("/about/check?fragment=1", { method: "POST" })
+      .then(function (r) { return r.text(); })
+      .then(function (html) {
+        var box = document.getElementById("about");
+        if (box) box.outerHTML = html;
+      })
+      .catch(function () { form.submit(); });
+  }
+
   /* The acknowledgement gates the button. The server refuses an unconfirmed
      shrink regardless -- this is the affordance, so the control says what it
      will accept before you press it. With no JavaScript the button stays
@@ -282,6 +296,11 @@
   });
 
   document.addEventListener("submit", function (ev) {
+    if (ev.target && ev.target.id === "about-check-form") {
+      ev.preventDefault();
+      submitAboutCheck(ev.target);
+      return;
+    }
     var sform = ev.target.closest && ev.target.closest("#sd-body form");
     if (sform) { ev.preventDefault(); submitSettings(sform); return; }
     if (ev.target && ev.target.id === "poll-form") {

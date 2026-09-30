@@ -34,8 +34,10 @@ from quotalens import (
     retention,
     status,
     surfaces,
+    updates,
     weeks,
 )
+from quotalens.about_view import build_about, render_about, render_about_page
 from quotalens.burn import burn_rate
 from quotalens.config import (
     CONFIG_KEYS_BY_NAME,
@@ -301,6 +303,27 @@ def create_app(
         return HTMLResponse(
             _settings_html(view, bool(fragment)), headers={"Cache-Control": "no-store"}
         )
+
+    def _about_html(fragment: bool, note: str = "") -> HTMLResponse:
+        view = build_about(state.settings, state.store, note=note)
+        html = render_about(view) if fragment else render_about_page(view)
+        return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+    @app.get("/about", response_class=HTMLResponse, include_in_schema=False)
+    def about_page(fragment: int = 0) -> HTMLResponse:
+        return _about_html(bool(fragment))
+
+    @app.post("/about/check", include_in_schema=False)
+    async def about_check(request: Request) -> Response:
+        """The button: skips the 24 h rule, not the 60 s one, and says when refused."""
+        now = int(time.time())
+        wait = updates.manual_wait(state.store, now)
+        if not wait:
+            await asyncio.to_thread(updates.check, state.store, now, True)
+        note = f"Checked a moment ago; try again in {wait} s." if wait else ""
+        if _wants_fragment(request):
+            return _about_html(True, note)
+        return RedirectResponse(url="/about", status_code=303)
 
     @app.post("/settings", include_in_schema=False)
     async def settings_save(request: Request) -> Response:
