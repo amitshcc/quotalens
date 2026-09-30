@@ -21,6 +21,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 PCT_KEYS = ("utilization", "percent", "pct", "percentage", "usage_percent")
@@ -264,6 +265,28 @@ def parse_grants(payload: Any) -> list[CreditGrant]:
 BREAKDOWN_KEY = "seven_day_breakdown"
 
 
+def _whole_hour(value: str | None) -> str | None:
+    """``window_started_at`` rounded to the nearest whole hour, UTC, as an ISO string.
+
+    The vendor derives it from a reset time that carries a fresh sub-second jitter on every
+    poll (``01:00:00.176587``, then ``01:00:00.898435``), so as given it names a different
+    "week" each minute. The week itself starts on an hour; rounding gives it one name.
+    Anything that does not parse is kept as given.
+    """
+    if value is None:
+        return None
+    try:
+        start = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return value
+    if start.tzinfo is None:
+        return value
+    start = (start.astimezone(UTC) + timedelta(minutes=30)).replace(
+        minute=0, second=0, microsecond=0
+    )
+    return start.isoformat()
+
+
 def parse_breakdown(payload: Any) -> SurfaceBreakdown | None:
     """The per-surface weekly split, or None when absent or unusable. Never raises.
 
@@ -288,7 +311,7 @@ def parse_breakdown(payload: Any) -> SurfaceBreakdown | None:
         return None
     return SurfaceBreakdown(
         as_of=_as_str(block.get("as_of")),
-        window_started_at=_as_str(block.get("window_started_at")),
+        window_started_at=_whole_hour(_as_str(block.get("window_started_at"))),
         rows=rows,
     )
 

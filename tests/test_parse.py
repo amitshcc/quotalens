@@ -423,7 +423,7 @@ def test_breakdown_parsed() -> None:
     parsed = parse_usage({**USAGE_LIVE_2026_09, "seven_day_breakdown": BREAKDOWN})
     assert parsed.breakdown == SurfaceBreakdown(
         as_of="2026-09-30T17:45:05.940314+00:00",
-        window_started_at="2026-09-28T01:00:00.900649+00:00",
+        window_started_at="2026-09-28T01:00:00+00:00",  # rounded: the vendor's jitters per poll
         rows=[
             SurfaceShare("claude_code", "Claude Code", 23.0),
             SurfaceShare("chat", "Chats", 1.0),
@@ -448,3 +448,21 @@ def test_breakdown_sum_not_100_kept_as_given() -> None:
     }
     parsed = parse_usage({**USAGE_LIVE_2026_09, "seven_day_breakdown": block})
     assert [(r.label, r.percent) for r in parsed.breakdown.rows] == [("A", 40.0), ("b", 35.5)]
+
+
+def test_breakdown_week_name_ignores_subsecond_jitter() -> None:
+    def started(value: str) -> str | None:
+        block = {**BREAKDOWN, "window_started_at": value}
+        return parse_usage(
+            {**USAGE_LIVE_2026_09, "seven_day_breakdown": block}
+        ).breakdown.window_started_at
+
+    names = {
+        started(v)
+        for v in (
+            "2026-09-28T01:00:00.176587+00:00",
+            "2026-09-28T01:00:00.898435+00:00",
+            "2026-09-28T00:59:59.600000+00:00",
+        )
+    }
+    assert names == {"2026-09-28T01:00:00+00:00"}
