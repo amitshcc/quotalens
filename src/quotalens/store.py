@@ -16,10 +16,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from quotalens.parse import KNOWN_GRANT_KEYS, CreditGrant, QuotaReading, SpendReading
+from quotalens.parse import (
+    KNOWN_GRANT_KEYS,
+    CreditGrant,
+    QuotaReading,
+    SpendReading,
+    SurfaceBreakdown,
+    SurfaceShare,
+)
 from quotalens.retention import TS_COLUMN
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 # Statements that bring an older database up to each version, in order.
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
@@ -38,6 +45,7 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
         + ",".join(f"'{key}'" for key in KNOWN_GRANT_KEYS)
         + ")",
     ),
+    7: (),  # surface_share is created by the CREATE statements
 }
 
 _SCHEMA = """
@@ -116,6 +124,15 @@ CREATE TABLE IF NOT EXISTS credit_grant (
     locked_reason TEXT,
     PRIMARY KEY (ts, key)
 );
+-- the vendor's weekly split by surface; one row per surface, only when a value changes
+CREATE TABLE IF NOT EXISTS surface_share (
+    ts INTEGER NOT NULL,
+    window_started_at TEXT,
+    key TEXT NOT NULL,
+    label TEXT NOT NULL,
+    percent REAL NOT NULL,
+    PRIMARY KEY (ts, key)
+);
 -- detected climbs, threshold crossings, poll failures
 CREATE TABLE IF NOT EXISTS event (
     ts INTEGER NOT NULL,
@@ -165,6 +182,15 @@ class GrantRow:
     remaining_minor: int
     expires_at: str | None
     locked_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class StoredBreakdown:
+    """One stored snapshot of the per-surface split, rows in payload order."""
+
+    ts: int
+    window_started_at: str | None
+    rows: list[SurfaceShare]
 
 
 @dataclass(frozen=True)
@@ -408,6 +434,67 @@ class Store:
                 rows,
             )
         return len(rows)
+
+    def record_breakdown(
+        self, ts: int, breakdown: SurfaceBreakdown | None, *, force: bool = False
+    ) -> int:
+        """Store the split only when a percent differs from the latest one for that week.
+
+        ``force`` skips the comparison (the backfill has already done it). Returns the number
+        of rows written (0 when unchanged or absent).
+        """
+        if breakdown is None or not breakdown.rows:
+            return 0
+        with self._tx() as cur:
+            latest = cur.execute(
+                "SELECT MAX(ts) AS ts FROM surface_share WHERE window_started_at IS ?",
+                (breakdown.window_started_at,),
+            ).fetchone()["ts"]
+            if latest is not None and not force:
+                have = {
+                    r["key"]: (r["label"], r["percent"])
+                    for r in cur.execute(
+                        "SELECT key, label, percent FROM surface_share WHERE ts = ? "
+                        "AND window_started_at IS ?",
+                        (latest, breakdown.window_started_at),
+                    )
+                }
+                if have == {r.key: (r.label, r.percent) for r in breakdown.rows}:
+                    return 0
+            rows = [
+                (ts, breakdown.window_started_at, r.key, r.label, r.percent) for r in breakdown.rows
+            ]
+            cur.executemany(
+                "INSERT OR REPLACE INTO surface_share "
+                "(ts, window_started_at, key, label, percent) VALUES (?, ?, ?, ?, ?)",
+                rows,
+            )
+        return len(rows)
+
+    def _breakdown_where(self, where: str, params: tuple[Any, ...]) -> StoredBreakdown | None:
+        with self._tx() as cur:
+            ts_row = cur.execute(
+                f"SELECT MAX(ts) AS ts FROM surface_share WHERE {where}", params
+            ).fetchone()
+            if ts_row["ts"] is None:
+                return None
+            rows = cur.execute(
+                "SELECT window_started_at, key, label, percent FROM surface_share "
+                f"WHERE ts = ? AND {where} ORDER BY rowid",
+                (ts_row["ts"], *params),
+            ).fetchall()
+        return StoredBreakdown(
+            ts_row["ts"],
+            rows[0]["window_started_at"],
+            [SurfaceShare(r["key"], r["label"], r["percent"]) for r in rows],
+        )
+
+    def latest_breakdown(self) -> StoredBreakdown | None:
+        return self._breakdown_where("1 = 1", ())
+
+    def breakdown_at_close(self, window_started_at: str | None) -> StoredBreakdown | None:
+        """The last split stored for that week: what it looked like when the week closed."""
+        return self._breakdown_where("window_started_at IS ?", (window_started_at,))
 
     def record_overage(self, ts: int, spend: SpendReading) -> None:
         with self._tx() as cur:

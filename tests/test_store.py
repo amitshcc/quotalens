@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import sqlite3
 
-from quotalens.parse import CreditGrant, QuotaReading, SpendReading
+from quotalens.parse import (
+    CreditGrant,
+    QuotaReading,
+    SpendReading,
+    SurfaceBreakdown,
+    SurfaceShare,
+)
 from quotalens.store import SCHEMA_VERSION, Store
 
 
@@ -114,6 +120,7 @@ def test_v1_database_is_migrated_without_losing_rows(tmp_path) -> None:
         4,
         5,
         6,
+        7,
     ]
     conn.close()
     store.close()
@@ -159,3 +166,33 @@ def test_record_and_latest_grants(store: Store) -> None:
     assert latest["iguana_necktie"].used_minor == 2129
     assert latest["iguana_necktie"].remaining_minor == 22871
     assert latest["iguana_necktie"].expires_at == "2026-11-05T07:59:00+00:00"
+
+
+WEEK = "2026-09-28T01:00:00+00:00"
+
+
+def _breakdown(code: float, cowork: float, week: str | None = WEEK) -> SurfaceBreakdown:
+    return SurfaceBreakdown(
+        as_of="2026-09-30T00:00:00+00:00",
+        window_started_at=week,
+        rows=[
+            SurfaceShare("claude_code", "Claude Code", code),
+            SurfaceShare("cowork", "Cowork", cowork),
+        ],
+    )
+
+
+def test_breakdown_change_only(store: Store) -> None:
+    assert store.record_breakdown(10, _breakdown(23, 77)) == 2
+    assert store.record_breakdown(20, _breakdown(23, 77)) == 0  # same values: nothing stored
+    assert store.record_breakdown(30, _breakdown(24, 76)) == 2
+    assert store.record_breakdown(40, _breakdown(10, 90, week="2026-10-05T01:00:00+00:00")) == 2
+    assert store.record_breakdown(50, None) == 0
+    assert store.query("SELECT COUNT(*) AS n FROM surface_share")[0]["n"] == 6
+    latest = store.latest_breakdown()
+    assert latest is not None and latest.ts == 40
+    assert [(r.key, r.percent) for r in latest.rows] == [("claude_code", 10.0), ("cowork", 90.0)]
+    closed = store.breakdown_at_close(WEEK)
+    assert closed is not None and closed.ts == 30
+    assert [(r.label, r.percent) for r in closed.rows] == [("Claude Code", 24.0), ("Cowork", 76.0)]
+    assert store.breakdown_at_close("never") is None

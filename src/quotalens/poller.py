@@ -359,6 +359,7 @@ class Poller:
         previous = self._store.latest_quota()
         self._store.record_quota(now, parsed.readings)
         self._store.record_grants(now, parsed.grants)
+        self._store.record_breakdown(now, parsed.breakdown)
         self._note_diagnostics(parsed, now)
         self._check_boost(now, previous, parsed)
 

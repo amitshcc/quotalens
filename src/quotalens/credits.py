@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from itertools import pairwise
 from typing import Any
 
-from quotalens.parse import parse_grants
+from quotalens.parse import parse_breakdown, parse_grants
 
 SPEND_KIND = "credits_spend"
 # Two polls further apart than this had a collection gap between them, so the
@@ -207,4 +207,30 @@ def backfill_grants(store: Any) -> int:
         fresh = [g for g in parse_grants(payload) if (row["ts"], g.key) not in have]
         if fresh:
             written += store.record_grants(row["ts"], fresh)
+    return written
+
+
+def backfill_breakdown(store: Any) -> int:
+    """Re-derive the per-surface split from stored ``usage`` samples. Safe to run twice.
+
+    Replays the samples in time order and keeps a snapshot only where the values differ
+    from the previous one for that week, the same rule the poller applies. A timestamp
+    already stored is left alone, so a repeat start writes nothing. Returns rows written.
+    """
+    have = {r["ts"] for r in store.query("SELECT DISTINCT ts FROM surface_share")}
+    previous: dict[str | None, list[tuple[str, str, float]]] = {}
+    written = 0
+    for row in store.query("SELECT ts, payload FROM sample WHERE source = 'usage' ORDER BY ts"):
+        try:
+            found = parse_breakdown(json.loads(row["payload"]))
+        except (ValueError, TypeError):
+            continue
+        if found is None:
+            continue
+        signature = [(r.key, r.label, r.percent) for r in found.rows]
+        if previous.get(found.window_started_at) == signature:
+            continue
+        previous[found.window_started_at] = signature
+        if row["ts"] not in have:
+            written += store.record_breakdown(row["ts"], found, force=True)
     return written

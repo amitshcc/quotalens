@@ -121,3 +121,22 @@ def test_backfill_grants_idempotent(store) -> None:
         (200, "iguana_necktie", 2129, 25000),
         (300, "iguana_necktie", 2129, 25000),
     ]
+
+
+def test_breakdown_backfill_idempotent(store) -> None:
+    block = {
+        "as_of": "2026-09-30T00:00:00+00:00",
+        "window_started_at": "2026-09-28T01:00:00+00:00",
+        "rows": [{"key": "cowork", "display_name": "Cowork", "percent": 76}],
+    }
+    changed = {**block, "rows": [{"key": "cowork", "display_name": "Cowork", "percent": 80}]}
+    store.record_sample(100, "usage", {"five_hour": {"utilization": 1}})
+    store.record_sample(200, "usage", {"seven_day_breakdown": block})
+    store.record_sample(300, "usage", {"seven_day_breakdown": block})
+    store.record_sample(400, "usage", {"seven_day_breakdown": changed})
+    store.record_sample(500, "overage", {"seven_day_breakdown": block})
+
+    assert credits.backfill_breakdown(store) == 2
+    assert credits.backfill_breakdown(store) == 0
+    rows = store.query("SELECT ts, key, percent FROM surface_share ORDER BY ts")
+    assert [tuple(r) for r in rows] == [(200, "cowork", 76.0), (400, "cowork", 80.0)]

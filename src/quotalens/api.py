@@ -182,6 +182,7 @@ def create_app(
         # command. Idempotent: a repeat start writes nothing.
         weeks.backfill(store, int(time.time()))
         credits.backfill_grants(store)
+        credits.backfill_breakdown(store)
         if settings.poll_enabled:
             poller.start()
         status_task = asyncio.create_task(_watch_status(watcher))
