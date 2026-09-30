@@ -113,6 +113,61 @@ class Crossing:
         return f"{self.label} at {self.pct:.0f}%, resets {self.resets_at_text}"
 
 
+# -- credit grants: a countdown, not a percentage -----------------------------------
+
+GRANT_SEEN_KIND = "credit_grant_seen"
+EXPIRING_KIND = "credit_grant_expiring"
+EXPIRY_LEVELS_DAYS = (7, 1)  # widest first
+
+
+def _expiry_prefix(key: str, expires_at: str) -> str:
+    return f"{key}@{expires_at} expiring "
+
+
+def expiry_detail(key: str, expires_at: str, level_days: int, note: str = "") -> str:
+    """The event detail: the de-dup key, then ``DETAIL_SEP`` and whatever the row also says."""
+    return f"{_expiry_prefix(key, expires_at)}{level_days}d" + (
+        f"{DETAIL_SEP}{note}" if note else ""
+    )
+
+
+def fired_expiry_levels(details: list[str], key: str, expires_at: str) -> set[int]:
+    """Which countdown levels already fired for this grant, from ``event``.
+
+    Keyed to the expiry instant the way a threshold is keyed to a window's reset time,
+    so a grant that is renewed with a new expiry re-arms both levels.
+    """
+    prefix = _expiry_prefix(key, expires_at)
+    out: set[int] = set()
+    for detail in details:
+        if not detail.startswith(prefix):
+            continue
+        level = detail[len(prefix) :].split(DETAIL_SEP, 1)[0].strip().removesuffix("d")
+        if level.isdigit():
+            out.add(int(level))
+    return out
+
+
+def expiry_levels_due(
+    *,
+    expires_ts: int | None,
+    now: int,
+    remaining_minor: int,
+    already_fired: set[int],
+    levels_days: tuple[int, ...] = EXPIRY_LEVELS_DAYS,
+) -> list[int]:
+    """Countdown levels (days) that have arrived and not yet fired, widest first.
+
+    Nothing is due for a grant with nothing left in it, or one already expired: a warning
+    about money you cannot lose, or cannot spend, is noise. A grant first seen with less
+    than a day to go has both levels due; the caller announces the tightest one.
+    """
+    if expires_ts is None or remaining_minor <= 0 or now >= expires_ts:
+        return []
+    left = expires_ts - now
+    return [d for d in levels_days if d not in already_fired and left <= d * 86400]
+
+
 def fired_thresholds(details: list[str], window: str, window_key: str) -> set[float]:
     """Which thresholds already fired for this window instance, from ``event``.
 

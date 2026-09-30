@@ -66,7 +66,42 @@ def test_every_table_exports_and_an_unknown_one_is_rejected(settings, store, sec
             assert body["table"] == EXPORTS[table].table
         assert tc.get("/api/export.csv?table=quota;DROP TABLE quota").status_code == 400
         assert tc.get("/api/export.json?table=nope").status_code == 400
-    assert set(EXPORTS) == {"quota", "events", "overage", "sessions", "samples", "weeks"}
+    assert set(EXPORTS) == {
+        "quota",
+        "events",
+        "overage",
+        "sessions",
+        "samples",
+        "weeks",
+        "credits",
+    }
+
+
+def test_credits_export_has_the_grant_rows(settings, store, secrets) -> None:
+    from quotalens.parse import CreditGrant
+
+    now = int(time.time())
+    store.record_grants(
+        now,
+        [CreditGrant("iguana_necktie", "Cloud session credit", 2129, 25000, 22871, 8.5, "e", None)],
+    )
+    with _client(settings, store, secrets) as tc:
+        body = tc.get("/api/export.json?table=credits").json()
+        text = tc.get("/api/export.csv?table=credits").text
+    assert body["columns"][:3] == ["ts", "key", "label"]
+    assert body["rows"] == [
+        {
+            "ts": now,
+            "key": "iguana_necktie",
+            "label": "Cloud session credit",
+            "used_minor": 2129,
+            "limit_minor": 25000,
+            "remaining_minor": 22871,
+            "expires_at": "e",
+            "locked_reason": None,
+        }
+    ]
+    assert "iguana_necktie" in text and "warning" not in body
 
 
 def test_raw_samples_need_the_flag_and_carry_the_warning(settings, store, secrets) -> None:

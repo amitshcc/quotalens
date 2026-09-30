@@ -14,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from quotalens import credits, notify, retention, subcap, weeks
+from quotalens import credits, grants, notify, retention, subcap, weeks
 from quotalens.alerts import (
     ALERT_KIND,
     CLEARED_KIND,
@@ -379,6 +379,7 @@ class Poller:
             ("subcap", self._check_subcap),
             ("notify", lambda n, pa: self._check_notify(n, previous, pa)),
             ("credits", lambda n, _pa: self._check_credits(n)),
+            ("grants", lambda n, pa: self._check_grants(n, pa)),
         ):
             try:
                 check(now, parsed)
@@ -524,6 +525,59 @@ class Poller:
                         self.notify_capability.tool or "no tool",
                         crossing.message(),
                     )
+
+    def _check_grants(self, now: int, parsed: UsageParse) -> None:
+        """Record a credit grant the first time it is seen, and its expiry countdown.
+
+        Events are written whether or not a desktop notification can be delivered: the
+        countdown belongs in the events list, and it must not re-fire because delivery
+        failed. Only the tightest due level is announced, so a grant first seen with a
+        day left produces one banner, not two.
+        """
+        if not parsed.grants:
+            return
+        seen_details = [
+            e.detail for e in self._store.recent_events(limit=200, kind=notify.GRANT_SEEN_KIND)
+        ]
+        expiring = [
+            e.detail for e in self._store.recent_events(limit=500, kind=notify.EXPIRING_KIND)
+        ]
+        for grant in parsed.grants:
+            if not any(d.split(":", 1)[0] == grant.key for d in seen_details):
+                ends = f", expires {grant.expires_at}" if grant.expires_at else ""
+                detail = f"{grant.key}: {grant.label} {grants.money(grant.limit_minor, True)}{ends}"
+                self._store.record_event(notify.GRANT_SEEN_KIND, detail, ts=now)
+                seen_details.append(detail)
+            if grant.expires_at is None:
+                continue
+            due = notify.expiry_levels_due(
+                expires_ts=grants.expiry_ts(grant.expires_at),
+                now=now,
+                remaining_minor=grant.remaining_minor,
+                already_fired=notify.fired_expiry_levels(expiring, grant.key, grant.expires_at),
+            )
+            if not due:
+                continue
+            message = grants.expiry_message(grant.label, grant.remaining_minor, grant.expires_at)
+            for level in due:
+                detail = notify.expiry_detail(grant.key, grant.expires_at, level, message)
+                self._store.record_event(notify.EXPIRING_KIND, detail, ts=now)
+                expiring.append(detail)
+            log.info("credit grant expiring: %s", message)
+            if not self._settings.notify or not self.notify_capability.available:
+                continue
+            notify.send(
+                notify.Crossing(
+                    window="credit_grant",
+                    label=grant.label,
+                    threshold=float(min(due)),
+                    pct=grant.pct,
+                    resets_at_text="",
+                    window_key=grant.expires_at,
+                    body=message,
+                ),
+                self.notify_capability,
+            )
 
     def _check_credits(self, now: int) -> None:
         """Record and announce a stretch where usage credits were spent.

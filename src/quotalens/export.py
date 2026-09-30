@@ -69,6 +69,20 @@ EXPORTS: dict[str, ExportSpec] = {
         ),
         ts_column="started_at",
     ),
+    # Credit grants (dollars in minor units), one row per grant per poll.
+    "credits": ExportSpec(
+        "credit_grant",
+        (
+            "ts",
+            "key",
+            "label",
+            "used_minor",
+            "limit_minor",
+            "remaining_minor",
+            "expires_at",
+            "locked_reason",
+        ),
+    ),
     "samples": ExportSpec("sample", ("ts", "source", "keysig", "payload"), raw=True),
     # Derived from the week_reset events, not a table: see rows(). One row per weekly
     # reset, the same rows /api/weeks serves.

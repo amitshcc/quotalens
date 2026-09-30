@@ -330,3 +330,127 @@ def test_the_credit_path_does_not_share_the_fault(store) -> None:
     # The detail is prose only; nothing is parsed back out of it.
     assert "credits started" in run.detail()
     assert credits.recorded_starts([Row(run.start_ts)]) == {run.start_ts}
+
+
+# -- credit grants: a countdown, not a percentage --------------------------------
+
+DAY = 86400
+EXPIRES = "2026-11-05T07:59:00+00:00"
+EXPIRES_TS = 1_793_865_540  # the same instant
+
+
+def test_the_expiry_countdown_arrives_at_seven_days_then_one() -> None:
+    def due(left_s: int, fired: set[int] | None = None, remaining: int = 22871) -> list[int]:
+        return notify.expiry_levels_due(
+            expires_ts=EXPIRES_TS,
+            now=EXPIRES_TS - left_s,
+            remaining_minor=remaining,
+            already_fired=fired or set(),
+        )
+
+    assert due(8 * DAY) == []
+    assert due(7 * DAY) == [7]
+    assert due(7 * DAY - 1, fired={7}) == []
+    assert due(DAY, fired={7}) == [1]
+    assert due(DAY // 2) == [7, 1]  # first seen late: both due, the caller announces one
+
+
+def test_nothing_to_lose_or_already_gone_does_not_count_down() -> None:
+    kwargs = dict(expires_ts=EXPIRES_TS, already_fired=set())
+    assert notify.expiry_levels_due(now=EXPIRES_TS - DAY, remaining_minor=0, **kwargs) == []
+    assert notify.expiry_levels_due(now=EXPIRES_TS + 1, remaining_minor=500, **kwargs) == []
+    assert (
+        notify.expiry_levels_due(expires_ts=None, now=0, remaining_minor=5, already_fired=set())
+        == []
+    )
+
+
+def test_fired_levels_survive_a_restart_and_a_new_expiry_re_arms() -> None:
+    details = [
+        notify.expiry_detail("iguana_necktie", EXPIRES, 7, "Cloud session credit: $1.00 unused"),
+        notify.expiry_detail("other", EXPIRES, 1),
+    ]
+    assert notify.fired_expiry_levels(details, "iguana_necktie", EXPIRES) == {7}
+    assert (
+        notify.fired_expiry_levels(details, "iguana_necktie", "2027-01-01T00:00:00+00:00") == set()
+    )
+
+
+def _grant_poller(settings, store, calls: list[str], delivered: bool = True):
+    from quotalens.poller import Poller
+    from quotalens.secrets import MemorySecretStore, Redactor
+
+    poller = Poller(
+        settings.with_overrides(notify=True), store, MemorySecretStore(None), Redactor()
+    )
+    poller.notify_capability = notify.Capability(True, tool="fake")
+    original = notify.send
+    notify.send = lambda c, cap, runner=None: calls.append(c.message()) or delivered
+    return poller, lambda: setattr(notify, "send", original)
+
+
+def _parsed_grant(remaining_minor: int = 22871):
+    from quotalens.parse import CreditGrant, UsageParse
+
+    grant = CreditGrant(
+        "iguana_necktie",
+        "Cloud session credit",
+        25000 - remaining_minor,
+        25000,
+        remaining_minor,
+        8.5,
+        EXPIRES,
+    )
+    return UsageParse(readings=[], grants=[grant])
+
+
+def test_grant_events_are_written_once_and_the_countdown_announced_once(settings, store) -> None:
+    calls: list[str] = []
+    poller, restore = _grant_poller(settings, store, calls)
+    try:
+        poller._check_grants(EXPIRES_TS - 30 * DAY, _parsed_grant())
+        poller._check_grants(EXPIRES_TS - 30 * DAY + 60, _parsed_grant())
+        assert calls == []
+        for at in (EXPIRES_TS - 7 * DAY, EXPIRES_TS - 7 * DAY + 60, EXPIRES_TS - 6 * DAY):
+            poller._check_grants(at, _parsed_grant())
+        assert len(calls) == 1 and "Cloud session credit: $228.71 unused, expires" in calls[0]
+        poller._check_grants(EXPIRES_TS - DAY, _parsed_grant())
+        poller._check_grants(EXPIRES_TS - DAY + 60, _parsed_grant())
+        assert len(calls) == 2
+    finally:
+        restore()
+    kinds = [e.kind for e in store.recent_events(limit=50)]
+    assert kinds.count(notify.GRANT_SEEN_KIND) == 1
+    assert kinds.count(notify.EXPIRING_KIND) == 2
+
+
+def test_a_failed_grant_notification_is_not_retried(settings, store) -> None:
+    calls: list[str] = []
+    poller, restore = _grant_poller(settings, store, calls, delivered=False)
+    try:
+        poller._check_grants(EXPIRES_TS - 6 * DAY, _parsed_grant())
+        poller._check_grants(EXPIRES_TS - 6 * DAY + 60, _parsed_grant())
+    finally:
+        restore()
+    assert len(calls) == 1
+
+
+def test_a_grant_first_seen_inside_a_day_is_announced_once_not_twice(settings, store) -> None:
+    calls: list[str] = []
+    poller, restore = _grant_poller(settings, store, calls)
+    try:
+        poller._check_grants(EXPIRES_TS - DAY // 2, _parsed_grant())
+    finally:
+        restore()
+    assert len(calls) == 1
+    assert len(store.recent_events(kind=notify.EXPIRING_KIND)) == 2  # both levels consumed
+
+
+def test_an_empty_grant_does_not_count_down(settings, store) -> None:
+    calls: list[str] = []
+    poller, restore = _grant_poller(settings, store, calls)
+    try:
+        poller._check_grants(EXPIRES_TS - DAY, _parsed_grant(remaining_minor=0))
+    finally:
+        restore()
+    assert calls == [] and store.recent_events(kind=notify.EXPIRING_KIND) == []

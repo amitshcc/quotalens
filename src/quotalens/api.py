@@ -25,7 +25,7 @@ from fastapi.responses import (
     StreamingResponse,
 )
 
-from quotalens import __version__, credits, notify, origin_guard, retention, status, weeks
+from quotalens import __version__, credits, grants, notify, origin_guard, retention, status, weeks
 from quotalens.burn import burn_rate
 from quotalens.config import (
     CONFIG_KEYS_BY_NAME,
@@ -611,6 +611,17 @@ def create_app(
         """
         rows = weeks.week_rows(state.store)
         return {"now_ts": int(time.time()), "weeks": rows, "verdict": weeks.verdict(rows)}
+
+    @app.get("/api/credits")
+    def credit_grants() -> dict[str, Any]:
+        """Credit grants (the cloud-session credit): dollars as floats, expiry as given.
+
+        Not quota windows, so not in ``/api/quota``. Expired grants stay for a week, like
+        the page; the rows remain in the database and in ``table=credits``.
+        """
+        now = int(time.time())
+        rows = [r for r in state.store.latest_grants() if grants.is_visible(r, now)]
+        return {"grants": [grants.grant_as_dict(r) for r in rows]}
 
     @app.get("/api/burn")
     def burn(

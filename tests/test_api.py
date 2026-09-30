@@ -118,3 +118,41 @@ def test_an_overage_row_written_before_the_check_still_renders(settings, store, 
         for path in ("/", "/api/health", "/api/quota/current", "/api/dashboard"):
             assert tc.get(path).status_code == 200, path
         assert "—" in tc.get("/").text
+
+
+def test_credits_endpoint_lists_grants_in_dollars(settings, store, secrets) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from quotalens.parse import CreditGrant
+
+    now = int(time.time())
+    ends = (datetime.fromtimestamp(now, UTC) + timedelta(days=36)).isoformat()
+    old = (datetime.fromtimestamp(now, UTC) - timedelta(days=9)).isoformat()
+    store.record_grants(
+        now,
+        [
+            CreditGrant("iguana_necktie", "Cloud session credit", 2129, 25000, 22871, 8.5, ends),
+            CreditGrant("gone", "gone (unrecognised)", 0, 10000, 10000, 0.0, old),
+        ],
+    )
+    with _client(settings, store, secrets) as tc:
+        body = tc.get("/api/credits").json()
+    assert body == {
+        "grants": [
+            {
+                "key": "iguana_necktie",
+                "label": "Cloud session credit",
+                "used": 21.29,
+                "limit": 250.0,
+                "remaining": 228.71,
+                "pct": 8.52,
+                "expires_at": ends,
+                "locked_reason": None,
+            }
+        ]
+    }
+
+
+def test_credits_endpoint_is_empty_without_grants(settings, store, secrets) -> None:
+    with _client(settings, store, secrets) as tc:
+        assert tc.get("/api/credits").json() == {"grants": []}

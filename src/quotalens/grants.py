@@ -53,9 +53,16 @@ def money(minor: int, whole: bool = False) -> str:
     return f"${minor / MINOR_PER_MAJOR:,.2f}"
 
 
-def _day(ts: int) -> str:
+def local_day(ts: int) -> str:
     local = datetime.fromtimestamp(ts).astimezone()
     return f"{local.day} {local.strftime('%b')}"
+
+
+def expiry_message(label: str, remaining_minor: int, expires_at: str) -> str:
+    """One line for the countdown notification and its event."""
+    end = expiry_ts(expires_at)
+    when = f"expires {local_day(end)}" if end is not None else "expires soon"
+    return f"{label}: {money(remaining_minor)} unused, {when}"
 
 
 @dataclass(frozen=True)
@@ -76,11 +83,11 @@ def _pct(row: GrantRow) -> float:
 def _detail(row: GrantRow, now: int) -> str:
     end = expiry_ts(row.expires_at)
     if end is not None and is_expired(row, now):
-        text = f"expired {_day(end)} · {money(row.remaining_minor)} unused"
+        text = f"expired {local_day(end)} · {money(row.remaining_minor)} unused"
     else:
         text = f"{money(row.remaining_minor)} left"
         if end is not None:
-            text += f" · expires {_day(end)}"
+            text += f" · expires {local_day(end)}"
     if row.locked_reason:
         text += f" · locked: {row.locked_reason}"
     return text
