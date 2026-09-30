@@ -170,7 +170,9 @@ def parse_statuspage(payload: object) -> tuple[str, str]:
     return state, description
 
 
-def fetch(url: str, timeout_s: float = CHECK_TIMEOUT_S) -> object:
+def fetch(
+    url: str, timeout_s: float = CHECK_TIMEOUT_S, headers: dict[str, str] | None = None
+) -> object:
     """One plain GET. No cookie, no identifier, no query string.
 
     Through ``curl_cffi``, which is already a dependency for the provider client
@@ -182,7 +184,9 @@ def fetch(url: str, timeout_s: float = CHECK_TIMEOUT_S) -> object:
     """
     from curl_cffi import requests
 
-    response = requests.get(url, timeout=timeout_s, headers={"Accept": "application/json"})
+    response = requests.get(
+        url, timeout=timeout_s, headers={"Accept": "application/json", **(headers or {})}
+    )
     if response.status_code >= 400:
         raise StatusFetchError(f"HTTP {response.status_code}")
     return json.loads(response.text)
