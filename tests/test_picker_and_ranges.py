@@ -38,9 +38,7 @@ def test_range_week_is_the_current_weekly_window() -> None:
 
 
 def test_range_lastweek_is_the_previous_weekly_window() -> None:
-    r = resolve_range(
-        ViewOptions(range_key="lastweek"), NOW - 30 * 86400, NOW, last_week=LAST_WEEK
-    )
+    r = resolve_range(ViewOptions(range_key="lastweek"), NOW - 30 * 86400, NOW, last_week=LAST_WEEK)
     assert (r.start, r.end, r.key) == (*LAST_WEEK, "lastweek")
 
 

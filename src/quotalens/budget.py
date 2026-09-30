@@ -295,7 +295,7 @@ def compute_budget(
 
 
 def _short_label(label: str) -> str:
-    """"Weekly — Fable" -> "Fable", so the constraint sentence reads naturally."""
+    """ "Weekly — Fable" -> "Fable", so the constraint sentence reads naturally."""
     return label.replace("Weekly — ", "")
 
 

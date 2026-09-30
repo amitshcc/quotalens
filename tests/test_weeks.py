@@ -188,7 +188,7 @@ def test_a_detail_that_is_not_ours_is_ignored() -> None:
 def test_an_older_event_maps_full_windows_left_to_last_weeks_rate() -> None:
     """A pre-26 event stored only full_windows_left; it becomes the last-week's-rate figure."""
     old = (
-        '{"window":"seven_day","label":"Weekly","closed_at":' + str(MON_B - 60) + ','
+        '{"window":"seven_day","label":"Weekly","closed_at":' + str(MON_B - 60) + ","
         '"closed_pct":100.0,"opened_pct":0.0,"reset_at":"","next_reset_at":"",'
         '"reset_slip_s":0.5,"cost_per_full":9.0,"cost_low":8.0,"cost_high":11.0,'
         '"usable_windows":13,"full_windows_left":11.1}'
@@ -465,13 +465,30 @@ def _render(rows, verdict_text: str):
 # fable_secondary, used_text, left_text, reset_primary, reset_secondary, is_open
 def test_the_section_renders_in_readable_units_with_a_fable_line() -> None:
     open_row = (
-        "21 Sep – 28 Sep · this week", "collecting", "collecting", "", "Fable collecting", "",
-        "—", "—", "8.5", "11.1 at last week's rate", True,
+        "21 Sep – 28 Sep · this week",
+        "collecting",
+        "collecting",
+        "",
+        "Fable collecting",
+        "",
+        "—",
+        "—",
+        "8.5",
+        "11.1 at last week's rate",
+        True,
     )
     week_c = (
-        "14 Sep – 21 Sep", "21 Sep 06:29", "9% of week", "usually 8–11% · 13 sessions",
-        "Fable 9%", "usually 4–14% · 13 sessions", "100%", "0%", "7.8",
-        "7.8 at last week's rate", False,
+        "14 Sep – 21 Sep",
+        "21 Sep 06:29",
+        "9% of week",
+        "usually 8–11% · 13 sessions",
+        "Fable 9%",
+        "usually 4–14% · 13 sessions",
+        "100%",
+        "0%",
+        "7.8",
+        "7.8 at last week's rate",
+        False,
     )
     verdict_text = (
         "A full session used 9% of the week, against 12% the week before. "
@@ -489,8 +506,17 @@ def test_the_section_renders_in_readable_units_with_a_fable_line() -> None:
 
 def test_the_section_with_only_the_open_week_shows_collecting_and_says_insufficient() -> None:
     open_row = (
-        "21 Sep – 28 Sep · this week", "collecting", "collecting", "", "", "",
-        "—", "—", "—", "", True,
+        "21 Sep – 28 Sep · this week",
+        "collecting",
+        "collecting",
+        "",
+        "",
+        "",
+        "—",
+        "—",
+        "—",
+        "",
+        True,
     )
     html = _render([open_row], "fewer than two complete weeks")
     assert "collecting" in html

@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from itertools import pairwise
 from typing import Any
@@ -95,6 +95,11 @@ DISPLAY_LABELS = {
     "seven_day_oauth_apps": "Weekly — OAuth apps",
 }
 SHORT_LABELS = {"five_hour": "Session", "seven_day": "Weekly all"}
+# Last week's weekly-all line under this week's. Its toggle is a ``hide=`` key like a
+# series, so the picker's localStorage entry carries it with no second key.
+GHOST_KEY = "vs-last-week"
+GHOST_WINDOW = "seven_day"
+GHOST_LABEL = "last week"
 EM_DASH = "—"  # a value we do not have, never a zero standing in for unknown
 READOUT_OFF = "off"  # the readout has no value to colour, whatever the reason
 
@@ -310,6 +315,8 @@ class ChartView:
     projection_note: str = ""  # why there is none, when the range hides it
     projection_critical: bool = False
     cross: tuple[float, float, str] | None = None  # the 100% crossing, if before the reset
+    ghost: list[str] = field(default_factory=list)  # last week's weekly-all, shifted a week on
+    ghost_end: tuple[float, float] | None = None  # where its end label goes
 
 
 @dataclass
@@ -463,6 +470,7 @@ class Dashboard:
     alert_standing: bool = False  # a burn alert fired and has not cleared
     grants: list[GrantView] = field(default_factory=list)  # credit grants, not windows
     surfaces: SurfaceSection | None = None  # the vendor's weekly split; None keeps the pointer
+    ghost_chip: SeriesChip | None = None  # "vs last week", on the week range when there is one
 
 
 # -- builders -------------------------------------------------------------------
@@ -569,6 +577,8 @@ def build_dashboard(
     # the ranges someone drags around a boost. Used only to complete that step; it is
     # never a point on the trace.
     prior_rows = {row.window: row for row in store.latest_quota_before(rng.start)}
+    ghost_rows = _ghost_rows(store, rng, last_week)
+    ghost_shown = GHOST_KEY not in view.hidden and GHOST_WINDOW not in view.hidden
 
     burns = {w: burn_rate(w, all_rows.get(w, []), lookback_s, now) for w in order}
     rate_burn = burns.get(RATE_WINDOW)
@@ -665,6 +675,7 @@ def build_dashboard(
         prior_ts,
         boost_windows,
         prior_rows,
+        ghost_rows if ghost_shown else None,
     )
     _mark_sessions(chart, sessions_all, rng, now)
     _mark_credits(chart, credit_runs, rng)
@@ -782,6 +793,7 @@ def build_dashboard(
             Control(k, k, view.href(refresh_key=k), REFRESH[k] == refresh_s) for k in REFRESH
         ],
         series_chips=series_chips,
+        ghost_chip=_ghost_chip(view) if ghost_rows else None,
         lookback_s=lookback_s,
         history=history,
         budget=budget,
@@ -893,21 +905,43 @@ def _series_chips(order: list[str], labels: dict[str, str], view: ViewOptions) -
     Each chip's plain link isolates its series (every other one hidden); its ``toggle_href``
     adds or removes just that one, for the shift-click path. All clears every hide. The
     labels come from the readings, so a fourth weekly limit gets a fifth chip for free.
+    The last-week overlay is not a series: picking one, or All, leaves its toggle alone.
     """
     everyone = frozenset(order)
-    clear = view.href(hidden=frozenset())
-    chips = [SeriesChip("", "All", clear, clear, not view.hidden)]
+    keep = view.hidden & {GHOST_KEY}
+    clear = view.href(hidden=keep)
+    chips = [SeriesChip("", "All", clear, clear, not (view.hidden - keep))]
     for window in order:
         chips.append(
             SeriesChip(
                 window,
                 short_label(window, labels.get(window)),
-                view.href(hidden=everyone - {window}),  # show this one alone
+                view.href(hidden=(everyone - {window}) | keep),  # show this one alone
                 view.href(hidden=view.toggled(window)),  # add/remove just this one
                 window not in view.hidden,
             )
         )
     return chips
+
+
+def _ghost_chip(view: ViewOptions) -> SeriesChip:
+    """The "vs last week" chip: on by default; a click flips it like a shift-clicked series."""
+    href = view.href(hidden=view.toggled(GHOST_KEY))
+    return SeriesChip(GHOST_KEY, "vs last week", href, href, GHOST_KEY not in view.hidden)
+
+
+def _ghost_rows(
+    store: Store, rng: ResolvedRange, last_week: tuple[int, int] | None
+) -> list[QuotaRow]:
+    """Last week's weekly-all readings, moved forward seven days onto this week's axis.
+
+    Only on the week range: both weeks run Monday 01:00Z to Monday, so the shift lines
+    up hour for hour. Any other range has no "same moment last week" to put under it.
+    """
+    if rng.key != "week" or last_week is None:
+        return []
+    rows = store.quota_series(last_week[0], window=GHOST_WINDOW, until_ts=last_week[1] - 1)
+    return [replace(r, ts=r.ts + WEEK_LENGTH_S) for r in rows]
 
 
 def weekly_limits(rows: list[QuotaRow], withheld: bool = False) -> list[WeeklyLimit]:
@@ -1033,20 +1067,18 @@ def _budget_view(
     note = ""
     if any(b.subcap for b in report.budgets):
         note = BUDGET_SUBCAP_NOTE + (BUDGET_SUBCAP_UNVERIFIED if subcap_unverified else "")
-    return BudgetView(
-        rows, _binding_note(primary, now) if primary else "", report.constraint, note
-    )
+    return BudgetView(rows, _binding_note(primary, now) if primary else "", report.constraint, note)
 
 
 def _week_label(week: str) -> str:
-    """"31 Aug - 7 Sep" for the Monday-anchored week whose key is ``week`` (an ISO date)."""
+    """ "31 Aug - 7 Sep" for the Monday-anchored week whose key is ``week`` (an ISO date)."""
     start = datetime.strptime(week, "%Y-%m-%d")
     end = start + timedelta(days=7)
     return f"{start.day} {start:%b} – {end.day} {end:%b}"
 
 
 def _spread_text(low: float | None, high: float | None, n: int) -> str:
-    """"usually 8-11% and 13 sessions": the p25-p75 range and sample, phrased for a reader."""
+    """ "usually 8-11% and 13 sessions": the p25-p75 range and sample, phrased for a reader."""
     if low is not None and high is not None:
         return f"usually {low:.0f}–{high:.0f}% · {n} sessions"
     return f"{n} sessions" if n else ""
@@ -1071,7 +1103,7 @@ def _fable_cell(
 
 
 def _mostly_text(top: dict[str, Any] | None) -> str:
-    """"Cowork 76%": the week's largest surface; a dash for a week with no split stored."""
+    """ "Cowork 76%": the week's largest surface; a dash for a week with no split stored."""
     return EM_DASH if top is None else f"{top['label']} {top['percent']:.0f}%"
 
 
@@ -1124,13 +1156,19 @@ def _weeks_view(
         is_open = wk == current_wk
         if is_open:
             used_primary, used_secondary = _used_cell(
-                live_all.cost_per_full, live_all.cost_low, live_all.cost_high,
-                live_all.usable_windows, True,
+                live_all.cost_per_full,
+                live_all.cost_low,
+                live_all.cost_high,
+                live_all.usable_windows,
+                True,
             )
             fable_primary, fable_secondary = (
                 _fable_cell(
-                    live_fable.cost_per_full, live_fable.cost_low, live_fable.cost_high,
-                    live_fable.usable_windows, True,
+                    live_fable.cost_per_full,
+                    live_fable.cost_low,
+                    live_fable.cost_high,
+                    live_fable.usable_windows,
+                    True,
                 )
                 if has_fable
                 else ("", "")
@@ -1140,13 +1178,19 @@ def _weeks_view(
             left_text = EM_DASH if live_pct is None else f"{max(0.0, 100.0 - live_pct):.0f}%"
         else:
             used_primary, used_secondary = _used_cell(
-                data.get("weekly_all_cost"), data.get("weekly_all_low"),
-                data.get("weekly_all_high"), data.get("weekly_all_n", 0), False,
+                data.get("weekly_all_cost"),
+                data.get("weekly_all_low"),
+                data.get("weekly_all_high"),
+                data.get("weekly_all_n", 0),
+                False,
             )
             fable_primary, fable_secondary = (
                 _fable_cell(
-                    data.get("fable_cost"), data.get("fable_low"),
-                    data.get("fable_high"), data.get("fable_n", 0), False,
+                    data.get("fable_cost"),
+                    data.get("fable_low"),
+                    data.get("fable_high"),
+                    data.get("fable_n", 0),
+                    False,
                 )
                 if has_fable
                 else ("", "")
@@ -1481,13 +1525,15 @@ def _chart_view(
     prior_ts: int | None = None,
     boost_ts: Mapping[str, Sequence[int]] | None = None,
     prior_rows: Mapping[str, QuotaRow | None] | None = None,
+    ghost_rows: list[QuotaRow] | None = None,
 ) -> ChartView:
     start, end = rng.start, rng.end
     span = max(1, end - start)
     plot_w = CHART_W - CHART_L - CHART_R
     plot_h = CHART_H - CHART_T - CHART_B
     visible = {w: rows for w, rows in series_rows.items() if w in slots and rows}
-    max_pct = max((r.pct for rows in visible.values() for r in rows), default=0.0)
+    ghost_rows = ghost_rows or []
+    max_pct = max((r.pct for rows in [*visible.values(), ghost_rows] for r in rows), default=0.0)
     y_max = max(100.0, math.ceil(max_pct / 25) * 25)
 
     def x_of(ts: int) -> float:
@@ -1566,6 +1612,12 @@ def _chart_view(
     ]
     _spread_labels(series)
     series.sort(key=lambda s: -s.slot)  # draw the hero trace last, on top
+    ghost = [
+        "M" + " L".join(f"{x_of(r.ts):.1f} {y_of(r.pct):.1f}" for r in seg)
+        for segment in split_at_resets(ghost_rows)
+        if len(seg := _bucket(segment, bucket_s)) > 1
+    ]
+    ghost_end = (x_of(ghost_rows[-1].ts), y_of(ghost_rows[-1].pct)) if ghost else None
 
     timestamps = sorted({r.ts for rows in visible.values() for r in rows})
     # the future is not a gap; the left edge is, when we should have been collecting
@@ -1600,6 +1652,8 @@ def _chart_view(
         json.dumps(payload, separators=(",", ":")),
         collecting,
         boost_marks=boost_marks,
+        ghost=ghost,
+        ghost_end=ghost_end,
     )
 
 
@@ -1891,6 +1945,7 @@ def as_json(dash: Dashboard) -> dict[str, Any]:
         },
         "lookback_s": dash.lookback_s,
         "hidden": sorted(dash.view.hidden),
+        "ghost": bool(dash.chart.ghost),  # last week's weekly-all line is drawn
         "gap_minutes": dash.chart.gap_minutes,
         "windows": [
             {

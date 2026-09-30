@@ -13,6 +13,7 @@ from quotalens.config import CLAUDE, MIN_POLL_INTERVAL_S, Provider
 from quotalens.dashboard import (
     CHART_H,
     CHART_W,
+    GHOST_LABEL,
     PLOT_RIGHT,
     RATE_WINDOW,
     ChartView,
@@ -637,8 +638,8 @@ def _series_picker(dash: Dashboard) -> str:
     ``app.js`` intercepts them like every other view link and reads ``data-toggle-href``
     for the shift-click path.
     """
-    chips = dash.series_chips
-    if not chips:
+    chips = dash.series_chips + ([dash.ghost_chip] if dash.ghost_chip else [])
+    if not dash.series_chips:
         return ""
     links = []
     for c in chips:
@@ -734,8 +735,11 @@ def _chart(dash: Dashboard) -> str:
             for x, t in c.x_ticks
         )
         # After the traces, so the mark is never under a line, and last so it sits
-        # above the grid it stands in.
-        inner = gaps + grid + xt + "".join(_series(s) for s in c.series) + _boost_marks(c)
+        # above the grid it stands in. Last week's line goes first of all, beneath the
+        # hatching and the boost mark, so it can never cover either.
+        inner = (
+            _ghost(c) + gaps + grid + xt + "".join(_series(s) for s in c.series) + _boost_marks(c)
+        )
     return (
         '<section class="screen chart" aria-label="All windows, selected range">'
         f'<script type="application/json" id="chart-data">{c.data_json}</script>'
@@ -752,6 +756,23 @@ def _chart(dash: Dashboard) -> str:
         '<div id="boost-tip" class="readout-box bt" aria-hidden="true" hidden></div>'
         "</section>"
     )
+
+
+def _ghost(c: ChartView) -> str:
+    """Last week's weekly-all line: the weekly-all hue at the muted opacity a hidden
+    series label takes, dashed, and labelled at its own end like every other series."""
+    if not c.ghost:
+        return ""
+    paths = "".join(
+        f'<path d="{d}" class="series-ghost" stroke="var(--s2)" stroke-opacity=".45" '
+        'stroke-width="var(--trace-dim)"/>'
+        for d in c.ghost
+    )
+    label = ""
+    if c.ghost_end:
+        x, y = c.ghost_end
+        label = f'<text x="{x + 9:.1f}" y="{y + 4:.1f}" class="ax">{e(GHOST_LABEL)}</text>'
+    return f'<g aria-label="Weekly all, last week">{paths}{label}</g>'
 
 
 BOOST_COLOUR = "#E13A54"  # illustration, not a state; DESIGN.md §1 and §8

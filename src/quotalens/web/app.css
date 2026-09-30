@@ -153,6 +153,7 @@ tbody th a:hover{text-decoration:underline}
 .hr{stroke:var(--grid);stroke-width:1}
 .now{stroke:var(--txt-far);stroke-width:1;stroke-dasharray:2 3}
 .proj{fill:none;stroke-linecap:round}
+.series-ghost{stroke-dasharray:4 3}
 .cross{fill:var(--st-critical)}
 .sel{fill:var(--select);stroke:var(--focus);stroke-width:1}
 #chart{cursor:crosshair;user-select:none}
