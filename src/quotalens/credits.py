@@ -33,8 +33,12 @@ Never synthesise one by subtracting.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from itertools import pairwise
+from typing import Any
+
+from quotalens.parse import parse_grants
 
 SPEND_KIND = "credits_spend"
 # Two polls further apart than this had a collection gap between them, so the
@@ -183,3 +187,24 @@ def recorded_starts(events: list) -> set[int]:
     and nothing has to be parsed back out of prose.
     """
     return {int(e.ts) for e in events}
+
+
+def backfill_grants(store: Any) -> int:
+    """Re-derive credit grants from the stored ``usage`` samples. Safe to run twice.
+
+    The poller records a grant on every poll from now on; this gives the history that
+    was stored before it knew the shape, the way ``boost.backfill`` does for boosts.
+    A ``(ts, key)`` already present is left alone, so a repeat start writes nothing.
+    Returns the number of rows written.
+    """
+    have = {(r["ts"], r["key"]) for r in store.query("SELECT ts, key FROM credit_grant")}
+    written = 0
+    for row in store.query("SELECT ts, payload FROM sample WHERE source = 'usage' ORDER BY ts"):
+        try:
+            payload = json.loads(row["payload"])
+        except (ValueError, TypeError):
+            continue
+        fresh = [g for g in parse_grants(payload) if (row["ts"], g.key) not in have]
+        if fresh:
+            written += store.record_grants(row["ts"], fresh)
+    return written

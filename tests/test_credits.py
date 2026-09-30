@@ -98,3 +98,26 @@ def test_the_event_line_carries_no_time_and_the_notification_does() -> None:
     run = credits.stretches(_rows((0, 0), (60, 500), (120, 500), (180, 500), (240, 500)), 60)[0]
     assert run.detail() == "credits started · $5.00 so far"
     assert run.notification(lambda _t: "01:02") == "Credits started 01:02 · $5.00 so far"
+
+
+def test_backfill_grants_idempotent(store) -> None:
+    grant_block = {
+        "utilization": 8.5,
+        "resets_at": "2026-11-05T07:59:00+00:00",
+        "limit_dollars": 250,
+        "used_dollars": 21.29,
+        "remaining_dollars": 228.71,
+    }
+    window = {"utilization": 10, "resets_at": "2026-09-30T12:00:00+00:00", "limit_dollars": None}
+    store.record_sample(100, "usage", {"five_hour": window})
+    store.record_sample(200, "usage", {"five_hour": window, "iguana_necktie": grant_block})
+    store.record_sample(300, "usage", {"five_hour": window, "iguana_necktie": grant_block})
+    store.record_sample(300, "overage", {"used_credits": 1})
+
+    assert credits.backfill_grants(store) == 2
+    assert credits.backfill_grants(store) == 0
+    rows = store.query("SELECT ts, key, used_minor, limit_minor FROM credit_grant ORDER BY ts")
+    assert [tuple(r) for r in rows] == [
+        (200, "iguana_necktie", 2129, 25000),
+        (300, "iguana_necktie", 2129, 25000),
+    ]

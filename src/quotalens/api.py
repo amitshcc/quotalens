@@ -25,7 +25,7 @@ from fastapi.responses import (
     StreamingResponse,
 )
 
-from quotalens import __version__, notify, origin_guard, retention, status, weeks
+from quotalens import __version__, credits, notify, origin_guard, retention, status, weeks
 from quotalens.burn import burn_rate
 from quotalens.config import (
     CONFIG_KEYS_BY_NAME,
@@ -181,6 +181,7 @@ def create_app(
         # they backfill on start the way session windows do rather than waiting for a
         # command. Idempotent: a repeat start writes nothing.
         weeks.backfill(store, int(time.time()))
+        credits.backfill_grants(store)
         if settings.poll_enabled:
             poller.start()
         status_task = asyncio.create_task(_watch_status(watcher))
