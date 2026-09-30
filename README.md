@@ -161,6 +161,8 @@ quotalens --profile personal start
 quotalens --profile work stop         # leaves the personal one running
 ```
 
+`quotalens profiles list` shows every profile, its port and whether it is running.
+
 Two accounts is two processes and two bookmarks, not an account picker inside
 one process. The port is derived from the name and is the same on every run, so
 `start`, `serve` and `status` all print the URL they landed on — you should
