@@ -60,9 +60,11 @@ from quotalens.export import (
     json_stream,
     resolve,
 )
+from quotalens.heatmap import compute_heatmap
 from quotalens.metrics import CONTENT_TYPE as METRICS_CONTENT_TYPE
 from quotalens.metrics import collect as collect_metrics
 from quotalens.metrics import render as render_metrics
+from quotalens.pace import compute_pace
 from quotalens.poller import ClientFactory, Poller, spend_as_dict
 from quotalens.render import (
     favicon_svg,
@@ -74,7 +76,7 @@ from quotalens.render import (
 from quotalens.secrets import Redactor, SecretStore, global_redactor
 from quotalens.sessions import rebuild as rebuild_sessions
 from quotalens.settings_view import PANEL_KEYS, apply_form, build_view, shrink_impact
-from quotalens.state import collector_state
+from quotalens.state import OK, collector_state
 from quotalens.status import StatusWatcher, selected_vendors
 from quotalens.store import Store
 from quotalens.views import ViewOptions, parse_view
@@ -650,6 +652,26 @@ def create_app(
             "now_ts": now,
             "breakdown": surfaces.snapshot_dict(state.store, now, weekly),
         }
+
+    @app.get("/api/pace")
+    def weekly_pace() -> dict[str, Any]:
+        """Weekly — all models at the reset, projected from the week so far. An estimate.
+
+        ``shown`` is false below 24 hours into the week, without a complete prior week, or
+        while the collector's readings are withheld; ``reason`` says which. The figures are
+        the central estimate and its spread, never one number alone.
+        """
+        now = int(time.time())
+        collector = collector_state(state.poller.status, state.settings.poll_interval_s, now)
+        pace = compute_pace(state.store, now, withheld=collector.kind != OK)
+        return {"now_ts": now, **pace.as_dict()}
+
+    @app.get("/api/heatmap")
+    def usage_heatmap() -> dict[str, Any]:
+        """Average weekly-all points gained per local hour, Monday first, over the last four
+        complete weeks. ``collecting`` until there are two; a null hour was never collected."""
+        now = int(time.time())
+        return {"now_ts": now, **compute_heatmap(state.store, now).as_dict()}
 
     @app.get("/api/credits")
     def credit_grants() -> dict[str, Any]:

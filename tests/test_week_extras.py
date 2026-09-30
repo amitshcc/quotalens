@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from quotalens.api import create_app
 from quotalens.dashboard import GHOST_KEY, _series_chips
 from quotalens.heatmap import compute_heatmap
-from quotalens.pace import HIDDEN_EARLY, HIDDEN_NO_HISTORY, compute_pace
+from quotalens.pace import HIDDEN_EARLY, HIDDEN_NO_HISTORY, HIDDEN_WITHHELD, compute_pace
 from quotalens.parse import QuotaReading
 from quotalens.render import _heatmap as render_heatmap
 from quotalens.views import ViewOptions
@@ -267,3 +267,33 @@ def test_heatmap_collecting(store) -> None:
     html = render_heatmap(heat)
     assert "When you use it" in html and "Collecting: 1 of 2 complete weeks" in html
     assert "<svg" not in html
+
+
+# -- task 4: the API ---------------------------------------------------------------
+
+
+def test_api_pace_and_heatmap(settings, store, secrets) -> None:
+    now = int(time.time())
+    reset = (now // HOUR) * HOUR + 2 * 86400
+    _seed_history(store, reset, prior_close=100, now_pct=50, elapsed_h=5 * 24 - 2)
+    with TestClient(_app(settings, store, secrets, now)) as tc:
+        pace = tc.get("/api/pace").json()
+        heat = tc.get("/api/heatmap").json()
+    assert pace["shown"] and pace["estimate"] is True and pace["window"] == "seven_day"
+    assert pace["end_low"] <= pace["end_pct"] <= pace["end_high"]
+    assert pace["sentence"].startswith("At this pace the week ")
+    assert set(pace) >= {"runs_out", "runs_out_ts", "runs_out_low_ts", "runs_out_high_ts"}
+    assert not heat["collecting"] and heat["weeks_used"] == 3
+    assert len(heat["rows"]) == 7 and all(len(r["hours"]) == 24 for r in heat["rows"])
+    assert heat["unit"] == "points per hour"
+
+
+def test_api_pace_is_hidden_while_the_collector_is_not_ok(settings, store, secrets) -> None:
+    now = int(time.time())
+    reset = (now // HOUR) * HOUR + 2 * 86400
+    _seed_history(store, reset, prior_close=100, now_pct=50, elapsed_h=5 * 24 - 2)
+    app = create_app(settings, store, secrets)  # never polled: readings are not trusted
+    with TestClient(app) as tc:
+        pace = tc.get("/api/pace").json()
+        assert tc.get("/api/heatmap").json()["collecting"] is False
+    assert pace["shown"] is False and pace["reason"] == HIDDEN_WITHHELD
