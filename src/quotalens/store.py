@@ -16,10 +16,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from quotalens.parse import QuotaReading, SpendReading
+from quotalens.parse import KNOWN_GRANT_KEYS, CreditGrant, QuotaReading, SpendReading
 from quotalens.retention import TS_COLUMN
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # Statements that bring an older database up to each version, in order.
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
@@ -31,6 +31,13 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
     3: (),  # session_window is created by the CREATE statements; rebuilt from samples
     4: ("ALTER TABLE session_window ADD COLUMN covered_s INTEGER NOT NULL DEFAULT 0",),
     5: ("ALTER TABLE sample ADD COLUMN keysig TEXT",),  # backfilled below
+    # Credit grants used to be stored as quota windows; the table itself is created by
+    # the CREATE statements. Only the mis-stored rows go, and only for grants we know by name.
+    6: (
+        "DELETE FROM quota WHERE window IN ("
+        + ",".join(f"'{key}'" for key in KNOWN_GRANT_KEYS)
+        + ")",
+    ),
 }
 
 _SCHEMA = """
@@ -97,6 +104,18 @@ CREATE TABLE IF NOT EXISTS session_window (
     deltas TEXT NOT NULL,
     covered_s INTEGER NOT NULL DEFAULT 0
 );
+-- one row per credit grant per poll; money in minor units of USD
+CREATE TABLE IF NOT EXISTS credit_grant (
+    ts INTEGER NOT NULL,
+    key TEXT NOT NULL,
+    label TEXT NOT NULL,
+    used_minor INTEGER NOT NULL,
+    limit_minor INTEGER NOT NULL,
+    remaining_minor INTEGER NOT NULL,
+    expires_at TEXT,
+    locked_reason TEXT,
+    PRIMARY KEY (ts, key)
+);
 -- detected climbs, threshold crossings, poll failures
 CREATE TABLE IF NOT EXISTS event (
     ts INTEGER NOT NULL,
@@ -134,6 +153,18 @@ def _row_to_quota(row: sqlite3.Row) -> QuotaRow:
     active = data.get("is_active")
     data["is_active"] = None if active is None else bool(active)
     return QuotaRow(**data)
+
+
+@dataclass(frozen=True)
+class GrantRow:
+    ts: int
+    key: str
+    label: str
+    used_minor: int
+    limit_minor: int
+    remaining_minor: int
+    expires_at: str | None
+    locked_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -355,6 +386,29 @@ class Store:
             )
         return len(rows)
 
+    def record_grants(self, ts: int, grants: Iterable[CreditGrant]) -> int:
+        rows = [
+            (
+                ts,
+                g.key,
+                g.label,
+                g.used_minor,
+                g.limit_minor,
+                g.remaining_minor,
+                g.expires_at,
+                g.locked_reason,
+            )
+            for g in grants
+        ]
+        with self._tx() as cur:
+            cur.executemany(
+                "INSERT OR REPLACE INTO credit_grant "
+                "(ts, key, label, used_minor, limit_minor, remaining_minor, expires_at, "
+                "locked_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                rows,
+            )
+        return len(rows)
+
     def record_overage(self, ts: int, spend: SpendReading) -> None:
         with self._tx() as cur:
             cur.execute(
@@ -382,9 +436,7 @@ class Store:
             return 0
         marks = ",".join("?" * len(stamps))
         with self._tx() as cur:
-            cur.execute(
-                f"DELETE FROM event WHERE kind = ? AND ts IN ({marks})", (kind, *stamps)
-            )
+            cur.execute(f"DELETE FROM event WHERE kind = ? AND ts IN ({marks})", (kind, *stamps))
             return cur.rowcount
 
     def replace_sessions(self, windows: Iterable[Any], derivable_from: int | None = None) -> None:
@@ -486,6 +538,17 @@ class Store:
         with self._tx() as cur:
             rows = cur.execute("SELECT DISTINCT window FROM quota ORDER BY window").fetchall()
         return [r["window"] for r in rows]
+
+    def latest_grants(self) -> list[GrantRow]:
+        """Most recent reading for every grant ever seen, by key."""
+        with self._tx() as cur:
+            rows = cur.execute(
+                "SELECT g.ts, g.key, g.label, g.used_minor, g.limit_minor, g.remaining_minor, "
+                "g.expires_at, g.locked_reason FROM credit_grant g "
+                "JOIN (SELECT key, MAX(ts) AS ts FROM credit_grant GROUP BY key) m "
+                "ON g.key = m.key AND g.ts = m.ts ORDER BY g.key"
+            ).fetchall()
+        return [GrantRow(**dict(r)) for r in rows]
 
     def latest_overage(self) -> dict[str, Any] | None:
         with self._tx() as cur:

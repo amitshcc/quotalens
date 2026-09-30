@@ -122,6 +122,7 @@ def _money_or_none(minor: int, reading: SpendReading) -> str | None:
 
 GRANT_CURRENCY = "USD"
 _GRANT_LABELS = {"iguana_necktie": "Cloud session credit"}
+KNOWN_GRANT_KEYS = tuple(_GRANT_LABELS)
 
 
 class ParseError(ValueError):

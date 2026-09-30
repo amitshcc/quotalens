@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from quotalens.parse import QuotaReading, SpendReading
+from quotalens.parse import CreditGrant, QuotaReading, SpendReading
 from quotalens.store import SCHEMA_VERSION, Store
 
 
@@ -113,6 +113,49 @@ def test_v1_database_is_migrated_without_losing_rows(tmp_path) -> None:
         3,
         4,
         5,
+        6,
     ]
     conn.close()
     store.close()
+
+
+def _grant(ts_used: int = 2129, **over) -> CreditGrant:
+    fields = dict(
+        key="iguana_necktie",
+        label="Cloud session credit",
+        used_minor=ts_used,
+        limit_minor=25000,
+        remaining_minor=25000 - ts_used,
+        pct=8.5,
+        expires_at="2026-11-05T07:59:00+00:00",
+        locked_reason=None,
+    )
+    return CreditGrant(**{**fields, **over})
+
+
+def test_schema_v6_migration_removes_grant_quota_rows(tmp_path) -> None:
+    path = tmp_path / "v5.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(V1_SCHEMA)
+    conn.execute("INSERT INTO quota VALUES (11, 'iguana_necktie', 'iguana necktie', 8.5, 'r')")
+    conn.execute("INSERT INTO quota VALUES (11, 'seven_day', 'Weekly', 30, 'r')")
+    conn.commit()
+    conn.close()
+
+    store = Store(path)
+    assert {r.window for r in store.latest_quota()} == {"five_hour", "seven_day"}
+    assert store.latest_grants() == []
+    store.close()
+
+
+def test_record_and_latest_grants(store: Store) -> None:
+    assert store.latest_grants() == []
+    store.record_grants(10, [_grant(1000)])
+    store.record_grants(20, [_grant(2129), _grant(5, key="other", label="other (unrecognised)")])
+    store.record_grants(20, [_grant(2129)])  # the same (ts, key) is replaced, not duplicated
+    latest = {g.key: g for g in store.latest_grants()}
+    assert set(latest) == {"iguana_necktie", "other"}
+    assert latest["iguana_necktie"].ts == 20
+    assert latest["iguana_necktie"].used_minor == 2129
+    assert latest["iguana_necktie"].remaining_minor == 22871
+    assert latest["iguana_necktie"].expires_at == "2026-11-05T07:59:00+00:00"

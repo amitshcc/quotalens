@@ -358,6 +358,7 @@ class Poller:
         # the real one was observed across six and a half hours of downtime.
         previous = self._store.latest_quota()
         self._store.record_quota(now, parsed.readings)
+        self._store.record_grants(now, parsed.grants)
         self._note_diagnostics(parsed, now)
         self._check_boost(now, previous, parsed)
 
