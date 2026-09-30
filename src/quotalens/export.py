@@ -83,6 +83,8 @@ EXPORTS: dict[str, ExportSpec] = {
             "locked_reason",
         ),
     ),
+    # The vendor's weekly split by surface; a row per surface, written only when a share changes.
+    "surfaces": ExportSpec("surface_share", ("ts", "window_started_at", "key", "label", "percent")),
     "samples": ExportSpec("sample", ("ts", "source", "keysig", "payload"), raw=True),
     # Derived from the week_reset events, not a table: see rows(). One row per weekly
     # reset, the same rows /api/weeks serves.

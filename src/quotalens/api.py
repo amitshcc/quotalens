@@ -25,7 +25,17 @@ from fastapi.responses import (
     StreamingResponse,
 )
 
-from quotalens import __version__, credits, grants, notify, origin_guard, retention, status, weeks
+from quotalens import (
+    __version__,
+    credits,
+    grants,
+    notify,
+    origin_guard,
+    retention,
+    status,
+    surfaces,
+    weeks,
+)
 from quotalens.burn import burn_rate
 from quotalens.config import (
     CONFIG_KEYS_BY_NAME,
@@ -611,7 +621,24 @@ def create_app(
         and it changes on a different clock. Same rows as ``table=weeks`` in the export.
         """
         rows = weeks.week_rows(state.store)
-        return {"now_ts": int(time.time()), "weeks": rows, "verdict": weeks.verdict(rows)}
+        # `mostly` is additive and API-only: the export keeps its documented columns.
+        mostly = surfaces.mostly_by_week(state.store)
+        shown = [{**r, "mostly": mostly.get(r["week"])} for r in rows]
+        return {"now_ts": int(time.time()), "weeks": shown, "verdict": weeks.verdict(rows)}
+
+    @app.get("/api/breakdown")
+    def surface_breakdown() -> dict[str, Any]:
+        """The newest stored split of a week's usage by surface; ``breakdown`` is null before one.
+
+        Shares are of that week's usage, not of the limit; ``of_limit`` is the estimate
+        (share x Weekly-all percent, whole percent) and is null unless the split is this week's.
+        """
+        now = int(time.time())
+        weekly = next((r.pct for r in state.store.latest_quota() if r.window == "seven_day"), None)
+        return {
+            "now_ts": now,
+            "breakdown": surfaces.snapshot_dict(state.store, now, weekly),
+        }
 
     @app.get("/api/credits")
     def credit_grants() -> dict[str, Any]:

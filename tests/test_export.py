@@ -74,6 +74,7 @@ def test_every_table_exports_and_an_unknown_one_is_rejected(settings, store, sec
         "samples",
         "weeks",
         "credits",
+        "surfaces",
     }
 
 
@@ -187,3 +188,18 @@ def test_event_details_are_masked_unless_raw_is_asked_for(settings, store, secre
     assert org not in json.dumps(masked) and "<uuid>" in masked["rows"][0]["detail"]
     assert "warning" not in masked
     assert org in plain.text and "redact" in plain.headers["x-quotalens-warning"]
+
+
+def test_surfaces_export_has_the_share_rows(settings, store, secrets) -> None:
+    from quotalens.parse import SurfaceBreakdown, SurfaceShare
+
+    now = int(time.time())
+    store.record_breakdown(
+        now, SurfaceBreakdown(None, "w", [SurfaceShare("cowork", "Cowork", 76.0)])
+    )
+    with _client(settings, store, secrets) as tc:
+        body = tc.get("/api/export.json?table=surfaces").json()
+    assert body["table"] == "surface_share"
+    assert body["rows"] == [
+        {"ts": now, "window_started_at": "w", "key": "cowork", "label": "Cowork", "percent": 76.0}
+    ]

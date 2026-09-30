@@ -156,3 +156,25 @@ def test_credits_endpoint_lists_grants_in_dollars(settings, store, secrets) -> N
 def test_credits_endpoint_is_empty_without_grants(settings, store, secrets) -> None:
     with _client(settings, store, secrets) as tc:
         assert tc.get("/api/credits").json() == {"grants": []}
+
+
+def test_breakdown_endpoint(settings, store, secrets) -> None:
+    from datetime import UTC, datetime
+
+    from quotalens.budget import week_key
+    from quotalens.parse import QuotaReading, SurfaceBreakdown, SurfaceShare
+
+    now = int(time.time())
+    with _client(settings, store, secrets) as tc:
+        assert tc.get("/api/breakdown").json()["breakdown"] is None
+    started = datetime.fromisoformat(week_key(now)).replace(hour=1, tzinfo=UTC).isoformat()
+    store.record_quota(now, [QuotaReading("seven_day", "7-day", 50, "r", "normal", False)])
+    rows = [SurfaceShare("cowork", "Cowork", 76.0), SurfaceShare("chat", "Chats", 24.0)]
+    store.record_breakdown(now, SurfaceBreakdown(None, started, rows))
+    with _client(settings, store, secrets) as tc:
+        body = tc.get("/api/breakdown").json()["breakdown"]
+    assert body["window_started_at"] == started and body["is_current_week"] is True
+    assert [(r["key"], r["percent"], r["of_limit"]) for r in body["rows"]] == [
+        ("cowork", 76.0, 38),
+        ("chat", 24.0, 12),
+    ]
