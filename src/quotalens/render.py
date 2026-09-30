@@ -1006,12 +1006,16 @@ def _weeks(dash: Dashboard) -> str:
     )
 
 
-# The heatmap's grid, in the chart's own width so both columns line up.
+# The heatmap is drawn 1:1, like the chart, so its 11px labels stay 11px. Scaled to a
+# phone's width they were 4px; instead it scrolls sideways in `.hsc`, as the Weeks
+# table above it does. 880 fits the left column from a 1264px-wide window up.
+HEAT_W = 880
 HEAT_L, HEAT_T, HEAT_CELL_H, HEAT_GAP = 40, 16, 16, 2
-HEAT_CELL_W = (CHART_W - HEAT_L) / 24
+HEAT_CELL_W = (HEAT_W - HEAT_L) / 24
 # Achromatic: --txt at rising opacity, one step per ramp level. Zero is the grid
-# colour, so an empty hour still reads as a collected one; never amber.
-HEAT_OPACITY = (0.18, 0.38, 0.62, 0.9)
+# colour, so an empty hour still reads as a collected one; never amber. The first
+# step starts at .28 because at .18 it could not be told from zero on the dark screen.
+HEAT_OPACITY = (0.28, 0.48, 0.7, 0.92)
 
 
 def _heat_fill(level: int | None) -> str:
@@ -1071,8 +1075,9 @@ def _heatmap(heat: Heatmap | None) -> str:
         f"over the last {weeks}"
     )
     return (
-        head + f'<svg width="100%" viewBox="0 0 {CHART_W} {height}" role="img" '
-        f'aria-label="{e(label)}">{"".join(ticks)}{"".join(cells)}{"".join(legend)}</svg>'
+        head + f'<div class="hsc"><svg width="{HEAT_W}" height="{height}" '
+        f'viewBox="0 0 {HEAT_W} {height}" role="img" aria-label="{e(label)}">'
+        f"{''.join(ticks)}{''.join(cells)}{''.join(legend)}</svg></div>"
         f'<p class="far">{e(label)}, in {e(heat.tz or "local time")}. '
         "An hour the collector missed is left out of its average, not counted as zero.</p>"
         "</section>"
