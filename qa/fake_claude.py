@@ -62,6 +62,17 @@ def _usage() -> dict:
             "remaining_dollars": 228.75,
             "locked_reason": None,
         },
+        # The vendor's own split of this week's usage by surface (shares sum to 100).
+        "seven_day_breakdown": {
+            "as_of": _iso(now),
+            "window_started_at": _iso(STATE["weekly_end"] - 7 * 86400),
+            "rows": [
+                {"key": "claude_code", "display_name": "Claude Code", "percent": 23},
+                {"key": "chat", "display_name": "Chats", "percent": 1},
+                {"key": "cowork", "display_name": "Cowork", "percent": 76},
+                {"key": "other", "display_name": "Other", "percent": 0},
+            ],
+        },
         "limits": [
             {
                 "kind": "session",
