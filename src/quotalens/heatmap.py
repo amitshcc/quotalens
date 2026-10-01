@@ -102,7 +102,9 @@ def _week_cells(rows: Sequence[QuotaRow]) -> tuple[list[list[float]], list[list[
         delta = max(0.0, b.pct - a.pct)
         t = a.ts
         while t < b.ts:
-            edge = min(b.ts, (t // HOUR_S + 1) * HOUR_S)
+            # The next *local* hour edge: in a half-hour zone (India) it is not a UTC one.
+            off = time.localtime(t).tm_gmtoff
+            edge = min(b.ts, ((t + off) // HOUR_S + 1) * HOUR_S - off)
             d, h = _cell(t)
             seen[d][h] += edge - t
             gained[d][h] += delta * (edge - t) / span

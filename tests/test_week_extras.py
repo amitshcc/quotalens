@@ -297,3 +297,28 @@ def test_api_pace_is_hidden_while_the_collector_is_not_ok(settings, store, secre
         pace = tc.get("/api/pace").json()
         assert tc.get("/api/heatmap").json()["collecting"] is False
     assert pace["shown"] is False and pace["reason"] == HIDDEN_WITHHELD
+
+
+@pytest.fixture
+def india_time(monkeypatch):
+    """UTC+5:30, where a local hour starts at half past a UTC one."""
+    monkeypatch.setenv("TZ", "Asia/Kolkata")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+def test_heatmap_splits_a_long_segment_at_local_hour_edges(india_time) -> None:
+    """00:00Z-01:00Z is 05:30-06:30 in India: half of it is hour 5, half is hour 6."""
+    from quotalens.heatmap import _week_cells
+    from quotalens.store import QuotaRow
+
+    start = int(datetime(2026, 9, 21, 0, tzinfo=UTC).timestamp())  # Monday 05:30 IST
+    rows = [
+        QuotaRow(start, "seven_day", "Weekly", 10.0, None),
+        QuotaRow(start + 3600, "seven_day", "Weekly", 20.0, None),
+    ]
+    gained, seen = _week_cells(rows)
+    assert seen[0][5] == pytest.approx(1800) and seen[0][6] == pytest.approx(1800)
+    assert gained[0][5] == pytest.approx(5.0) and gained[0][6] == pytest.approx(5.0)
