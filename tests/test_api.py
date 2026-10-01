@@ -213,3 +213,10 @@ def test_health_has_profile(settings, store, secrets) -> None:
         named = _client(settings.with_overrides(profile="work"), store, secrets)
         with named as tc2:
             assert tc2.get("/api/health").json()["profile"] == "work"
+
+
+def test_health_version_matches_package(settings, store, secrets) -> None:
+    import quotalens
+
+    with _client(settings, store, secrets) as tc:
+        assert tc.get("/api/health").json()["version"] == quotalens.__version__ == "2.0.0"

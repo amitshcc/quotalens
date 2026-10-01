@@ -22,7 +22,7 @@ cannot raise, extend or bypass a limit. Not affiliated with or endorsed by
 Anthropic, and the endpoints may change without notice. The longer version is in
 [The Terms, stated plainly](#the-terms-stated-plainly).
 
-Status: **v1.0.**
+Status: **v2.0.**
 
 ## Quick start
 
