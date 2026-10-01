@@ -14,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from quotalens import credits, grants, notify, retention, subcap, updates, weeks
+from quotalens import credits, grants, notify, plan, retention, subcap, updates, weeks
 from quotalens.alerts import (
     ALERT_KIND,
     CLEARED_KIND,
@@ -216,6 +216,7 @@ class Poller:
         self._last_forced_ts: float | None = None
         self._started_ts = int(clock())
         self._update_task: asyncio.Task[Any] | None = None
+        self._plan_fetched = False  # the first good poll after start always asks
 
     def _default_factory(self, cookie: str) -> ClaudeClient:
         return ClaudeClient(
@@ -391,6 +392,7 @@ class Poller:
                 detail = self._redactor.redact(f"{name}: {type(exc).__name__}: {exc}")
                 self._store.record_event("post_poll_failed", detail, ts=now)
                 log.warning("post-poll check failed: %s", detail)
+        await self._maybe_refresh_plan(client, now)
         self._maybe_prune(now)
 
         self.status.state = "ok"
@@ -718,6 +720,58 @@ class Poller:
         task = asyncio.create_task(asyncio.to_thread(updates.check, self._store, now))
         task.add_done_callback(self._update_finished)
         self._update_task = task
+
+    async def _maybe_refresh_plan(self, client: ClaudeClient, now: int) -> None:
+        """The plan, on the first good poll after start and then at most daily.
+
+        Inside a poll that has already stored its reading, so ``client.org_id`` is
+        the org usage was read for. ``refresh_plan`` never raises.
+        """
+        if self._plan_fetched:
+            row = self._store.read_plan()
+            if not plan.due(row.checked_ts if row is not None else None, now):
+                return
+        self._plan_fetched = True
+        await self.refresh_plan(client, now)
+
+    async def refresh_plan(
+        self, client: ClaudeClient | None = None, now: int | None = None
+    ) -> plan.Plan | None:
+        """Ask ``/api/bootstrap`` for the plan, store it, return what is now stored.
+
+        Keeps only the active org's capabilities, rate-limit tier and billing type;
+        nothing from bootstrap goes to the ``sample`` table. A failure is logged and
+        stored as ``error`` with the last good plan kept: it never fails a poll and
+        is retried at the next daily slot.
+        """
+        now = int(self._clock()) if now is None else now
+        if client is None:
+            client = await self._client_for_current_cookie()
+            if client is None:
+                return plan.stored(self._store)
+        try:
+            data = await client.fetch_bootstrap()
+            found = plan.from_bootstrap(data, client.org_id)
+        except Exception as exc:  # informational: a failure here must cost nothing
+            error = self._redactor.redact(str(exc)) or type(exc).__name__
+            log.info("plan refresh failed: %s", error)
+            kept = plan.stored(self._store)
+            self._store.write_plan(
+                now,
+                kept.label if kept else None,
+                kept.tier if kept else None,
+                kept.capabilities_json() if kept else None,
+                kept.billing_type if kept else None,
+                error,
+            )
+            return kept
+        if found is None:
+            self._store.write_plan(now, None, None, None, None, None)
+            return None
+        self._store.write_plan(
+            now, found.label, found.tier, found.capabilities_json(), found.billing_type, None
+        )
+        return found
 
     def _update_finished(self, task: asyncio.Task[Any]) -> None:
         if task.cancelled():

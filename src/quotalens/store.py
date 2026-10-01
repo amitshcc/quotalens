@@ -26,7 +26,7 @@ from quotalens.parse import (
 )
 from quotalens.retention import TS_COLUMN
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 # Statements that bring an older database up to each version, in order.
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
@@ -47,6 +47,7 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
     ),
     7: (),  # surface_share is created by the CREATE statements
     8: (),  # update_check is created by the CREATE statements
+    9: (),  # plan is created by the CREATE statements
 }
 
 _SCHEMA = """
@@ -141,6 +142,16 @@ CREATE TABLE IF NOT EXISTS update_check (
     latest TEXT,
     error TEXT
 );
+-- the account's plan from /api/bootstrap; one row, overwritten (plan.py says what is kept)
+CREATE TABLE IF NOT EXISTS plan (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    checked_ts INTEGER,
+    plan_label TEXT,
+    plan_tier TEXT,
+    plan_capabilities TEXT,
+    plan_billing_type TEXT,
+    error TEXT
+);
 -- detected climbs, threshold crossings, poll failures
 CREATE TABLE IF NOT EXISTS event (
     ts INTEGER NOT NULL,
@@ -155,6 +166,16 @@ CREATE INDEX IF NOT EXISTS event_ts ON event (ts);
 class UpdateCheckRow:
     checked_ts: int | None
     latest: str | None
+    error: str | None
+
+
+@dataclass(frozen=True)
+class PlanRow:
+    checked_ts: int | None
+    label: str | None
+    tier: str | None
+    capabilities: str | None  # JSON list
+    billing_type: str | None
     error: str | None
 
 
@@ -546,6 +567,30 @@ class Store:
                 "INSERT OR REPLACE INTO update_check (id, checked_ts, latest, error) "
                 "VALUES (1, ?, ?, ?)",
                 (checked_ts, latest, error),
+            )
+
+    def read_plan(self) -> PlanRow | None:
+        with self._tx() as cur:
+            row = cur.execute(
+                "SELECT checked_ts, plan_label, plan_tier, plan_capabilities, plan_billing_type, "
+                "error FROM plan WHERE id = 1"
+            ).fetchone()
+        return None if row is None else PlanRow(*row)
+
+    def write_plan(
+        self,
+        checked_ts: int,
+        label: str | None,
+        tier: str | None,
+        capabilities: str | None,
+        billing_type: str | None,
+        error: str | None,
+    ) -> None:
+        with self._tx() as cur:
+            cur.execute(
+                "INSERT OR REPLACE INTO plan (id, checked_ts, plan_label, plan_tier, "
+                "plan_capabilities, plan_billing_type, error) VALUES (1, ?, ?, ?, ?, ?, ?)",
+                (checked_ts, label, tier, capabilities, billing_type, error),
             )
 
     def delete_events(self, kind: str, timestamps: Sequence[int]) -> int:
