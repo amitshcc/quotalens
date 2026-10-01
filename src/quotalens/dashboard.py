@@ -1673,7 +1673,9 @@ def _chart_view(
         bool(series),
         gap_x,
         gap_minutes,
-        json.dumps(payload, separators=(",", ":")),
+        # Labels are the vendor's; "<" as < is the same JSON and cannot end the
+        # <script> block it is embedded in.
+        json.dumps(payload, separators=(",", ":")).replace("<", "\\u003c"),
         collecting,
         boost_marks=boost_marks,
         ghost=ghost,

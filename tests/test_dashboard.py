@@ -846,3 +846,36 @@ def test_the_plan_changes_nothing_but_the_header(settings, store, secrets) -> No
         html = tc.get("/").text
     assert "QuotaLens · Pro<" in html
     assert html.count('class="meter"') == 3 and ">Weekly — Fable " in html
+
+
+def test_a_vendor_label_cannot_close_the_chart_data_script(settings, store, secrets) -> None:
+    """Series labels come from the payload and go into a <script type="application/json">.
+
+    ``json.dumps`` leaves ``</script>`` as is, so a label carrying it would end the
+    block and the rest would run as markup -- and no CSP header stands behind it.
+    """
+    import json
+    import re
+
+    now = int(time.time())
+    evil = "Fable</script><img src=x>"
+    for i in range(3):
+        store.record_quota(
+            now - (2 - i) * 60,
+            [
+                QuotaReading("five_hour", "5-hour", 20 + i, None, "normal", True),
+                QuotaReading("limit:fable", evil, 30, "r3", "normal", False),
+            ],
+        )
+    app = create_app(settings, store, secrets)
+    app.state.qw.poller.status.state = "ok"
+    app.state.qw.poller.status.last_success_ts = now
+    with TestClient(app) as tc:
+        html = tc.get("/").text
+
+    block = re.search(r'<script type="application/json" id="chart-data">(.*?)</script>', html, re.S)
+    assert block is not None
+    assert "<" not in block.group(1)
+    labels = [s["label"] for s in json.loads(block.group(1))["series"]]
+    assert any("</script><img src=x>" in label for label in labels), labels
+    assert "<img src=x>" not in html
