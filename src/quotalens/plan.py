@@ -40,6 +40,7 @@ _NAMED_CAPABILITIES = (
     ("claude_pro", "Pro"),
 )
 _CHAT = "chat"  # every claude.ai org has it; an API-only org does not
+NAMED_LABELS = frozenset({"Max 20x", "Max 5x", "Max", "Pro", "Team", "Enterprise", FREE})
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,15 @@ def _capabilities(value: Any) -> tuple[str, ...]:
         return ()
     kept = [text for text in (_text(item) for item in value) if text is not None]
     return tuple(kept[:MAX_CAPABILITIES])
+
+
+def named(label: str | None) -> str | None:
+    """The label if it is a plan we can name, else ``None``: what the header shows.
+
+    A raw tier string is a fact about the account but not a name a reader knows,
+    so it stays on the About page and in ``/api/health``.
+    """
+    return label if label in NAMED_LABELS else None
 
 
 def label_for(capabilities: tuple[str, ...] | list[str], tier: str | None) -> str | None:

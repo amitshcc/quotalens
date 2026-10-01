@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass
 from html import escape as e
 
-from quotalens import updates
+from quotalens import plan, updates
 from quotalens.config import Settings
 from quotalens.render import render_shell
 from quotalens.store import Store
@@ -42,6 +42,7 @@ class AboutView:
     poll_interval_s: int
     schema_version: int | None
     note: str = ""  # said after a manual check that was refused by the 60 s limit
+    plan: plan.Plan | None = None  # from /api/bootstrap; informational (WP-34)
 
 
 def build_about(settings: Settings, store: Store, *, note: str = "") -> AboutView:
@@ -58,6 +59,7 @@ def build_about(settings: Settings, store: Store, *, note: str = "") -> AboutVie
         poll_interval_s=settings.poll_interval_s,
         schema_version=rows[0]["v"] if rows else None,
         note=note,
+        plan=plan.stored(store),
     )
 
 
@@ -81,6 +83,12 @@ def _latest(state: updates.UpdateState) -> str:
             'rel="noopener noreferrer">What’s new</a>'
         )
     return f"{e(state.latest)} — you’re up to date"
+
+
+def _plan(found: plan.Plan | None) -> str:
+    if found is None or found.label is None:
+        return "not reported"
+    return f"{e(found.label)} (from your account)"
 
 
 def _last_checked(state: updates.UpdateState) -> str:
@@ -117,6 +125,7 @@ def render_about(view: AboutView) -> str:
         '<button type="submit" id="about-check">Check for updates</button></form>'
         + note
         + '<p class="cap">Details</p>'
+        + _row("Plan", _plan(view.plan))
         + _row("Python", e(view.python))
         + _row("Installed with", e(view.install_method))
         + _row("Data directory", e(view.data_dir))

@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from itertools import pairwise
 from typing import Any
 
-from quotalens import credits, retention, subcap, updates, weeks
+from quotalens import credits, plan, retention, subcap, updates, weeks
 from quotalens.alerts import ALERT_KIND, CLEARED_KIND, standing
 from quotalens.boost import BOOST_KIND, boosted_windows
 from quotalens.boost import recorded as recorded_boosts
@@ -472,6 +472,9 @@ class Dashboard:
     # The newer release PyPI last reported, or None. Says nothing on its own: it
     # is a footer link and a dot on the gear, never a banner (WP-32).
     update_latest: str | None = None
+    # The account's plan by name ("Max 20x", "Pro"), shown beside the mark. Informational
+    # only: nothing on the page branches on it; the readings shape the page (WP-34).
+    plan_label: str | None = None
     alert_standing: bool = False  # a burn alert fired and has not cleared
     grants: list[GrantView] = field(default_factory=list)  # credit grants, not windows
     surfaces: SurfaceSection | None = None  # the vendor's weekly split; None keeps the pointer
@@ -514,6 +517,11 @@ def _display_host(host: str) -> str:
     what is actually bound.
     """
     return "localhost" if host in {"127.0.0.1", "::1"} else host
+
+
+def _plan_label(store: Store) -> str | None:
+    found = plan.stored(store)
+    return plan.named(found.label) if found is not None else None
 
 
 def _update_latest(store: Store) -> str | None:
@@ -817,6 +825,7 @@ def build_dashboard(
         events=events,
         vendor_status=list(vendor_status or []),
         update_latest=_update_latest(store),
+        plan_label=_plan_label(store),
         alert_standing=alert_standing,
     )
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 
 import pytest
@@ -208,3 +209,48 @@ def test_api_version_check_is_origin_guarded(app, pypi) -> None:
     with TestClient(app) as tc:
         res = tc.post("/api/version/check", headers={"Origin": EVIL})
     assert res.status_code == 403 and pypi.calls == 0
+
+
+# -- the plan (WP-34) ----------------------------------------------------------------
+
+
+def _store_plan(store, label, tier, capabilities) -> None:
+    store.write_plan(1_000_000, label, tier, json.dumps(capabilities), "stripe_subscription", None)
+
+
+def test_about_says_plan_not_reported_before_bootstrap_answered(app) -> None:
+    with TestClient(app) as tc:
+        html = tc.get("/about").text
+        health = tc.get("/api/health").json()
+    assert "<label>Plan</label><code>not reported</code>" in html
+    assert health["plan"] is None
+
+
+def test_about_and_health_show_the_plan(app, store) -> None:
+    _store_plan(store, "Max 20x", "default_claude_max_20x", ["chat", "claude_max"])
+    with TestClient(app) as tc:
+        html = tc.get("/about").text
+        fragment = tc.get("/about?fragment=1").text
+        health = tc.get("/api/health").json()
+    assert "<label>Plan</label><code>Max 20x (from your account)</code>" in html
+    assert "Max 20x (from your account)" in fragment
+    assert health["plan"] == {
+        "label": "Max 20x",
+        "tier": "default_claude_max_20x",
+        "capabilities": ["chat", "claude_max"],
+    }
+    assert "stripe_subscription" not in json.dumps(health)  # stored, not published
+
+
+def test_about_shows_an_unnamed_plan_by_its_tier(app, store) -> None:
+    _store_plan(store, "default_claude_ultra_9x", "default_claude_ultra_9x", ["claude_ultra"])
+    with TestClient(app) as tc:
+        html = tc.get("/about").text
+    assert "<label>Plan</label><code>default_claude_ultra_9x (from your account)</code>" in html
+
+
+def test_a_plan_label_is_escaped(app, store) -> None:
+    _store_plan(store, "<b>x</b>", "<b>x</b>", ["claude_ultra"])
+    with TestClient(app) as tc:
+        html = tc.get("/about").text
+    assert "<b>x</b>" not in html and "&lt;b&gt;x&lt;/b&gt;" in html

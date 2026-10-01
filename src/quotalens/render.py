@@ -301,6 +301,11 @@ def render_app(dash: Dashboard) -> str:
 UPDATE_DOT = '<circle cx="14.2" cy="1.8" r="1.7" fill="currentColor" stroke="none"/>'
 
 
+def _plan_suffix(dash: Dashboard) -> str:
+    """`` · Max 20x`` after the name, in the same text node; nothing when unnamed."""
+    return f" \u00b7 {e(dash.plan_label)}" if dash.plan_label else ""
+
+
 def _header(dash: Dashboard) -> str:
     dot = UPDATE_DOT if dash.update_latest else ""
     # Without a viewBox the dot's coordinates are pixels and it falls outside an 11px icon.
@@ -317,7 +322,8 @@ def _header(dash: Dashboard) -> str:
     )
     return (
         '<header><div class="wrap">'
-        f'<span class="brand">{header_mark(dash)}QuotaLens</span><span class="spacer"></span>'
+        f'<span class="brand">{header_mark(dash)}QuotaLens{_plan_suffix(dash)}</span>'
+        '<span class="spacer"></span>'
         f"{lost}{_alert_chip(dash)}{chip(dash.chip, dash.chip_text)}"
         f'<span class="lbl m" id="polled" data-ts="{ts}" data-fallback="{e(fallback)}">'
         f"{e(dash.polled_text)}</span>"

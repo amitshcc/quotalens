@@ -31,6 +31,7 @@ from quotalens import (
     grants,
     notify,
     origin_guard,
+    plan,
     retention,
     status,
     surfaces,
@@ -558,12 +559,14 @@ def create_app(
         now = int(time.time())
         collector = collector_state(poller_status, state.settings.poll_interval_s, now)
         update = updates.stored_state(state.store)
+        found = plan.stored(state.store)
         return {
             "status": overall,
             "version": __version__,
             "profile": state.settings.profile or "default",
             "latest_version": update.latest,
             "update_checked_ts": update.checked_ts,
+            "plan": found.as_dict() if found is not None else None,
             "now_ts": now,
             "started_ts": poller_status.started_ts,
             "uptime_s": now - poller_status.started_ts,

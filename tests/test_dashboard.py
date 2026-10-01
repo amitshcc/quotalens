@@ -802,3 +802,47 @@ def test_where_quota_went_fallback(settings, store, secrets) -> None:
     # a split stored for an earlier week is not where this week's quota went
     _this_week_breakdown(store, now - 14 * 86400)
     assert "Share of this week" not in _grant_page(settings, store, secrets, now)
+
+
+# -- the plan beside the mark (WP-34) -------------------------------------------------
+
+
+def _brand(settings, store, secrets) -> str:
+    now = int(time.time())
+    _seed(store, now)
+    app = create_app(settings, store, secrets)
+    app.state.qw.poller.status.state = "ok"
+    app.state.qw.poller.status.last_success_ts = now
+    with TestClient(app) as tc:
+        html = tc.get("/").text
+    return re.search(r'<span class="brand">.*?</span>', html, re.S).group(0)
+
+
+def test_header_names_the_plan_beside_the_mark(settings, store, secrets) -> None:
+    store.write_plan(1, "Max 20x", "default_claude_max_20x", '["chat","claude_max"]', None, None)
+    brand = _brand(settings, store, secrets)
+    assert brand.endswith("</svg>QuotaLens · Max 20x</span>")
+    assert re.search(r"QuotaLens · [^<]*", brand).group(0) == "QuotaLens · Max 20x"
+
+
+def test_header_says_nothing_without_a_plan(settings, store, secrets) -> None:
+    assert _brand(settings, store, secrets).endswith("</svg>QuotaLens</span>")
+
+
+def test_header_says_nothing_for_a_plan_it_cannot_name(settings, store, secrets) -> None:
+    store.write_plan(1, "raw_tier_x", "raw_tier_x", '["claude_ultra"]', None, None)
+    assert _brand(settings, store, secrets).endswith("</svg>QuotaLens</span>")
+
+
+def test_the_plan_changes_nothing_but_the_header(settings, store, secrets) -> None:
+    # Informational only: a Pro label over Max readings still draws the Fable meter.
+    store.write_plan(1, "Pro", "default_claude_pro", '["chat","claude_pro"]', None, None)
+    now = int(time.time())
+    _seed(store, now)
+    app = create_app(settings, store, secrets)
+    app.state.qw.poller.status.state = "ok"
+    app.state.qw.poller.status.last_success_ts = now
+    with TestClient(app) as tc:
+        html = tc.get("/").text
+    assert "QuotaLens · Pro<" in html
+    assert html.count('class="meter"') == 3 and ">Weekly — Fable " in html
