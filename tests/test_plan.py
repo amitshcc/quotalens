@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 
 import pytest
 
@@ -222,8 +223,7 @@ def test_a_failed_refresh_keeps_the_plan_and_never_fails_the_poll(settings, stor
     assert bad.status.state == "ok"
     assert plan.stored(store).label == "Pro"
     row = store.read_plan()
-    assert row.checked_ts == 1_000_060 and "500" in row.error
-    assert not [e for e in store.recent_events() if "bootstrap" in e.detail]
+    assert row.checked_ts == 1_000_060 and row.error == "UpstreamError 500"
     asyncio.run(bad.stop())
 
 
@@ -232,3 +232,66 @@ def test_refresh_plan_without_a_cookie_returns_what_is_stored(settings, store) -
 
     poller = _poller(settings, store, MemorySecretStore(None), make_handler(), Clock(1e6))
     assert asyncio.run(poller.refresh_plan()) is None
+
+
+def test_max_multiple_is_read_as_a_number_not_a_substring() -> None:
+    assert plan.label_for(["claude_max"], "default_claude_max_15x") == "Max"
+    assert plan.label_for(["claude_max"], "default_claude_max_25x") == "Max"
+    assert plan.label_for(["claude_max"], "default_claude_max_5x") == "Max 5x"
+    assert plan.label_for(["claude_max"], "default_claude_max_20x") == "Max 20x"
+
+
+def test_label_reads_every_capability_but_only_some_are_kept() -> None:
+    caps = ["chat", *(f"feature_{i}" for i in range(40)), "claude_max", 7, None, {"x": 1}]
+    found = plan.from_bootstrap(_bootstrap(_org(ORG, caps, "default_claude_max_20x")), ORG)
+    assert found.label == "Max 20x"
+    assert len(found.capabilities) == plan.MAX_CAPABILITIES
+    assert all(isinstance(cap, str) for cap in found.capabilities)
+
+
+def test_an_error_body_is_never_kept(settings, store, secrets) -> None:
+    base = make_handler(bootstrap=_bootstrap(PRO))
+
+    def handler(request: FakeRequest):
+        if request.url.path == "/api/bootstrap":
+            body = {"error": {"type": "x", "message": "someone@example.com is not allowed"}}
+            return json_response(500, body)
+        return base(request)
+
+    poller = _poller(settings, store, secrets, handler, Clock(1e6))
+    asyncio.run(poller.poll_once())
+    assert poller.status.state == "ok"
+    assert "someone" not in (store.read_plan().error or "")
+    asyncio.run(poller.stop())
+
+
+def test_a_missing_org_keeps_the_last_good_plan(settings, store, secrets) -> None:
+    seen: list[str] = []
+    clock = Clock(1_000_000.0)
+    good = _poller(settings, store, secrets, _counting(_bootstrap(MAX_5X), seen), clock)
+    asyncio.run(good.poll_once())
+    asyncio.run(good.stop())
+    clock.now += 60
+    gone = _poller(settings, store, secrets, _counting(_bootstrap(API_ORG), seen), clock)
+    asyncio.run(gone.poll_once())
+    assert plan.stored(store).label == "Max 5x"
+    assert store.read_plan().error == "active organization not in /api/bootstrap"
+    asyncio.run(gone.stop())
+
+
+def test_a_store_failure_in_the_plan_path_never_fails_the_poll(
+    settings, store, secrets, monkeypatch
+) -> None:
+    def broken(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(store, "write_plan", broken)
+    monkeypatch.setattr(store, "read_plan", broken)
+    poller = _poller(settings, store, secrets, make_handler(bootstrap=_bootstrap(PRO)), Clock(1e6))
+    asyncio.run(poller.poll_once())
+    assert poller.status.state == "ok" and poller.status.polls_ok == 1
+    clock_later = Clock(1e6 + 60)
+    poller._clock = clock_later
+    asyncio.run(poller.poll_once())  # the daily gate's read fails too
+    assert poller.status.state == "ok" and poller.status.polls_ok == 2
+    asyncio.run(poller.stop())

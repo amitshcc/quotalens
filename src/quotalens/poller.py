@@ -728,7 +728,11 @@ class Poller:
         the org usage was read for. ``refresh_plan`` never raises.
         """
         if self._plan_fetched:
-            row = self._store.read_plan()
+            try:
+                row = self._store.read_plan()
+            except Exception as exc:  # never a reason to fail a poll that is already stored
+                log.warning("plan read failed: %s", self._redactor.redact(str(exc)))
+                return
             if not plan.due(row.checked_ts if row is not None else None, now):
                 return
         self._plan_fetched = True
@@ -750,28 +754,34 @@ class Poller:
             if client is None:
                 return plan.stored(self._store)
         try:
-            data = await client.fetch_bootstrap()
-            found = plan.from_bootstrap(data, client.org_id)
-        except Exception as exc:  # informational: a failure here must cost nothing
-            error = self._redactor.redact(str(exc)) or type(exc).__name__
-            log.info("plan refresh failed: %s", error)
-            kept = plan.stored(self._store)
+            try:
+                data = await client.fetch_bootstrap()
+                found = plan.from_bootstrap(data, client.org_id)
+            except Exception as exc:  # informational: a failure here must cost nothing
+                return self._keep_plan(now, _plan_error(exc))
+            if found is None:  # one odd payload must not wipe a good plan for a day
+                return self._keep_plan(now, "active organization not in /api/bootstrap")
             self._store.write_plan(
-                now,
-                kept.label if kept else None,
-                kept.tier if kept else None,
-                kept.capabilities_json() if kept else None,
-                kept.billing_type if kept else None,
-                error,
+                now, found.label, found.tier, found.capabilities_json(), found.billing_type, None
             )
-            return kept
-        if found is None:
-            self._store.write_plan(now, None, None, None, None, None)
+            return found
+        except Exception as exc:  # the store itself: the reading is in, the poll stays good
+            log.warning("plan refresh failed: %s", self._redactor.redact(str(exc)))
             return None
+
+    def _keep_plan(self, now: int, error: str) -> plan.Plan | None:
+        """Record the attempt and its error; the last good plan stays."""
+        log.info("plan refresh failed: %s", error)
+        kept = plan.stored(self._store)
         self._store.write_plan(
-            now, found.label, found.tier, found.capabilities_json(), found.billing_type, None
+            now,
+            kept.label if kept else None,
+            kept.tier if kept else None,
+            kept.capabilities_json() if kept else None,
+            kept.billing_type if kept else None,
+            error,
         )
-        return found
+        return kept
 
     def _update_finished(self, task: asyncio.Task[Any]) -> None:
         if task.cancelled():
@@ -889,6 +899,16 @@ class Poller:
             return
         self._store.record_overage(now, spend)
         self.status.overage_available = True
+
+
+def _plan_error(exc: Exception) -> str:
+    """The error's type and HTTP status only: the vendor's message is not kept.
+
+    Bootstrap is the one response full of personal data, and an error body's text is
+    echoed into the exception by the client; the plan row and the log get neither.
+    """
+    status = getattr(exc, "status", None)
+    return f"{type(exc).__name__} {status}" if status else type(exc).__name__
 
 
 def _reset_clock(resets_at: str | None, now: float | None = None) -> str:

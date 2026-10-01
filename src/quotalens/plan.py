@@ -23,6 +23,7 @@ per 24 hours, remembered in the database. A failure keeps the last good plan.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -40,6 +41,7 @@ _NAMED_CAPABILITIES = (
     ("claude_pro", "Pro"),
 )
 _CHAT = "chat"  # every claude.ai org has it; an API-only org does not
+_MAX_MULTIPLE = re.compile(r"(?<![0-9])([0-9]+)x(?![0-9a-z])")  # "_max_20x", not "_15x" as 5x
 NAMED_LABELS = frozenset({"Max 20x", "Max 5x", "Max", "Pro", "Team", "Enterprise", FREE})
 
 
@@ -64,11 +66,15 @@ def _text(value: Any) -> str | None:
     return value.strip()[:MAX_FIELD_CHARS]
 
 
-def _capabilities(value: Any) -> tuple[str, ...]:
+def _all_capabilities(value: Any) -> tuple[str, ...]:
     if not isinstance(value, list):
         return ()
-    kept = [text for text in (_text(item) for item in value) if text is not None]
-    return tuple(kept[:MAX_CAPABILITIES])
+    return tuple(text for text in (_text(item) for item in value) if text is not None)
+
+
+def _capabilities(value: Any) -> tuple[str, ...]:
+    """What is stored and published: bounded. The label is read from the full list."""
+    return _all_capabilities(value)[:MAX_CAPABILITIES]
 
 
 def named(label: str | None) -> str | None:
@@ -96,10 +102,9 @@ def label_for(capabilities: tuple[str, ...] | list[str], tier: str | None) -> st
         if capability not in caps:
             continue
         if capability == "claude_max":
-            if "20x" in tier_text:
-                return "Max 20x"
-            if "5x" in tier_text:
-                return "Max 5x"
+            multiple = _MAX_MULTIPLE.search(tier_text)
+            if multiple and multiple.group(1) in ("5", "20"):
+                return f"Max {multiple.group(1)}x"
         return name
     unknown_plan = any(cap.startswith("claude_") for cap in caps)
     if _CHAT in caps and not unknown_plan:
@@ -144,12 +149,12 @@ def from_bootstrap(data: Any, org_id: str | None) -> Plan | None:
         org = memberships[0]["organization"]
     if org is None:
         return None
-    capabilities = _capabilities(org.get("capabilities"))
+    every = _all_capabilities(org.get("capabilities"))
     tier = _text(org.get("rate_limit_tier"))
     return Plan(
-        label=label_for(capabilities, tier),
+        label=label_for(every, tier),
         tier=tier,
-        capabilities=capabilities,
+        capabilities=every[:MAX_CAPABILITIES],
         billing_type=_text(org.get("billing_type")),
     )
 
