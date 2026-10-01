@@ -135,8 +135,8 @@ quotalens start
 open http://127.0.0.1:8787
 ```
 
-Still four runtime dependencies, no build step, nothing loaded from anywhere but
-the local server, and a CSP of `default-src 'none'`. MIT.
+Still four runtime dependencies, no build step, and nothing loaded from anywhere
+but the local server. MIT.
 
 ## Unofficial, and what that means
 
