@@ -99,3 +99,196 @@ def test_fake_switches_plan_and_its_bootstrap_follows(fake_server: str) -> None:
 
     _post(fake_server + "/mode/plan-max")
     assert len(_get(fake_server + "/api/organizations/o/usage")["limits"]) == 3
+
+
+# -- the whole page, from each fixture -------------------------------------------------
+#
+# The real poller runs over ten days of history drawn by the same `build_usage` that
+# wrote the fixtures (so Weeks has a closed week and the budget has session windows),
+# then takes one last poll that is the fixture file verbatim, at the fixture's clock.
+# `time.time` is frozen at each step, so the page is rendered "at" the fixture.
+
+HISTORY_START = datetime(2026, 9, 21, 2, tzinfo=UTC).timestamp()  # just after a Monday reset
+HISTORY_STEP_S = 20 * 60
+SESSION_S = 5 * 3600
+WEEK_S = 7 * 86400
+FIRST_RESET = datetime(2026, 9, 21, 1, tzinfo=UTC).timestamp()
+SESSION_PTS_PER_H = 5.0  # a quarter of a session per window
+WEEKLY_PER_SESSION_PT = 0.1  # ten points of the week per full session
+WEEKLY_CAP_BEFORE_FIXTURE = 40.0  # never above the fixture's 40.1: a fall would read as a boost
+
+
+class Clock:
+    def __init__(self, now: float) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _history_payload(name: str, t: float, weekly: float) -> dict:
+    final_end = FIXTURE_ARGS["session_end"]
+    windows_back = int((final_end - t) // SESSION_S)
+    session_end = final_end - windows_back * SESSION_S
+    into = SESSION_S - (session_end - t)
+    weekly_end = FIRST_RESET + WEEK_S * (int((t - FIRST_RESET) // WEEK_S) + 1)
+    session_pct = round(SESSION_PTS_PER_H * into / 3600, 1)
+    return fake_claude.build_usage(
+        name,
+        t,
+        session_pct,
+        session_end,
+        round(weekly, 1),
+        weekly_end,
+        FIXTURE_ARGS["grant_end"],
+    )
+
+
+def _bootstrap_for(name: str) -> dict:
+    from conftest import ORG
+
+    return fake_claude.build_bootstrap(name, ORG)
+
+
+def _render(name, monkeypatch, settings, store, secrets) -> tuple[str, dict]:
+    """``(html, api)``: the page and every JSON route, rendered from one fixture."""
+    import asyncio
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from conftest import json_response, make_client
+    from quotalens.api import create_app
+    from quotalens.poller import Poller
+    from quotalens.secrets import Redactor
+
+    clock = Clock(HISTORY_START)
+    monkeypatch.setattr(time, "time", clock)
+    current: dict = {}
+
+    def handler(req):
+        if req.url.path == "/api/bootstrap":
+            return json_response(200, _bootstrap_for(name))
+        if req.url.path.endswith("/usage"):
+            return json_response(200, current["usage"])
+        return json_response(404, {"error": "not found"})
+
+    poller = Poller(
+        settings,
+        store,
+        secrets,
+        Redactor(),
+        client_factory=lambda cookie: make_client(handler, cookie),
+        clock=clock,
+    )
+
+    async def drive() -> None:
+        weekly, last_session, last_week_end = 0.0, 0.0, None
+        t = HISTORY_START
+        while t < FIXTURE_NOW:
+            clock.now = t
+            payload = _history_payload(name, t, weekly)
+            week_end = payload["seven_day"]["resets_at"]
+            if last_week_end is not None and week_end != last_week_end:
+                weekly = 0.0
+            session = payload["five_hour"]["utilization"]
+            weekly = min(
+                WEEKLY_CAP_BEFORE_FIXTURE,
+                weekly + max(0.0, session - last_session) * WEEKLY_PER_SESSION_PT,
+            )
+            last_session, last_week_end = session, week_end
+            current["usage"] = _history_payload(name, t, weekly)
+            await poller.poll_once()
+            t += HISTORY_STEP_S
+        clock.now = FIXTURE_NOW
+        current["usage"] = load_fixture(name)
+        await poller.poll_once()
+        await poller.stop()
+
+    asyncio.run(drive())
+    assert poller.status.state == "ok"
+
+    app = create_app(settings, store, secrets)
+    app.state.qw.poller.status = poller.status
+    routes = (
+        "health",
+        "quota/current",
+        "budget",
+        "weeks",
+        "credits",
+        "breakdown",
+        "pace",
+        "heatmap",
+        "burn",
+        "events?kind=subcap_violation",
+    )
+    with TestClient(app) as tc:
+        html = tc.get("/").text
+        api = {route: tc.get(f"/api/{route}").json() for route in routes}
+    return html, api
+
+
+@pytest.fixture
+def pro_page(monkeypatch, settings, store, secrets) -> tuple[str, dict]:
+    return _render("pro", monkeypatch, settings, store, secrets)
+
+
+@pytest.fixture
+def max_page(monkeypatch, settings, store, secrets) -> tuple[str, dict]:
+    return _render("max", monkeypatch, settings, store, secrets)
+
+
+def _chips(html: str) -> list[str]:
+    import re
+
+    group = re.search(r'<span class="ctl series".*?</span>(.*?)</span>', html, re.S)
+    return re.findall(r"<a [^>]*>([^<]*)</a>", group.group(1)) if group else []
+
+
+def test_pro_page_shows_only_what_pro_has(pro_page) -> None:
+    import re
+
+    html, api = pro_page
+    assert "QuotaLens · Pro<" in html  # the plan reached the page, and changed nothing else
+    assert "fable" not in html.lower()
+    assert "half of weekly pool" not in html
+    assert _chips(html) == ["All", "Session", "Weekly all"]
+    # The budget: exactly one weekly limit, all models.
+    assert [b["label"] for b in api["budget"]["budgets"]] == ["Weekly — all models"]
+    # Readings: no Fable window, and nothing reads as "Fable 0%" or "Fable —".
+    assert {r["window"] for r in api["quota/current"]["readings"]} == {"five_hour", "seven_day"}
+    # Weeks: rows exist, and every Fable cost is absent rather than zero.
+    weeks_rows = api["weeks"]["weeks"]
+    assert weeks_rows, "the history must close at least one week"
+    for row in weeks_rows:
+        assert row["fable_cost"] is None and row["fable_low"] is None
+        assert row["fable_high"] is None and not row["fable_n"]
+    table = html.split('<section class="screen weeks">', 1)[1].split("</table>", 1)[0]
+    assert table.count("<tr") >= 2  # a header and at least one week
+    assert "<br>" not in table  # the Fable line is the cell's second line; there is none
+    # The subcap check had nothing to compare and recorded nothing.
+    assert api["events?kind=subcap_violation"]["events"] == []
+    # The credit grant is Pro's $100.
+    assert re.search(r"of \$100\b", html) and "of $250" not in html
+    for route, body in api.items():
+        dumped = json.dumps(body).lower()
+        for key in ("fable_cost", "fable_low", "fable_high", "fable_n"):
+            dumped = dumped.replace(f'"{key}"', '"_"')
+        assert "fable" not in dumped, route
+
+
+def test_max_page_shows_the_sub_capped_meter(max_page) -> None:
+    html, api = max_page
+    assert "QuotaLens · Max 20x<" in html
+    assert ">Weekly — Fable " in html  # the meter
+    assert "half of weekly pool" in html  # the note
+    assert _chips(html) == ["All", "Session", "Weekly all", "Weekly Fable"]
+    labels = [b["label"] for b in api["budget"]["budgets"]]
+    assert labels[0] == "Weekly — all models" and len(labels) == 2 and "Fable" in labels[1]
+    assert "limit:fable" in {r["window"] for r in api["quota/current"]["readings"]}
+    assert "of $250" in html
+    # The same checks that find nothing on Pro find something here, so their silence
+    # there is absence, not a check that never looks.
+    table = html.split('<section class="screen weeks">', 1)[1].split("</table>", 1)[0]
+    assert "<br>" in table and "Fable" in table  # the Fable line in "one full session"
+    assert api["events?kind=subcap_violation"]["events"]  # Fable 66 against a young week
