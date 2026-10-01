@@ -8,19 +8,34 @@ mandatory: a suite whose result depends on the machine it runs on is not a test.
 from __future__ import annotations
 
 import json
+import os
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 from urllib.parse import urlparse
 
 import pytest
 
-from quotalens import config as config_mod
-from quotalens.client import ClaudeClient, RawResponse, TransportError
-from quotalens.config import Settings
-from quotalens.secrets import MemorySecretStore, Redactor
-from quotalens.store import Store
+# QUOTALENS_TEST_NOW=2027-01-01 runs the whole suite with ``time.time`` moved to
+# that date (still ticking), the stand-in for ``faketime`` where it is not
+# installed. Done here, before any quotalens import (hence the E402s), so a
+# ``clock=time.time`` default argument binds the moved clock too. A test that
+# passes today and fails under this reads the wall clock where it should pin a
+# ``now``.
+_TEST_NOW = os.environ.get("QUOTALENS_TEST_NOW")
+if _TEST_NOW:
+    _real_time = time.time
+    _offset = datetime.fromisoformat(_TEST_NOW).replace(tzinfo=UTC).timestamp() - _real_time()
+    time.time = lambda: _real_time() + _offset
+
+from quotalens import config as config_mod  # noqa: E402
+from quotalens.client import ClaudeClient, RawResponse, TransportError  # noqa: E402
+from quotalens.config import Settings  # noqa: E402
+from quotalens.secrets import MemorySecretStore, Redactor  # noqa: E402
+from quotalens.store import Store  # noqa: E402
 
 COOKIE = "sessionKey=sk-ant-sid01-SECRETSECRETSECRET-abc; lastActiveOrg=org-1234-5678-abcd"
 COOKIE_NO_ORG = "sessionKey=sk-ant-sid01-SECRETSECRETSECRET-abc"
