@@ -25,3 +25,17 @@ def test_readme_says_what_the_update_check_sends_and_how_to_stop_it():
     assert "asks pypi.org for the latest version" in README
     assert "QUOTALENS_NO_UPDATE_CHECK=1" in README
     assert "It never updates itself." in README
+
+
+def test_outbound_inventory_names_every_request():
+    """VISION points at the README for the outbound inventory, so it must stay whole."""
+    assert "the daily update check, and the webhook if you set one, are the only" in README
+    assert "`/api/bootstrap`" in README
+
+
+def test_release_notes_list_every_v2_route():
+    notes = (Path(__file__).resolve().parent.parent / "docs" / "RELEASE-NOTES-v2.0.md").read_text()
+    for route in ("/api/weeks", "/api/pace", "/api/heatmap", "/api/breakdown", "/api/credits"):
+        assert f"`GET {route}`" in notes, route
+    assert "`GET /api/version`, `POST /api/version/check`" in notes
+    assert "`GET /about`, `POST /about/check`" in notes
