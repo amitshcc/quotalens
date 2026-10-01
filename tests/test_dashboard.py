@@ -208,7 +208,7 @@ def test_stale_model_withholds_every_value(settings, store) -> None:
 
 
 def test_overage_reads_unclamped_with_clipped_bar(settings, store) -> None:
-    now = int(time.time())
+    now = int(datetime(2026, 9, 3, 12, tzinfo=UTC).timestamp())
     spend = SpendReading(
         316,
         200,
