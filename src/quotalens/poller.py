@@ -363,6 +363,7 @@ class Poller:
         previous = self._store.latest_quota()
         self._store.record_quota(now, parsed.readings)
         self._store.record_grants(now, parsed.grants)
+        self._remove_misfiled_grants(now, parsed)
         self._store.record_breakdown(now, parsed.breakdown)
         self._note_diagnostics(parsed, now)
         self._check_boost(now, previous, parsed)
@@ -401,6 +402,19 @@ class Poller:
         self.status.polls_ok += 1
         log.info("poll ok: %d readings", len(parsed.readings))
         return self.schedule.on_success()
+
+    def _remove_misfiled_grants(self, now: int, parsed: UsageParse) -> None:
+        """Delete quota rows under any key this poll classified as a credit grant.
+
+        Not only a migration: any writer with an older parser (a second process on the
+        same database) can store a grant as a window again at any time.
+        """
+        for grant in parsed.grants:
+            removed = self._store.delete_quota_window(grant.key)
+            if removed:
+                detail = f"{grant.key}: {removed} quota rows"
+                self._store.record_event("grant_rows_removed", detail, ts=now)
+                log.info("removed misfiled grant rows: %s", detail)
 
     def _check_boost(self, now: int, previous: list[QuotaRow], parsed: UsageParse) -> None:
         """Record a raised limit once, where the readings arrive.

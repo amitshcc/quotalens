@@ -471,6 +471,17 @@ class Store:
             )
         return len(rows)
 
+    def delete_quota_window(self, window: str) -> int:
+        """Remove every quota row stored under ``window``. Returns the count removed.
+
+        For a key the parser classifies as a credit grant: an older parser (or another
+        process with one) stored it as a window, and a grant is never a window.
+        Idempotent, and one index seek when there is nothing to remove.
+        """
+        with self._tx() as cur:
+            cur.execute("DELETE FROM quota WHERE window = ?", (window,))
+            return cur.rowcount
+
     def record_breakdown(
         self, ts: int, breakdown: SurfaceBreakdown | None, *, force: bool = False
     ) -> int:
