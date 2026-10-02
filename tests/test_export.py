@@ -66,7 +66,43 @@ def test_every_table_exports_and_an_unknown_one_is_rejected(settings, store, sec
             assert body["table"] == EXPORTS[table].table
         assert tc.get("/api/export.csv?table=quota;DROP TABLE quota").status_code == 400
         assert tc.get("/api/export.json?table=nope").status_code == 400
-    assert set(EXPORTS) == {"quota", "events", "overage", "sessions", "samples"}
+    assert set(EXPORTS) == {
+        "quota",
+        "events",
+        "overage",
+        "sessions",
+        "samples",
+        "weeks",
+        "credits",
+        "surfaces",
+    }
+
+
+def test_credits_export_has_the_grant_rows(settings, store, secrets) -> None:
+    from quotalens.parse import CreditGrant
+
+    now = int(time.time())
+    store.record_grants(
+        now,
+        [CreditGrant("iguana_necktie", "Cloud session credit", 2129, 25000, 22871, 8.5, "e", None)],
+    )
+    with _client(settings, store, secrets) as tc:
+        body = tc.get("/api/export.json?table=credits").json()
+        text = tc.get("/api/export.csv?table=credits").text
+    assert body["columns"][:3] == ["ts", "key", "label"]
+    assert body["rows"] == [
+        {
+            "ts": now,
+            "key": "iguana_necktie",
+            "label": "Cloud session credit",
+            "used_minor": 2129,
+            "limit_minor": 25000,
+            "remaining_minor": 22871,
+            "expires_at": "e",
+            "locked_reason": None,
+        }
+    ]
+    assert "iguana_necktie" in text and "warning" not in body
 
 
 def test_raw_samples_need_the_flag_and_carry_the_warning(settings, store, secrets) -> None:
@@ -152,3 +188,18 @@ def test_event_details_are_masked_unless_raw_is_asked_for(settings, store, secre
     assert org not in json.dumps(masked) and "<uuid>" in masked["rows"][0]["detail"]
     assert "warning" not in masked
     assert org in plain.text and "redact" in plain.headers["x-quotalens-warning"]
+
+
+def test_surfaces_export_has_the_share_rows(settings, store, secrets) -> None:
+    from quotalens.parse import SurfaceBreakdown, SurfaceShare
+
+    now = int(time.time())
+    store.record_breakdown(
+        now, SurfaceBreakdown(None, "w", [SurfaceShare("cowork", "Cowork", 76.0)])
+    )
+    with _client(settings, store, secrets) as tc:
+        body = tc.get("/api/export.json?table=surfaces").json()
+    assert body["table"] == "surface_share"
+    assert body["rows"] == [
+        {"ts": now, "window_started_at": "w", "key": "cowork", "label": "Cowork", "percent": 76.0}
+    ]

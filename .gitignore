@@ -23,6 +23,8 @@ venv/
 .mypy_cache/
 .coverage
 htmlcov/
+# not committed: CI and pipx do not use uv (revisit if CI ever does)
+uv.lock
 
 # editors / os
 .DS_Store

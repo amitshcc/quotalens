@@ -45,8 +45,9 @@ PANEL_KEYS = (
     "notify_credits",
     "status_row",
     "status_vendors",
+    "update_check",
 )
-BOOLEAN_KEYS = ("notify", "notify_credits", "status_row")
+BOOLEAN_KEYS = ("notify", "notify_credits", "status_row", "update_check")
 
 # A checkbox that cannot be submitted -- disabled because nothing on this host
 # can deliver a notification -- sends nothing, which on the wire is identical to
@@ -60,7 +61,7 @@ BOOLEAN_KEYS = ("notify", "notify_credits", "status_row")
 # field flip the key on one host and not another, and would make the panel's
 # contract depend on something the submitter cannot see.
 #
-# `notify_credits` and `status_row` need no marker: they are always rendered
+# `notify_credits`, `status_row` and `update_check` need no marker: they are always rendered
 # enabled, so their absence really is an unticked box. One line each here the
 # day that stops being true.
 NOTIFY_GROUP = "notify_group"

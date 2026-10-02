@@ -1,0 +1,90 @@
+{
+  "five_hour": {
+    "utilization": 20.5,
+    "resets_at": "2026-10-01T15:00:00.000000+00:00"
+  },
+  "seven_day": {
+    "utilization": 40.1,
+    "resets_at": "2026-10-05T01:00:00.000000+00:00"
+  },
+  "nimbus_quill": {
+    "utilization": 0.0,
+    "resets_at": null
+  },
+  "iguana_necktie": {
+    "utilization": 8.5,
+    "resets_at": "2026-11-04T00:00:00.000000+00:00",
+    "limit_dollars": 100,
+    "used_dollars": 8.5,
+    "remaining_dollars": 91.5,
+    "locked_reason": null
+  },
+  "seven_day_breakdown": {
+    "as_of": "2026-10-01T12:00:00.000000+00:00",
+    "window_started_at": "2026-09-28T01:00:00.000000+00:00",
+    "rows": [
+      {
+        "key": "claude_code",
+        "display_name": "Claude Code",
+        "percent": 23
+      },
+      {
+        "key": "chat",
+        "display_name": "Chats",
+        "percent": 1
+      },
+      {
+        "key": "cowork",
+        "display_name": "Cowork",
+        "percent": 76
+      },
+      {
+        "key": "other",
+        "display_name": "Other",
+        "percent": 0
+      }
+    ]
+  },
+  "limits": [
+    {
+      "kind": "session",
+      "group": "session",
+      "percent": 20.5,
+      "resets_at": "2026-10-01T15:00:00.000000+00:00",
+      "scope": null,
+      "severity": "normal",
+      "is_active": true
+    },
+    {
+      "kind": "weekly_all",
+      "group": "weekly",
+      "percent": 40.1,
+      "resets_at": "2026-10-05T01:00:00.000000+00:00",
+      "scope": null,
+      "severity": "normal",
+      "is_active": false
+    }
+  ],
+  "extra_usage": {
+    "used_credits": 316,
+    "monthly_limit": 200,
+    "currency": "USD",
+    "decimal_places": 2,
+    "is_enabled": false,
+    "disabled_reason": "org_level_disabled_until",
+    "spend_limit_reached": true
+  },
+  "spend": {
+    "used": {
+      "amount_minor": 316,
+      "currency": "USD",
+      "exponent": 2
+    },
+    "limit": {
+      "amount_minor": 200,
+      "currency": "USD",
+      "exponent": 2
+    },
+    "percent": 100
+  }
+}

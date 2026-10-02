@@ -111,10 +111,10 @@ button:hover{background:var(--hover);color:var(--txt)}
   font-size:var(--fs-sm);color:var(--txt-dim)}
 .ctl{display:inline-flex;align-items:center;gap:var(--sp-1);margin:0}
 .ctl .lbl{margin-right:var(--sp-1)}
-.rb{color:var(--txt-dim);text-decoration:none;padding:2px var(--sp-2);border:var(--hair) solid transparent;
+.rb,.sq{color:var(--txt-dim);text-decoration:none;padding:2px var(--sp-2);border:var(--hair) solid transparent;
   border-radius:var(--r-1);font-family:var(--font-num);font-size:var(--fs-xs)}
-.rb:hover{background:var(--hover);color:var(--txt)}
-.rb.on{color:var(--txt);border-color:var(--hair-firm);background:var(--chrome)}
+.rb:hover,.sq:hover{background:var(--hover);color:var(--txt)}
+.rb.on,.sq.on{color:var(--txt);border-color:var(--hair-firm);background:var(--chrome)}
 button:disabled{opacity:.5;cursor:default}
 select{font:inherit;font-family:var(--font-num);font-size:var(--fs-xs);color:var(--txt);background:var(--chrome);
   border:var(--hair) solid var(--hair-firm);border-radius:var(--r-1);padding:2px var(--sp-2)}
@@ -153,6 +153,7 @@ tbody th a:hover{text-decoration:underline}
 .hr{stroke:var(--grid);stroke-width:1}
 .now{stroke:var(--txt-far);stroke-width:1;stroke-dasharray:2 3}
 .proj{fill:none;stroke-linecap:round}
+.series-ghost{stroke-dasharray:4 3}
 .cross{fill:var(--st-critical)}
 .sel{fill:var(--select);stroke:var(--focus);stroke-width:1}
 #chart{cursor:crosshair;user-select:none}
@@ -178,6 +179,15 @@ tbody th a:hover{text-decoration:underline}
   gap:var(--sp-2) var(--sp-4);align-items:baseline}
 .pointers dt{font-family:var(--font-num);white-space:nowrap}
 .pointers dd{margin:0;color:var(--txt-dim)}
+
+/* weeks: the ledger table. Reuses .screen, .hsc, .bignum, .far; only the verdict
+   line, the caveat and the open-week tint are its own. No new tokens. */
+.weeks{margin-bottom:var(--sp-3)}
+.r-open th,.r-open td{background:var(--select)}
+.wk-verdict{margin:var(--sp-2) var(--sp-4);color:var(--txt);max-width:76ch}
+.wk-note{margin:0 var(--sp-4) var(--sp-4);font-size:var(--fs-sm)}
+.wk-note summary{color:var(--txt-far);cursor:pointer}
+.wk-note p{margin:var(--sp-2) 0 0;max-width:76ch;color:var(--txt-dim)}
 .pointers>:last-child{margin-bottom:0}
 
 /* attribution table + side panel */
@@ -196,18 +206,17 @@ th,td{padding:0 var(--sp-3);height:var(--row-h);border-bottom:var(--hair) solid 
   text-align:left;font-weight:var(--w-reg);white-space:nowrap}
 thead th{color:var(--txt-far);font-size:var(--fs-xs);height:22px;border-bottom:var(--hair) solid var(--hair-firm)}
 thead th.n,td.n{text-align:right}
-.dim{color:var(--txt-dim)}
 tbody th .chip{margin-left:var(--sp-1)}
 tbody tr:last-child td{border-bottom:0}
 td.empty{white-space:normal;height:auto;padding:var(--sp-4) var(--sp-3);color:var(--txt-far)}
 .side{padding:var(--sp-3) 0 0 var(--sp-4);border-left:var(--hair) solid var(--hairline)}
 .side dl{margin:0;display:grid;grid-template-columns:1fr auto;gap:6px var(--sp-3);font-size:var(--fs-sm)}
-.side dt{color:var(--txt-dim)}
 .side dd{margin:0;text-align:right;font-family:var(--font-num)}
 .side p{margin:6px 0 0;font-size:var(--fs-xs)}
-.side .ev{color:var(--txt-dim)}
+.dim,.side dt,.side .ev,.plan{color:var(--txt-dim)}
 .side .ev-alert{color:var(--st-elevated)}
 .spend-pct{font-size:var(--fs-sub);letter-spacing:var(--tr-readout);margin:var(--sp-2) 0}
+.bar rect{fill:var(--hair-firm)}
 .rule{height:var(--hair);background:var(--hairline);margin:var(--sp-3) 0}
 footer{margin-top:var(--sp-5);padding-top:var(--sp-3);border-top:var(--hair) solid var(--hairline);
   font-size:var(--fs-xs);color:var(--txt-dim);display:flex;gap:var(--sp-4);flex-wrap:wrap}

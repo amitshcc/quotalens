@@ -118,3 +118,166 @@ def test_an_overage_row_written_before_the_check_still_renders(settings, store, 
         for path in ("/", "/api/health", "/api/quota/current", "/api/dashboard"):
             assert tc.get(path).status_code == 200, path
         assert "—" in tc.get("/").text
+
+
+def test_credits_endpoint_lists_grants_in_dollars(settings, store, secrets) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from quotalens.parse import CreditGrant
+
+    now = int(time.time())
+    ends = (datetime.fromtimestamp(now, UTC) + timedelta(days=36)).isoformat()
+    old = (datetime.fromtimestamp(now, UTC) - timedelta(days=9)).isoformat()
+    store.record_grants(
+        now,
+        [
+            CreditGrant("iguana_necktie", "Cloud session credit", 2129, 25000, 22871, 8.5, ends),
+            CreditGrant("gone", "gone (unrecognised)", 0, 10000, 10000, 0.0, old),
+        ],
+    )
+    with _client(settings, store, secrets) as tc:
+        body = tc.get("/api/credits").json()
+    assert body == {
+        "grants": [
+            {
+                "key": "iguana_necktie",
+                "label": "Cloud session credit",
+                "used": 21.29,
+                "limit": 250.0,
+                "remaining": 228.71,
+                "pct": 8.52,
+                "expires_at": ends,
+                "locked_reason": None,
+            }
+        ]
+    }
+
+
+def test_credits_endpoint_is_empty_without_grants(settings, store, secrets) -> None:
+    with _client(settings, store, secrets) as tc:
+        assert tc.get("/api/credits").json() == {"grants": []}
+
+
+def test_breakdown_endpoint(settings, store, secrets) -> None:
+    from datetime import UTC, datetime
+
+    from quotalens.budget import week_key
+    from quotalens.parse import QuotaReading, SurfaceBreakdown, SurfaceShare
+
+    now = int(time.time())
+    with _client(settings, store, secrets) as tc:
+        assert tc.get("/api/breakdown").json()["breakdown"] is None
+    started = datetime.fromisoformat(week_key(now)).replace(hour=1, tzinfo=UTC).isoformat()
+    store.record_quota(now, [QuotaReading("seven_day", "7-day", 50, "r", "normal", False)])
+    rows = [SurfaceShare("cowork", "Cowork", 76.0), SurfaceShare("chat", "Chats", 24.0)]
+    store.record_breakdown(now, SurfaceBreakdown(None, started, rows))
+    with _client(settings, store, secrets) as tc:
+        body = tc.get("/api/breakdown").json()["breakdown"]
+    assert body["window_started_at"] == started and body["is_current_week"] is True
+    assert [(r["key"], r["percent"], r["of_limit"]) for r in body["rows"]] == [
+        ("cowork", 76.0, 38),
+        ("chat", 24.0, 12),
+    ]
+
+
+def test_events_after_id_exclusive_ascending(settings, store, secrets) -> None:
+    for ts, kind in [(100, "a"), (200, "b"), (200, "a"), (300, "a")]:
+        store.record_event(kind, f"d{ts}", ts=ts)
+    with _client(settings, store, secrets) as tc:
+        body = tc.get("/api/events", params={"after_id": 1}).json()
+        paged = tc.get("/api/events", params={"after_id": 1, "limit": 1}).json()
+        kinded = tc.get("/api/events", params={"after_id": 0, "kind": "b"}).json()
+        empty = tc.get("/api/events", params={"after_id": 4}).json()
+        bad = tc.get("/api/events", params={"after_id": -1})
+    assert [e["id"] for e in body["events"]] == [2, 3, 4]
+    assert [(e["ts"], e["kind"]) for e in body["events"]] == [(200, "b"), (200, "a"), (300, "a")]
+    assert body["next_after_id"] == 4
+    assert len(paged["events"]) == 1 and paged["next_after_id"] == 2
+    assert [e["kind"] for e in kinded["events"]] == ["b"] and kinded["next_after_id"] == 2
+    assert empty["events"] == [] and empty["next_after_id"] == 4
+    assert bad.status_code == 422
+    assert "next_since" not in body
+
+
+def test_events_back_dated_week_reset_reaches_a_follower_past_its_ts(
+    settings, store, secrets
+) -> None:
+    """A week_reset is written with ts = the week's close, after later events exist."""
+    store.record_event("poll_error", "timeout", ts=1_000)
+    store.record_event("poll_error", "timeout", ts=2_000)
+    with _client(settings, store, secrets) as tc:
+        first = tc.get("/api/events", params={"after_id": 0}).json()
+        cursor = first["next_after_id"]
+        store.record_event("week_reset", "{}", ts=900)  # back-dated behind both
+        second = tc.get("/api/events", params={"after_id": cursor}).json()
+    assert [e["ts"] for e in first["events"]] == [1_000, 2_000]
+    assert [(e["kind"], e["ts"]) for e in second["events"]] == [("week_reset", 900)]
+
+
+def test_events_sharing_a_ts_across_a_page_boundary_are_both_delivered(
+    settings, store, secrets
+) -> None:
+    store.record_event("week_reset", "seven_day", ts=5_000)
+    store.record_event("week_reset", "limit:fable", ts=5_000)
+    seen = []
+    with _client(settings, store, secrets) as tc:
+        cursor = 0
+        for _ in range(3):
+            page = tc.get("/api/events", params={"after_id": cursor, "limit": 1}).json()
+            seen += [e["detail"] for e in page["events"]]
+            cursor = page["next_after_id"]
+    assert seen == ["seven_day", "limit:fable"]
+
+
+def test_events_without_a_cursor_newest_first_with_ids(settings, store, secrets) -> None:
+    for ts in (100, 200, 300):
+        store.record_event("a", "d", ts=ts)
+    with _client(settings, store, secrets) as tc:
+        body = tc.get("/api/events").json()
+    assert [(e["id"], e["ts"]) for e in body["events"]] == [(3, 300), (2, 200), (1, 100)]
+    assert "next_after_id" not in body and "next_since" not in body
+
+
+def test_health_has_profile(settings, store, secrets) -> None:
+    with _client(settings, store, secrets) as tc:
+        assert tc.get("/api/health").json()["profile"] == "default"
+        named = _client(settings.with_overrides(profile="work"), store, secrets)
+        with named as tc2:
+            assert tc2.get("/api/health").json()["profile"] == "work"
+
+
+def test_health_version_matches_package(settings, store, secrets) -> None:
+    import quotalens
+
+    with _client(settings, store, secrets) as tc:
+        assert tc.get("/api/health").json()["version"] == quotalens.__version__ == "2.0.0"
+
+
+# -- startup backfills never stop the app (WP-35) ----------------------------------------
+
+
+def test_backfill_failure_does_not_stop_startup(settings, store, secrets, monkeypatch) -> None:
+    from quotalens import credits
+
+    def broken(_store) -> int:
+        raise ValueError("payload text that must not reach the event")
+
+    ran = []
+    monkeypatch.setattr(credits, "backfill_grants", broken)
+    monkeypatch.setattr(credits, "backfill_breakdown", lambda s: ran.append("breakdown") or 0)
+    with _client(settings, store, secrets) as tc:
+        assert tc.get("/api/health").status_code == 200
+    failed = store.recent_events(kind="backfill_failed")
+    assert [e.detail for e in failed] == ["grants: ValueError"]
+    assert ran == ["breakdown"]  # the next backfill still ran
+
+
+def test_pathological_stored_sample_does_not_stop_startup(settings, store, secrets) -> None:
+    """A7: one stored sample with an absurd credit amount used to raise in the lifespan."""
+    window = {"utilization": 10, "resets_at": "2026-09-30T12:00:00+00:00"}
+    block = {"utilization": 1, "resets_at": "2026-11-05T07:59:00+00:00", "limit_dollars": 1e308}
+    block |= {"used_dollars": 1e308}
+    store.record_sample(100, "usage", {"five_hour": window, "iguana_necktie": block})
+    with _client(settings, store, secrets) as tc:
+        assert tc.get("/api/credits").json() == {"grants": []}
+    assert store.recent_events(kind="backfill_failed") == []

@@ -29,6 +29,12 @@ invalidates it.
      URL, so pasting the address bar captures the range, the lookback and which
      series were hidden. -->
 
+## On Pro?
+
+QuotaLens has never seen a Pro account's usage payload; its Pro test fixture is
+assumed from the help centre. If you are on Pro, a redacted `quotalens probe`
+(no flags) pasted here lets us replace that guess with the real shape.
+
 ## Environment
 
 - QuotaLens version: <!-- quotalens --version -->

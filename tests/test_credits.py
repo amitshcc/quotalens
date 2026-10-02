@@ -98,3 +98,62 @@ def test_the_event_line_carries_no_time_and_the_notification_does() -> None:
     run = credits.stretches(_rows((0, 0), (60, 500), (120, 500), (180, 500), (240, 500)), 60)[0]
     assert run.detail() == "credits started · $5.00 so far"
     assert run.notification(lambda _t: "01:02") == "Credits started 01:02 · $5.00 so far"
+
+
+def test_backfill_grants_idempotent(store) -> None:
+    grant_block = {
+        "utilization": 8.5,
+        "resets_at": "2026-11-05T07:59:00+00:00",
+        "limit_dollars": 250,
+        "used_dollars": 21.29,
+        "remaining_dollars": 228.71,
+    }
+    window = {"utilization": 10, "resets_at": "2026-09-30T12:00:00+00:00", "limit_dollars": None}
+    store.record_sample(100, "usage", {"five_hour": window})
+    spent = {**grant_block, "used_dollars": 30.0, "remaining_dollars": 220.0}
+    store.record_sample(200, "usage", {"five_hour": window, "iguana_necktie": grant_block})
+    store.record_sample(300, "usage", {"five_hour": window, "iguana_necktie": grant_block})
+    store.record_sample(300, "overage", {"used_credits": 1})
+    store.record_sample(400, "usage", {"five_hour": window, "iguana_necktie": spent})
+
+    # On change only (WP-35): the identical reading at 300 writes no row.
+    assert credits.backfill_grants(store) == 2
+    assert credits.backfill_grants(store) == 0
+    rows = store.query("SELECT ts, key, used_minor, limit_minor FROM credit_grant ORDER BY ts")
+    assert [tuple(r) for r in rows] == [
+        (200, "iguana_necktie", 2129, 25000),
+        (400, "iguana_necktie", 3000, 25000),
+    ]
+
+
+def test_backfill_grants_replays_among_the_stored_rows(store) -> None:
+    """A sample identical to the stored row before it writes nothing; a day later it does."""
+    block = {"utilization": 8.5, "resets_at": "2026-11-05T07:59:00+00:00", "limit_dollars": 250}
+    block |= {"used_dollars": 21.29, "remaining_dollars": 228.71}
+    window = {"utilization": 10, "resets_at": "2026-09-30T12:00:00+00:00", "limit_dollars": None}
+    store.record_sample(1_000, "usage", {"five_hour": window, "iguana_necktie": block})
+    assert credits.backfill_grants(store) == 1
+    for ts in (1_060, 1_120, 1_000 + 86_400):
+        store.record_sample(ts, "usage", {"five_hour": window, "iguana_necktie": block})
+    assert credits.backfill_grants(store) == 1  # only the heartbeat a day on
+    rows = store.query("SELECT ts FROM credit_grant ORDER BY ts")
+    assert [r[0] for r in rows] == [1_000, 1_000 + 86_400]
+
+
+def test_breakdown_backfill_idempotent(store) -> None:
+    block = {
+        "as_of": "2026-09-30T00:00:00+00:00",
+        "window_started_at": "2026-09-28T01:00:00+00:00",
+        "rows": [{"key": "cowork", "display_name": "Cowork", "percent": 76}],
+    }
+    changed = {**block, "rows": [{"key": "cowork", "display_name": "Cowork", "percent": 80}]}
+    store.record_sample(100, "usage", {"five_hour": {"utilization": 1}})
+    store.record_sample(200, "usage", {"seven_day_breakdown": block})
+    store.record_sample(300, "usage", {"seven_day_breakdown": block})
+    store.record_sample(400, "usage", {"seven_day_breakdown": changed})
+    store.record_sample(500, "overage", {"seven_day_breakdown": block})
+
+    assert credits.backfill_breakdown(store) == 2
+    assert credits.backfill_breakdown(store) == 0
+    rows = store.query("SELECT ts, key, percent FROM surface_share ORDER BY ts")
+    assert [tuple(r) for r in rows] == [(200, "cowork", 76.0), (400, "cowork", 80.0)]

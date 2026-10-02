@@ -21,6 +21,7 @@ import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 
+from quotalens import weeks
 from quotalens.config import CLAUDE
 from quotalens.store import Store
 
@@ -68,7 +69,26 @@ EXPORTS: dict[str, ExportSpec] = {
         ),
         ts_column="started_at",
     ),
+    # Credit grants (dollars in minor units), one row per grant per poll.
+    "credits": ExportSpec(
+        "credit_grant",
+        (
+            "ts",
+            "key",
+            "label",
+            "used_minor",
+            "limit_minor",
+            "remaining_minor",
+            "expires_at",
+            "locked_reason",
+        ),
+    ),
+    # The vendor's weekly split by surface; a row per surface, written only when a share changes.
+    "surfaces": ExportSpec("surface_share", ("ts", "window_started_at", "key", "label", "percent")),
     "samples": ExportSpec("sample", ("ts", "source", "keysig", "payload"), raw=True),
+    # Derived from the week_reset events, not a table: see rows(). One row per weekly
+    # reset, the same rows /api/weeks serves.
+    "weeks": ExportSpec("weeks", weeks.EXPORT_COLUMNS, ts_column="closed_at"),
 }
 
 
@@ -91,6 +111,16 @@ def rows(
     store: Store, spec: ExportSpec, since_ts: int | None, unmasked: bool = False
 ) -> Iterator[dict[str, object]]:
     """Every row, oldest first, a page at a time so nothing is buffered."""
+    if spec.table == "weeks":
+        # Derived from events, not a SQL table. Small (one row per weekly reset), so it
+        # is built in full and filtered here rather than paged by rowid.
+        # week_rows is newest-first; the export streams oldest-first like every other table.
+        for row in reversed(weeks.week_rows(store)):
+            closed = row.get("closed_at")
+            # The still-open current week has no close time; keep it (it is the newest row).
+            if since_ts is None or closed is None or int(closed) >= since_ts:
+                yield {k: row.get(k) for k in spec.columns}
+        return
     last_rowid = 0
     columns = ", ".join(spec.columns)
     where = f" AND {spec.ts_column} >= ?" if since_ts is not None and spec.ts_column else ""

@@ -16,10 +16,22 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from quotalens.parse import QuotaReading, SpendReading
+from quotalens.parse import (
+    KNOWN_GRANT_KEYS,
+    CreditGrant,
+    QuotaReading,
+    SpendReading,
+    SurfaceBreakdown,
+    SurfaceShare,
+)
 from quotalens.retention import TS_COLUMN
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 11
+
+# A credit grant is stored when any stored field changes, plus once a day while it does
+# not, so "still there" stays visible without a row per poll.
+GRANT_HEARTBEAT_S = 24 * 3600
+_GRANT_COLUMNS = "label, used_minor, limit_minor, remaining_minor, expires_at, locked_reason"
 
 # Statements that bring an older database up to each version, in order.
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
@@ -31,6 +43,40 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
     3: (),  # session_window is created by the CREATE statements; rebuilt from samples
     4: ("ALTER TABLE session_window ADD COLUMN covered_s INTEGER NOT NULL DEFAULT 0",),
     5: ("ALTER TABLE sample ADD COLUMN keysig TEXT",),  # backfilled below
+    # Credit grants used to be stored as quota windows; the table itself is created by
+    # the CREATE statements. Only the mis-stored rows go, and only for grants we know by name.
+    6: (
+        "DELETE FROM quota WHERE window IN ("
+        + ",".join(f"'{key}'" for key in KNOWN_GRANT_KEYS)
+        + ")",
+    ),
+    7: (),  # surface_share is created by the CREATE statements
+    8: (),  # update_check is created by the CREATE statements
+    9: (),  # plan is created by the CREATE statements
+    # The event id is the /api/events cursor. A bare rowid may be renumbered by VACUUM,
+    # so the table is rebuilt with an explicit, never-reused key that keeps every rowid.
+    10: (
+        "DROP TABLE IF EXISTS event_v10",
+        "CREATE TABLE event_v10 (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "ts INTEGER NOT NULL, kind TEXT NOT NULL, detail TEXT NOT NULL)",
+        "INSERT INTO event_v10 (id, ts, kind, detail) SELECT rowid, ts, kind, detail FROM event",
+        "DROP TABLE event",
+        "ALTER TABLE event_v10 RENAME TO event",
+        "CREATE INDEX IF NOT EXISTS event_ts ON event (ts)",
+    ),
+    # credit_grant used to get a row per poll. Keep the first row of each run of identical
+    # rows per key; the (key, ts) index is created by the CREATE statements.
+    11: (
+        "DELETE FROM credit_grant WHERE rowid IN (SELECT rid FROM ("
+        "SELECT rowid AS rid, ROW_NUMBER() OVER w AS n, "
+        "label = LAG(label) OVER w AND used_minor = LAG(used_minor) OVER w "
+        "AND limit_minor = LAG(limit_minor) OVER w "
+        "AND remaining_minor = LAG(remaining_minor) OVER w "
+        "AND expires_at IS LAG(expires_at) OVER w "
+        "AND locked_reason IS LAG(locked_reason) OVER w AS same "
+        "FROM credit_grant WINDOW w AS (PARTITION BY key ORDER BY ts)"
+        ") WHERE n > 1 AND same)",
+    ),
 }
 
 _SCHEMA = """
@@ -97,14 +143,71 @@ CREATE TABLE IF NOT EXISTS session_window (
     deltas TEXT NOT NULL,
     covered_s INTEGER NOT NULL DEFAULT 0
 );
--- detected climbs, threshold crossings, poll failures
+-- a credit grant when it changes, plus one row a day; money in minor units of USD
+CREATE TABLE IF NOT EXISTS credit_grant (
+    ts INTEGER NOT NULL,
+    key TEXT NOT NULL,
+    label TEXT NOT NULL,
+    used_minor INTEGER NOT NULL,
+    limit_minor INTEGER NOT NULL,
+    remaining_minor INTEGER NOT NULL,
+    expires_at TEXT,
+    locked_reason TEXT,
+    PRIMARY KEY (ts, key)
+);
+CREATE INDEX IF NOT EXISTS credit_grant_key_ts ON credit_grant (key, ts);
+-- the vendor's weekly split by surface; one row per surface, only when a value changes
+CREATE TABLE IF NOT EXISTS surface_share (
+    ts INTEGER NOT NULL,
+    window_started_at TEXT,
+    key TEXT NOT NULL,
+    label TEXT NOT NULL,
+    percent REAL NOT NULL,
+    PRIMARY KEY (ts, key)
+);
+-- the daily PyPI check; one row, overwritten
+CREATE TABLE IF NOT EXISTS update_check (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    checked_ts INTEGER,
+    latest TEXT,
+    error TEXT
+);
+-- the account's plan from /api/bootstrap; one row, overwritten (plan.py says what is kept)
+CREATE TABLE IF NOT EXISTS plan (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    checked_ts INTEGER,
+    plan_label TEXT,
+    plan_tier TEXT,
+    plan_capabilities TEXT,
+    plan_billing_type TEXT,
+    error TEXT
+);
+-- detected climbs, threshold crossings, poll failures; id is the /api/events cursor
 CREATE TABLE IF NOT EXISTS event (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts INTEGER NOT NULL,
     kind TEXT NOT NULL,
     detail TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS event_ts ON event (ts);
 """
+
+
+@dataclass(frozen=True)
+class UpdateCheckRow:
+    checked_ts: int | None
+    latest: str | None
+    error: str | None
+
+
+@dataclass(frozen=True)
+class PlanRow:
+    checked_ts: int | None
+    label: str | None
+    tier: str | None
+    capabilities: str | None  # JSON list
+    billing_type: str | None
+    error: str | None
 
 
 @dataclass(frozen=True)
@@ -137,13 +240,35 @@ def _row_to_quota(row: sqlite3.Row) -> QuotaRow:
 
 
 @dataclass(frozen=True)
+class GrantRow:
+    ts: int
+    key: str
+    label: str
+    used_minor: int
+    limit_minor: int
+    remaining_minor: int
+    expires_at: str | None
+    locked_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class StoredBreakdown:
+    """One stored snapshot of the per-surface split, rows in payload order."""
+
+    ts: int
+    window_started_at: str | None
+    rows: list[SurfaceShare]
+
+
+@dataclass(frozen=True)
 class EventRow:
     ts: int
     kind: str
     detail: str
+    id: int | None = None  # ascending in insertion order, never reused
 
     def as_dict(self) -> dict[str, Any]:
-        return {"ts": self.ts, "kind": self.kind, "detail": self.detail}
+        return {"id": self.id, "ts": self.ts, "kind": self.kind, "detail": self.detail}
 
 
 _SESSION_UPSERT = (
@@ -166,6 +291,23 @@ def _session_row(w: Any) -> tuple[Any, ...]:
         json.dumps({k: d.as_dict() for k, d in w.deltas.items()}),
         w.covered_s,
     )
+
+
+def grant_fields(grant: Any) -> tuple[Any, ...]:
+    """The stored fields of a grant (a ``CreditGrant`` or a ``GrantRow``), for "did it change"."""
+    return (
+        grant.label,
+        grant.used_minor,
+        grant.limit_minor,
+        grant.remaining_minor,
+        grant.expires_at,
+        grant.locked_reason,
+    )
+
+
+def grant_due(prev_ts: int, prev_fields: tuple[Any, ...], ts: int, fields: tuple[Any, ...]) -> bool:
+    """A grant reading is stored when it differs from the row before it, or a day after it."""
+    return fields != prev_fields or ts - prev_ts >= GRANT_HEARTBEAT_S
 
 
 def _backfill_keysig(cur: sqlite3.Cursor) -> None:
@@ -355,6 +497,126 @@ class Store:
             )
         return len(rows)
 
+    def record_grants(self, ts: int, grants: Iterable[CreditGrant]) -> int:
+        """Store each grant that differs from its newest row, or whose newest row is a day old.
+
+        The poller's write: an unchanged grant costs nothing per poll. Returns rows written.
+        """
+        with self._tx() as cur:
+            newest = {
+                r["key"]: r
+                for r in cur.execute(
+                    f"SELECT g.ts, g.key, {_GRANT_COLUMNS} FROM credit_grant g "
+                    "JOIN (SELECT key, MAX(ts) AS ts FROM credit_grant GROUP BY key) m "
+                    "ON g.key = m.key AND g.ts = m.ts"
+                ).fetchall()
+            }
+        due = [
+            g
+            for g in grants
+            if (row := newest.get(g.key)) is None
+            or grant_due(row["ts"], grant_fields(GrantRow(**dict(row))), ts, grant_fields(g))
+        ]
+        return self.insert_grants(ts, due)
+
+    def insert_grants(self, ts: int, grants: Iterable[CreditGrant]) -> int:
+        """Write these grant rows as given (the backfill decides which for itself)."""
+        rows = [
+            (
+                ts,
+                g.key,
+                g.label,
+                g.used_minor,
+                g.limit_minor,
+                g.remaining_minor,
+                g.expires_at,
+                g.locked_reason,
+            )
+            for g in grants
+        ]
+        if not rows:
+            return 0
+        with self._tx() as cur:
+            cur.executemany(
+                "INSERT OR REPLACE INTO credit_grant "
+                "(ts, key, label, used_minor, limit_minor, remaining_minor, expires_at, "
+                "locked_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                rows,
+            )
+        return len(rows)
+
+    def delete_quota_window(self, window: str) -> int:
+        """Remove every quota row stored under ``window``. Returns the count removed.
+
+        For a key the parser classifies as a credit grant: an older parser (or another
+        process with one) stored it as a window, and a grant is never a window.
+        Idempotent, and one index seek when there is nothing to remove.
+        """
+        with self._tx() as cur:
+            cur.execute("DELETE FROM quota WHERE window = ?", (window,))
+            return cur.rowcount
+
+    def record_breakdown(
+        self, ts: int, breakdown: SurfaceBreakdown | None, *, force: bool = False
+    ) -> int:
+        """Store the split only when a percent differs from the latest one for that week.
+
+        ``force`` skips the comparison (the backfill has already done it). Returns the number
+        of rows written (0 when unchanged or absent).
+        """
+        if breakdown is None or not breakdown.rows:
+            return 0
+        with self._tx() as cur:
+            latest = cur.execute(
+                "SELECT MAX(ts) AS ts FROM surface_share WHERE window_started_at IS ?",
+                (breakdown.window_started_at,),
+            ).fetchone()["ts"]
+            if latest is not None and not force:
+                have = {
+                    r["key"]: (r["label"], r["percent"])
+                    for r in cur.execute(
+                        "SELECT key, label, percent FROM surface_share WHERE ts = ? "
+                        "AND window_started_at IS ?",
+                        (latest, breakdown.window_started_at),
+                    )
+                }
+                if have == {r.key: (r.label, r.percent) for r in breakdown.rows}:
+                    return 0
+            rows = [
+                (ts, breakdown.window_started_at, r.key, r.label, r.percent) for r in breakdown.rows
+            ]
+            cur.executemany(
+                "INSERT OR REPLACE INTO surface_share "
+                "(ts, window_started_at, key, label, percent) VALUES (?, ?, ?, ?, ?)",
+                rows,
+            )
+        return len(rows)
+
+    def _breakdown_where(self, where: str, params: tuple[Any, ...]) -> StoredBreakdown | None:
+        with self._tx() as cur:
+            ts_row = cur.execute(
+                f"SELECT MAX(ts) AS ts FROM surface_share WHERE {where}", params
+            ).fetchone()
+            if ts_row["ts"] is None:
+                return None
+            rows = cur.execute(
+                "SELECT window_started_at, key, label, percent FROM surface_share "
+                f"WHERE ts = ? AND {where} ORDER BY rowid",
+                (ts_row["ts"], *params),
+            ).fetchall()
+        return StoredBreakdown(
+            ts_row["ts"],
+            rows[0]["window_started_at"],
+            [SurfaceShare(r["key"], r["label"], r["percent"]) for r in rows],
+        )
+
+    def latest_breakdown(self) -> StoredBreakdown | None:
+        return self._breakdown_where("1 = 1", ())
+
+    def breakdown_at_close(self, window_started_at: str | None) -> StoredBreakdown | None:
+        """The last split stored for that week: what it looked like when the week closed."""
+        return self._breakdown_where("window_started_at IS ?", (window_started_at,))
+
     def record_overage(self, ts: int, spend: SpendReading) -> None:
         with self._tx() as cur:
             cur.execute(
@@ -369,6 +631,67 @@ class Store:
                 "INSERT INTO event (ts, kind, detail) VALUES (?, ?, ?)",
                 (ts if ts is not None else now_ts(), kind, detail),
             )
+
+    def has_event(self, kind: str, detail: str) -> bool:
+        with self._tx() as cur:
+            row = cur.execute(
+                "SELECT 1 FROM event WHERE kind = ? AND detail = ? LIMIT 1", (kind, detail)
+            ).fetchone()
+        return row is not None
+
+    def read_update_check(self) -> UpdateCheckRow | None:
+        with self._tx() as cur:
+            row = cur.execute(
+                "SELECT checked_ts, latest, error FROM update_check WHERE id = 1"
+            ).fetchone()
+        return None if row is None else UpdateCheckRow(row[0], row[1], row[2])
+
+    def write_update_check(self, checked_ts: int, latest: str | None, error: str | None) -> None:
+        with self._tx() as cur:
+            cur.execute(
+                "INSERT OR REPLACE INTO update_check (id, checked_ts, latest, error) "
+                "VALUES (1, ?, ?, ?)",
+                (checked_ts, latest, error),
+            )
+
+    def read_plan(self) -> PlanRow | None:
+        with self._tx() as cur:
+            row = cur.execute(
+                "SELECT checked_ts, plan_label, plan_tier, plan_capabilities, plan_billing_type, "
+                "error FROM plan WHERE id = 1"
+            ).fetchone()
+        return None if row is None else PlanRow(*row)
+
+    def write_plan(
+        self,
+        checked_ts: int,
+        label: str | None,
+        tier: str | None,
+        capabilities: str | None,
+        billing_type: str | None,
+        error: str | None,
+    ) -> None:
+        with self._tx() as cur:
+            cur.execute(
+                "INSERT OR REPLACE INTO plan (id, checked_ts, plan_label, plan_tier, "
+                "plan_capabilities, plan_billing_type, error) VALUES (1, ?, ?, ?, ?, ?, ?)",
+                (checked_ts, label, tier, capabilities, billing_type, error),
+            )
+
+    def delete_events(self, kind: str, timestamps: Sequence[int]) -> int:
+        """Remove events of ``kind`` at these timestamps. Returns the count removed.
+
+        For a derived event whose *shape* changed and must be recomputed -- the backfill
+        upgrades stale ``week_reset`` rows this way rather than leaving two schemas in the
+        table. Nothing else is touched.
+        """
+        stamps = sorted({int(t) for t in timestamps})
+        if not stamps:
+            return 0
+        marks = ",".join("?" * len(stamps))
+        with self._tx() as cur:
+            cur.execute(f"DELETE FROM event WHERE kind = ? AND ts IN ({marks})", (kind, *stamps))
+            return cur.rowcount
 
     def replace_sessions(self, windows: Iterable[Any], derivable_from: int | None = None) -> None:
         """Replace the derived session windows in one transaction (idempotent).
@@ -430,6 +753,18 @@ class Store:
             ).fetchall()
         return [_row_to_quota(r) for r in rows]
 
+    def recent_poll_ts(self, limit: int) -> list[int]:
+        """The timestamps of the newest ``limit`` polls that stored a reading, newest first.
+
+        Every reading of one poll shares its ``ts``, so a distinct ``ts`` is one good
+        poll. Read from the primary key's leading column: no scan.
+        """
+        with self._tx() as cur:
+            rows = cur.execute(
+                "SELECT DISTINCT ts FROM quota ORDER BY ts DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [int(r["ts"]) for r in rows]
+
     def latest_quota_before(self, ts: int) -> list[QuotaRow]:
         """Most recent reading for every window strictly before ``ts``.
 
@@ -470,6 +805,17 @@ class Store:
             rows = cur.execute("SELECT DISTINCT window FROM quota ORDER BY window").fetchall()
         return [r["window"] for r in rows]
 
+    def latest_grants(self) -> list[GrantRow]:
+        """Most recent reading for every grant ever seen, by key."""
+        with self._tx() as cur:
+            rows = cur.execute(
+                "SELECT g.ts, g.key, g.label, g.used_minor, g.limit_minor, g.remaining_minor, "
+                "g.expires_at, g.locked_reason FROM credit_grant g "
+                "JOIN (SELECT key, MAX(ts) AS ts FROM credit_grant GROUP BY key) m "
+                "ON g.key = m.key AND g.ts = m.ts ORDER BY g.key"
+            ).fetchall()
+        return [GrantRow(**dict(r)) for r in rows]
+
     def latest_overage(self) -> dict[str, Any] | None:
         with self._tx() as cur:
             row = cur.execute(
@@ -497,12 +843,31 @@ class Store:
         return [OverageRow(**dict(r)) for r in rows]
 
     def recent_events(self, limit: int = 20, kind: str | None = None) -> list[EventRow]:
-        sql = "SELECT ts, kind, detail FROM event"
+        sql = "SELECT id, ts, kind, detail FROM event"
         params: list[Any] = []
         if kind is not None:
             sql += " WHERE kind = ?"
             params.append(kind)
-        sql += " ORDER BY ts DESC, rowid DESC LIMIT ?"
+        sql += " ORDER BY ts DESC, id DESC LIMIT ?"
+        params.append(limit)
+        with self._tx() as cur:
+            rows = cur.execute(sql, params).fetchall()
+        return [EventRow(**dict(r)) for r in rows]
+
+    def events_after(
+        self, after_id: int, limit: int = 50, kind: str | None = None
+    ) -> list[EventRow]:
+        """Events with ``id > after_id`` in the order they were written, for a follower.
+
+        By id, not ts: a ``week_reset`` is written back-dated to the week's close, and
+        two events can share a ts, so a ts cursor can step past either for good.
+        """
+        sql = "SELECT id, ts, kind, detail FROM event WHERE id > ?"
+        params: list[Any] = [after_id]
+        if kind is not None:
+            sql += " AND kind = ?"
+            params.append(kind)
+        sql += " ORDER BY id ASC LIMIT ?"
         params.append(limit)
         with self._tx() as cur:
             rows = cur.execute(sql, params).fetchall()

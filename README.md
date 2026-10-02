@@ -3,7 +3,9 @@
 [![CI](https://github.com/amitshcc/quotalens/actions/workflows/ci.yml/badge.svg)](https://github.com/amitshcc/quotalens/actions/workflows/ci.yml)
 
 Claude tells you what is consuming your quota right now, and then forgets.
-QuotaLens remembers.
+QuotaLens remembers. The short version, with the dashboard, is at
+[quotalens.com](https://quotalens.com); the install page is
+[quotalens.com/install](https://quotalens.com/install).
 
 It is a local, self-hosted monitor for Claude Pro and Max subscription usage. It
 polls your account every minute, keeps the series in a SQLite file you own, and
@@ -20,7 +22,7 @@ cannot raise, extend or bypass a limit. Not affiliated with or endorsed by
 Anthropic, and the endpoints may change without notice. The longer version is in
 [The Terms, stated plainly](#the-terms-stated-plainly).
 
-Status: **v1.0.**
+Status: **v2.0.**
 
 ## Quick start
 
@@ -43,6 +45,9 @@ curl 'http://127.0.0.1:8787/api/budget'                    # the weekly limit, i
 curl 'http://127.0.0.1:8787/metrics'                       # Prometheus, hand rolled
 curl 'http://127.0.0.1:8787/api/export.csv?table=quota'    # or export.json
 curl 'http://127.0.0.1:8787/api/events'                    # threshold crossings, anomalies
+curl 'http://127.0.0.1:8787/api/weeks'                     # one row per weekly reset
+curl 'http://127.0.0.1:8787/api/pace'                      # where this week is heading, with its spread
+quotalens profiles list --json                             # every profile, its port, running or not
 quotalens prune --dry-run                                  # what retention would remove
 quotalens forget                                           # session windows, and their ids
 ```
@@ -129,9 +134,11 @@ is the right default for an unattended instance.
 A row per vendor in the side panel — Claude, Gemini, OpenAI — reading each
 vendor's own status page. The whole row is a link to that page, in a new tab.
 
-**This, and the webhook if you set one, is the only outbound traffic to anyone
-other than your provider**: one plain GET per vendor every five minutes, no
-cookie, no identifier, no query string. It is on by default and `quotalens config set status_row false` turns it
+**This, the daily update check, and the webhook if you set one, are the only
+outbound traffic to anyone other than your provider**: one plain GET per vendor
+every five minutes, no cookie, no identifier, no query string. The update check
+is one GET to pypi.org a day, described under
+[How it reaches claude.ai](#how-it-reaches-claudeai). It is on by default and `quotalens config set status_row false` turns it
 off, which stops the requests rather than hiding the row.
 
 **Gemini is not covered.** Google publishes no status API for AI Studio or the
@@ -159,12 +166,23 @@ quotalens --profile personal start
 quotalens --profile work stop         # leaves the personal one running
 ```
 
+`quotalens profiles list` shows every profile, its port and whether it is running.
+
 Two accounts is two processes and two bookmarks, not an account picker inside
 one process. The port is derived from the name and is the same on every run, so
 `start`, `serve` and `status` all print the URL they landed on — you should
 never have to work out which port a profile got. If something else already holds
 it, the error names the port, the profile and the `--port` flag that settles it.
 `QUOTALENS_PROFILE` works too, for a service unit.
+
+Every profile must be an account that is yours. Anthropic's Consumer Terms
+(section 2) forbid sharing your login or credentials with anyone else or
+making your account available to anyone else, so a profile holding someone
+else's cookie breaks their terms, not just yours. And the
+[Usage Policy](https://www.anthropic.com/legal/aup) forbids using several
+accounts to get around a product's limits. QuotaLens shows each account's
+own state; it does not suggest which account to switch to, and it is not
+meant for rotating work across accounts.
 
 ## Running it as a service
 
@@ -235,6 +253,137 @@ a confident "3.2 sessions left" drawn from two observations is worse than none.
 It is on `/api/budget` and in `/metrics` as `quotalens_weekly_windows_remaining`,
 `quotalens_weekly_window_cost_points` and
 `quotalens_weekly_clock_windows_remaining`.
+
+## Weeks, and what a session cost in each
+
+The budget table answers "how many sessions are left this week". It cannot
+answer the next question: **is a session costing me more of the week than it
+used to?** For that you need last week's answer, and the week before's, and the
+vendor's page forgets them at every reset.
+
+So QuotaLens records each weekly reset as it happens (Monday 01:00 UTC, give or
+take a second) and keeps a ledger under History, one row per week:
+
+```
+Week              Closed at      One full session used          Used   Left unused   Full sessions at reset   Mostly
+21 Sep – 28 Sep   28 Sep 06:30   9% of week · usually 8–10%     99%    1%            8.5                      Claude Code 64%
+14 Sep – 21 Sep   21 Sep 06:30   9% of week · usually 8–11%     100%   0%            8.0                      —
+7 Sep – 14 Sep    14 Sep 06:30   13% of week · usually 10–15%   99%    1%            8.2                      —
+```
+
+**One full session used** is how much of the week a full five-hour session cost
+that week: the median over the week's usable sessions, with its usual range, the
+same estimate the budget table makes, frozen when the week closed. **Full
+sessions at reset** is what the budget table said in the minute before the
+reset. **Mostly** is the surface that used the most of that week (see
+[Where the quota went](#where-the-quota-went)); a dash for weeks before that
+split was collected.
+
+Under the table, one sentence compares the two newest complete weeks: *"A full
+session used 9% of the week, against 9% the week before. The usual ranges
+overlap, so no change can be called."* When the ranges do not overlap it says
+which way the cost moved. It never says a limit was raised: a session getting
+cheaper relative to the week is either the weekly pool growing or the session
+pool being re-weighted, and the ratio cannot tell those apart.
+
+If your database predates this, the ledger is backfilled from the readings
+already stored on the next start. `GET /api/weeks` returns the same rows,
+`table=weeks` exports them, and every reset is also a `week_reset` event.
+
+## The Fable meter is half the pool
+
+On plans with a Fable meter, Anthropic's help centre says Fable models may use
+up to 50% of your weekly limit. So that meter's 100% is half the weekly pool,
+not an empty account, and the meter says **half of weekly pool** beside it. It
+does not turn the page critical on its own.
+
+That is the vendor's rule, not a measurement, so QuotaLens checks it on every
+poll against two things that must hold if it is true: Fable can never be more
+than twice the all-models figure at any reading, and over a session window it
+can never climb more than twice what the all-models meter did (each with a
+point of slack for whole-percent rounding). If either fails, a
+`subcap_violation` event is recorded and the note under the budget table says
+the rule may not hold for your account.
+
+## Where the week is heading
+
+Under the budget table, one line projects where **Weekly — all models** lands at
+the reset: *"At this pace the week ends near 93% (81–100%)"*, or *"At this pace
+the week runs out around Thu 14:00 (Wed 22:00 – not before the reset)"*. It
+always carries its range, and it is labelled an estimate.
+
+The projection is the week so far plus what your recent complete weeks went on
+to use from the same hour to their reset. That was chosen by back-testing three
+methods against real weeks; the straight line from the week so far missed by
+three times as much, because most weeks start slowly and finish hard. It stays hidden for the
+first 24 hours of a week and until there is one complete week to learn from.
+
+On the **this week** range the chart also draws last week's all-models line,
+dashed and muted, under this week's, so "am I ahead of last week" is a glance.
+The **vs last week** chip turns it off.
+
+After Weeks, **When you use it** is a 7 × 24 grid: weekday by local hour, each
+cell the average all-models points gained in that hour over the last four
+complete weeks. It is grey on purpose; nothing about using your quota at 3 am is
+an alarm. An hour the collector missed is left out of the average rather than
+counted as zero. It needs two complete weeks and says so until then.
+
+`GET /api/pace` and `GET /api/heatmap` return both.
+
+## Where the quota went
+
+Since late September 2026 the usage payload carries Anthropic's own split of the
+week's usage by surface: Claude Code, Chats, Cowork, Other. QuotaLens stores it
+(a row only when a share changes) and shows it as one stacked bar and a table:
+
+```
+Surface       Share of this week   ≈ of the week's limit
+Claude Code   71%                  ≈ 44%
+Chats         22%                  ≈ 14%
+Cowork         7%                  ≈ 4%
+```
+
+The shares are the vendor's and add up to the week's usage, not to the limit.
+The second column multiplies each share by the all-models meter to say roughly
+how much of the limit it took; that is an estimate and is labelled as one. For
+which skill, subagent or MCP server inside Claude Code, `claude /usage` still
+does it better, and the section says so in one line.
+
+`GET /api/breakdown` returns the split, `table=surfaces` exports its history,
+and the Weeks ledger's **Mostly** column is its top surface at each week's close.
+
+## The cloud session credit
+
+Some accounts carry a promotional dollar credit for Claude Code cloud sessions
+($250 on Max, $100 on Pro in September 2026), with an expiry date. It arrives in
+the same payload as the quota windows, but it is not one: it never resets and is
+not part of any weekly limit. QuotaLens keeps it out of the chart, the budget,
+Weeks and the boost detector, and shows it on its own under Usage credits:
+
+```
+Cloud session credit    $21.29 of $250
+$228.71 left · expires 4 Nov
+```
+
+Seven days and again one day before the expiry, while money is left on it, it
+records an event and, if desktop notifications are on, sends one. After the
+expiry it reads "expired" for a week, then leaves the page.
+`GET /api/credits` returns it in dollars, `table=credits` exports it, and the
+events are `credit_grant_seen` and `credit_grant_expiring`.
+
+## Your plan
+
+The header shows the plan as a muted label after the name, **QuotaLens** Max 5x
+(or Max 20x, Pro, Team, Enterprise, Free), and About has a Plan row. The plan is not in the usage payload; it comes
+from `/api/bootstrap`, asked on the first good poll after start and then once a
+day. Only three fields of that response are kept: the organisation's
+capabilities, its rate-limit tier and its billing type. No names, no emails, no
+ids. A failed fetch keeps the last plan it knew and never fails a poll.
+
+It is informational only. Nothing on the page changes with the plan: the meters
+are whatever the readings contain, because a reading cannot be out of date and
+a plan label can. A Pro account, which has no Fable meter, simply shows none.
+`/api/health` carries it as `plan`.
 
 ## When a limit is raised
 
@@ -310,6 +459,11 @@ click a series' end label to hide it, pick the burn-rate lookback, set
 auto-refresh, and force a poll (one per 10 seconds). All of it works with
 JavaScript disabled as plain links and forms.
 
+Above the chart a row of chips picks the series: **All**, **Session**,
+**Weekly all**, and one per model meter your plan has. The choice is remembered
+in the browser. The **this week** and **last week** ranges run Monday 01:00 UTC
+to Monday 01:00 UTC, the vendor's own weekly reset, not your calendar week.
+
 The top of the page answers the one question the dashboard exists for: will
 the session window run out before it resets? Beside the burn rate sit a ticking
 countdown to the reset, the headroom left, and the sustainable rate, the points
@@ -352,6 +506,35 @@ valid session cookie, so QuotaLens talks to claude.ai through
 [`curl_cffi`](https://github.com/lexiforest/curl_cffi), which impersonates a
 browser's TLS and HTTP/2 fingerprint. If you ever see a `blocked` state on
 `/api/health`, try `QUOTALENS_IMPERSONATE=safari` (default `chrome`).
+
+Every poll reads your organisation's usage. The spend-limit endpoint is read
+once at start, and again only on a poll whose usage payload lacks the spend
+figures. Once a day it also reads `/api/bootstrap` for [your plan](#your-plan).
+
+Once a day it asks pypi.org for the latest version (`User-Agent:
+quotalens/<version>`, nothing else). Turn it off in Settings or with
+`QUOTALENS_NO_UPDATE_CHECK=1`. It never updates itself.
+
+## About and updates
+
+`/about` (the footer's version number links to it) shows the installed version,
+the latest one PyPI reported and when it was last asked, the Python and install
+method, the data directory, database, profile and port, and the links. **Check
+for updates** asks now; it skips the daily schedule but not a one-minute limit
+between asks. When a newer release exists the footer adds "X available" and the
+settings gear gets a small neutral dot. No banner, no colour.
+
+The page shows the command to run for how you installed it (`pipx upgrade
+quotalens`, `uv tool upgrade quotalens` or `pip install -U quotalens`); QuotaLens
+never runs it. A failed check (offline, PyPI down) is recorded, shown as
+"Couldn't reach PyPI at 14:05", and retried at the next daily slot; it is never
+an alert. Only plain release numbers are compared (`2.0.1` over `2.0.0`);
+pre-releases are ignored.
+
+`GET /api/version` returns `{current, latest, checked_ts, error,
+update_available, upgrade_command}` from what was last stored, and
+`POST /api/version/check` asks now. `/api/health` also carries `latest_version`
+and `update_checked_ts`.
 
 ## Security note
 
@@ -540,6 +723,11 @@ Two facts that bear on the risk, neither of which changes the clause:
 
 You are the one accepting that risk, not me. Decide with the clause in front of
 you.
+
+Two more clauses matter if you run more than one profile: section 2 of the
+same Terms (your credentials are yours alone) and the Usage Policy's rule
+against using multiple accounts to circumvent product restrictions. See
+[Two accounts](#two-accounts).
 
 Unofficial, and not affiliated with or endorsed by Anthropic. It uses
 undocumented endpoints that may change without notice, and it only observes: it

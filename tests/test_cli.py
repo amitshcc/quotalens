@@ -215,3 +215,67 @@ def test_scratch_data_dir_implies_a_scratch_database(monkeypatch, tmp_path) -> N
     argv = ["--data-dir", str(tmp_path), "serve", "--db", str(tmp_path / "x.db")]
     cli.main(argv, secrets=MemorySecretStore(COOKIE))
     assert seen["db"] == tmp_path / "x.db"
+
+
+def _two_profiles(tmp_path):
+    (tmp_path / "quotalens.db").touch()
+    (tmp_path / "quotalens-work.db").touch()
+    (tmp_path / "quotalens-work.db-wal").touch()
+    (tmp_path / "config-work.json").write_text("{}")
+    return tmp_path
+
+
+def test_profiles_list_two_profiles(tmp_path, capsys) -> None:
+    data = _two_profiles(tmp_path)
+    assert cli.main(["--data-dir", str(data), "profiles", "list"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].split() == ["PROFILE", "PORT", "STATE", "DB"]
+    assert len(lines) == 3
+    default_row, work_row = lines[1].split(), lines[2].split()
+    assert default_row[:3] == ["default", str(config.default_port("")), "stopped"]
+    assert default_row[3] == str(data / "quotalens.db")
+    assert work_row[:3] == ["work", str(config.default_port("work")), "stopped"]
+    assert work_row[3] == str(data / "quotalens-work.db")
+
+
+def test_profiles_list_json(tmp_path, capsys, monkeypatch) -> None:
+    import json
+
+    from quotalens import service
+
+    data = _two_profiles(tmp_path)
+    service.write_runtime(data, 9123, 60, "work")
+    (data / "quotalens-work.pid").write_text(str(os.getpid()))
+
+    def dead(url, timeout_s=3.0):
+        raise OSError("refused")
+
+    monkeypatch.setattr(service, "fetch_json", dead)
+    # the health fetch default is bound at import, so patch the module-level name used
+    from quotalens import profiles
+
+    monkeypatch.setattr(
+        profiles,
+        "list_profiles",
+        lambda d: [profiles.profile_info(d, n, dead) for n in ("", "work")],
+    )
+    assert cli.main(["--data-dir", str(data), "profiles", "list", "--json"]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert [set(r) for r in rows] == [{"profile", "port", "state", "db_path"}] * 2
+    assert rows[0]["profile"] == "default" and rows[0]["state"] == "stopped"
+    assert rows[1] == {
+        "profile": "work",
+        "port": 9123,
+        "state": "stalled",
+        "db_path": str(data / "quotalens-work.db"),
+    }
+
+
+def test_profiles_running_when_health_answers(tmp_path) -> None:
+    from quotalens import profiles, service
+
+    data = _two_profiles(tmp_path)
+    service.write_runtime(data, 9123, 60, "work")
+    (data / "quotalens-work.pid").write_text(str(os.getpid()))
+    info = profiles.profile_info(data, "work", lambda url, timeout_s=3.0: {"status": "ok"})
+    assert (info.state, info.port) == ("running", 9123)

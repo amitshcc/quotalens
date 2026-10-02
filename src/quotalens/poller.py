@@ -14,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from quotalens import credits, notify, retention
+from quotalens import credits, grants, notify, plan, retention, subcap, updates, weeks
 from quotalens.alerts import (
     ALERT_KIND,
     CLEARED_KIND,
@@ -35,9 +35,21 @@ from quotalens.client import (
     RateLimitedError,
 )
 from quotalens.config import PRUNE_EVERY_S, Settings
-from quotalens.parse import ParseError, SpendReading, UsageParse, parse_spend, parse_usage
+from quotalens.parse import (
+    GRANT_OUT_OF_RANGE,
+    ParseError,
+    SpendReading,
+    UsageParse,
+    parse_spend,
+    parse_usage,
+)
 from quotalens.secrets import Redactor, SecretStore, SecretStoreError
-from quotalens.sessions import MODEL_VIOLATION_KIND, RATE_WINDOW, reset_model_violation
+from quotalens.sessions import (
+    MODEL_VIOLATION_KIND,
+    RATE_WINDOW,
+    reset_model_violation,
+    window_from_row,
+)
 from quotalens.sessions import rebuild_recent as rebuild_recent_sessions
 from quotalens.store import QuotaRow, Store
 
@@ -209,6 +221,9 @@ class Poller:
         self._task: asyncio.Task[None] | None = None
         self._lock: asyncio.Lock | None = None  # created lazily on the running loop
         self._last_forced_ts: float | None = None
+        self._started_ts = int(clock())
+        self._update_task: asyncio.Task[Any] | None = None
+        self._plan_fetched = False  # the first good poll after start always asks
 
     def _default_factory(self, cookie: str) -> ClaudeClient:
         return ClaudeClient(
@@ -274,6 +289,7 @@ class Poller:
                 log.exception("poll loop error")
                 delay = self.schedule.on_failure()
             self.status.next_poll_ts = int(self._clock() + delay)
+            self._maybe_check_updates(int(self._clock()))
             with contextlib.suppress(asyncio.TimeoutError, TimeoutError):
                 await asyncio.wait_for(self._stop.wait(), timeout=delay)
 
@@ -353,6 +369,9 @@ class Poller:
         # the real one was observed across six and a half hours of downtime.
         previous = self._store.latest_quota()
         self._store.record_quota(now, parsed.readings)
+        self._store.record_grants(now, parsed.grants)
+        self._remove_misfiled_grants(now, parsed)
+        self._store.record_breakdown(now, parsed.breakdown)
         self._note_diagnostics(parsed, now)
         self._check_boost(now, previous, parsed)
 
@@ -369,8 +388,12 @@ class Poller:
         for name, check in (
             ("reset_model", self._check_reset_model),
             ("threshold", self._check_threshold),
+            ("week_reset", lambda n, pa: self._check_week_reset(n, previous, pa)),
+            ("subcap", self._check_subcap),
             ("notify", lambda n, pa: self._check_notify(n, previous, pa)),
             ("credits", lambda n, _pa: self._check_credits(n)),
+            ("grants", lambda n, pa: self._check_grants(n, pa)),
+            ("windows", lambda n, _pa: self._check_gone_windows(n)),
         ):
             try:
                 check(now, parsed)
@@ -378,6 +401,7 @@ class Poller:
                 detail = self._redactor.redact(f"{name}: {type(exc).__name__}: {exc}")
                 self._store.record_event("post_poll_failed", detail, ts=now)
                 log.warning("post-poll check failed: %s", detail)
+        await self._maybe_refresh_plan(client, now)
         self._maybe_prune(now)
 
         self.status.state = "ok"
@@ -386,6 +410,60 @@ class Poller:
         self.status.polls_ok += 1
         log.info("poll ok: %d readings", len(parsed.readings))
         return self.schedule.on_success()
+
+    def _remove_misfiled_grants(self, now: int, parsed: UsageParse) -> None:
+        """Delete quota rows under any key this poll classified as a credit grant.
+
+        Not only a migration: any writer with an older parser (a second process on the
+        same database) can store a grant as a window again at any time.
+        """
+        for grant in parsed.grants:
+            removed = self._store.delete_quota_window(grant.key)
+            if removed:
+                # The label, not the key: the vendor's codename is what this cleans off the page.
+                detail = f"{grant.label}: removed {removed} rows stored as a quota window"
+                self._store.record_event("grant_rows_removed", detail, ts=now)
+                log.info("removed misfiled grant rows: %s", detail)
+
+    def _check_gone_windows(self, now: int) -> None:
+        """One ``window_gone`` when a window stops arriving, one ``window_back`` if it returns.
+
+        The rule is the dashboard's (:func:`quotalens.dashboard.current_windows`), so the
+        event and the meter vanishing are one conclusion. A window's state is its newest
+        gone/back event; none means it has never been gone.
+        """
+        from quotalens.dashboard import (
+            GONE_AFTER_POLLS,
+            WINDOW_BACK_KIND,
+            WINDOW_GONE_KIND,
+            current_windows,
+            display_label,
+        )
+
+        seen = self._store.latest_quota()
+        polls = self._store.recent_poll_ts(GONE_AFTER_POLLS)
+        current = {r.window for r in current_windows(seen, polls)}
+        marks = self._store.query(
+            "SELECT kind, detail FROM event WHERE kind IN (?, ?) ORDER BY id",
+            (WINDOW_GONE_KIND, WINDOW_BACK_KIND),
+        )
+        was_gone = {
+            str(m["detail"]).split(": ", 1)[0]: m["kind"] == WINDOW_GONE_KIND for m in marks
+        }
+        for row in seen:
+            gone = row.window not in current
+            if gone == was_gone.get(row.window, False):
+                continue
+            name = display_label(row.window, row.label)
+            if gone:
+                kind = WINDOW_GONE_KIND
+                detail = (
+                    f"{row.window}: {name} stopped arriving, last reading {_local_clock(row.ts)}"
+                )
+            else:
+                kind, detail = WINDOW_BACK_KIND, f"{row.window}: {name} is arriving again"
+            self._store.record_event(kind, detail, ts=now)
+            log.info("%s: %s", kind, detail)
 
     def _check_boost(self, now: int, previous: list[QuotaRow], parsed: UsageParse) -> None:
         """Record a raised limit once, where the readings arrive.
@@ -400,6 +478,48 @@ class Poller:
             log.info("quota boost: %s", boost.detail())
             if boost.window == RATE_WINDOW:
                 self._rate_window_boosted = True
+
+    def _check_week_reset(self, now: int, previous: list[QuotaRow], parsed: UsageParse) -> None:
+        """Record each weekly window's reset once, with the just-closed week's cost.
+
+        Like ``_check_boost``, detected here so the ledger, the API and the export read
+        one conclusion. A reading the parser had to recover is not trusted enough to
+        pin a week's cost on, so the generic fallback is skipped.
+        """
+        for reset in weeks.record_live(
+            self._store, previous, parsed.readings, now, not parsed.fallback_used
+        ):
+            log.info("week reset: %s closed at %s", reset.window, reset.closed_at)
+
+    def _check_subcap(self, now: int, parsed: UsageParse) -> None:
+        """Verify the 'Fable's 100% is half of weekly' model against this poll's data.
+
+        Invariant 1 uses the current readings; invariant 2 uses the current session
+        window's deltas. A violation is recorded (once per window per day) and surfaced in
+        Diagnostics; if it ever fires, the budget note stops claiming the rule holds.
+        """
+        all_pct = next((r.pct for r in parsed.readings if r.window == "seven_day"), None)
+        fable_key = next(
+            (
+                r.window
+                for r in parsed.readings
+                if r.window.startswith("limit:") and "fable" in r.window
+            ),
+            None,
+        )
+        if fable_key is None:
+            return  # no Fable meter on this plan: the rule does not apply
+        fable_pct = next((r.pct for r in parsed.readings if r.window == fable_key), None)
+        delta_all = delta_fable = None
+        window_start = now
+        rows = self._store.sessions(limit=1, order="recent")
+        if rows:
+            window = window_from_row(rows[0])
+            window_start = window.started_at
+            da, df = window.deltas.get("seven_day"), window.deltas.get(fable_key)
+            delta_all = None if da is None or da.reset else da.end - da.start
+            delta_fable = None if df is None or df.reset else df.end - df.start
+        subcap.check(self._store, all_pct, fable_pct, delta_all, delta_fable, window_start, now)
 
     def adopt(self, settings: Settings) -> None:
         """Take a new settings value without restarting.
@@ -474,6 +594,59 @@ class Poller:
                         self.notify_capability.tool or "no tool",
                         crossing.message(),
                     )
+
+    def _check_grants(self, now: int, parsed: UsageParse) -> None:
+        """Record a credit grant the first time it is seen, and its expiry countdown.
+
+        Events are written whether or not a desktop notification can be delivered: the
+        countdown belongs in the events list, and it must not re-fire because delivery
+        failed. Only the tightest due level is announced, so a grant first seen with a
+        day left produces one banner, not two.
+        """
+        if not parsed.grants:
+            return
+        seen_details = [
+            e.detail for e in self._store.recent_events(limit=200, kind=notify.GRANT_SEEN_KIND)
+        ]
+        expiring = [
+            e.detail for e in self._store.recent_events(limit=500, kind=notify.EXPIRING_KIND)
+        ]
+        for grant in parsed.grants:
+            if not any(d.split(":", 1)[0] == grant.key for d in seen_details):
+                ends = f", expires {grant.expires_at}" if grant.expires_at else ""
+                detail = f"{grant.key}: {grant.label} {grants.money(grant.limit_minor, True)}{ends}"
+                self._store.record_event(notify.GRANT_SEEN_KIND, detail, ts=now)
+                seen_details.append(detail)
+            if grant.expires_at is None:
+                continue
+            due = notify.expiry_levels_due(
+                expires_ts=grants.expiry_ts(grant.expires_at),
+                now=now,
+                remaining_minor=grant.remaining_minor,
+                already_fired=notify.fired_expiry_levels(expiring, grant.key, grant.expires_at),
+            )
+            if not due:
+                continue
+            message = grants.expiry_message(grant.label, grant.remaining_minor, grant.expires_at)
+            for level in due:
+                detail = notify.expiry_detail(grant.key, grant.expires_at, level, message)
+                self._store.record_event(notify.EXPIRING_KIND, detail, ts=now)
+                expiring.append(detail)
+            log.info("credit grant expiring: %s", message)
+            if not self._settings.notify or not self.notify_capability.available:
+                continue
+            notify.send(
+                notify.Crossing(
+                    window="credit_grant",
+                    label=grant.label,
+                    threshold=float(min(due)),
+                    pct=grant.pct,
+                    resets_at_text="",
+                    window_key=grant.expires_at,
+                    body=message,
+                ),
+                self.notify_capability,
+            )
 
     def _check_credits(self, now: int) -> None:
         """Record and announce a stretch where usage credits were spent.
@@ -591,6 +764,95 @@ class Poller:
         task = asyncio.create_task(asyncio.to_thread(self.prune_now, now))
         task.add_done_callback(self._prune_finished)
 
+    def _maybe_check_updates(self, now: int) -> None:
+        """Ask PyPI about a newer release, at most daily, never inside a poll.
+
+        Runs after the reading is stored and in a worker thread, so a slow or dead
+        index cannot delay a poll. The first check waits out
+        ``FIRST_CHECK_DELAY_S`` from start. ``updates.check`` never raises; the
+        callback is for anything that somehow does.
+        """
+        if not updates.enabled(self._settings.update_check):
+            return
+        if now - self._started_ts < updates.FIRST_CHECK_DELAY_S:
+            return
+        if self._update_task is not None and not self._update_task.done():
+            return
+        if not updates.due(self._store, now):
+            return
+        task = asyncio.create_task(asyncio.to_thread(updates.check, self._store, now))
+        task.add_done_callback(self._update_finished)
+        self._update_task = task
+
+    async def _maybe_refresh_plan(self, client: ClaudeClient, now: int) -> None:
+        """The plan, on the first good poll after start and then at most daily.
+
+        Inside a poll that has already stored its reading, so ``client.org_id`` is
+        the org usage was read for. ``refresh_plan`` never raises.
+        """
+        if self._plan_fetched:
+            try:
+                row = self._store.read_plan()
+            except Exception as exc:  # never a reason to fail a poll that is already stored
+                log.warning("plan read failed: %s", self._redactor.redact(str(exc)))
+                return
+            if not plan.due(row.checked_ts if row is not None else None, now):
+                return
+        self._plan_fetched = True
+        await self.refresh_plan(client, now)
+
+    async def refresh_plan(
+        self, client: ClaudeClient | None = None, now: int | None = None
+    ) -> plan.Plan | None:
+        """Ask ``/api/bootstrap`` for the plan, store it, return what is now stored.
+
+        Keeps only the active org's capabilities, rate-limit tier and billing type;
+        nothing from bootstrap goes to the ``sample`` table. A failure is logged and
+        stored as ``error`` with the last good plan kept: it never fails a poll and
+        is retried at the next daily slot.
+        """
+        now = int(self._clock()) if now is None else now
+        if client is None:
+            client = await self._client_for_current_cookie()
+            if client is None:
+                return plan.stored(self._store)
+        try:
+            try:
+                data = await client.fetch_bootstrap()
+                found = plan.from_bootstrap(data, client.org_id)
+            except Exception as exc:  # informational: a failure here must cost nothing
+                return self._keep_plan(now, _plan_error(exc))
+            if found is None:  # one odd payload must not wipe a good plan for a day
+                return self._keep_plan(now, "active organization not in /api/bootstrap")
+            self._store.write_plan(
+                now, found.label, found.tier, found.capabilities_json(), found.billing_type, None
+            )
+            return found
+        except Exception as exc:  # the store itself: the reading is in, the poll stays good
+            log.warning("plan refresh failed: %s", self._redactor.redact(str(exc)))
+            return None
+
+    def _keep_plan(self, now: int, error: str) -> plan.Plan | None:
+        """Record the attempt and its error; the last good plan stays."""
+        log.info("plan refresh failed: %s", error)
+        kept = plan.stored(self._store)
+        self._store.write_plan(
+            now,
+            kept.label if kept else None,
+            kept.tier if kept else None,
+            kept.capabilities_json() if kept else None,
+            kept.billing_type if kept else None,
+            error,
+        )
+        return kept
+
+    def _update_finished(self, task: asyncio.Task[Any]) -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            log.warning("update check task failed: %s", self._redactor.redact(str(exc)))
+
     def _prune_finished(self, task: asyncio.Task[None]) -> None:
         self._pruning = False
         if task.cancelled():
@@ -650,12 +912,17 @@ class Poller:
             )
         ignored = frozenset(b.key for b in parsed.ignored)
         if ignored and ignored != self._last_ignored:
-            self._store.record_event(
-                "unrecognised_block",
-                "usage payload has blocks without resets_at, not charted: "
-                + ", ".join(sorted(ignored)),
-                ts=now,
-            )
+            undated = sorted(b.key for b in parsed.ignored if b.reason != GRANT_OUT_OF_RANGE)
+            out_of_range = sorted(b.key for b in parsed.ignored if b.reason == GRANT_OUT_OF_RANGE)
+            for prefix, keys in (
+                ("usage payload has blocks without resets_at, not charted: ", undated),
+                (
+                    "usage payload has credit blocks with an amount out of range, ignored: ",
+                    out_of_range,
+                ),
+            ):
+                if keys:
+                    self._store.record_event("unrecognised_block", prefix + ", ".join(keys), ts=now)
         self._last_ignored = ignored
 
     @staticmethod
@@ -700,6 +967,16 @@ class Poller:
             return
         self._store.record_overage(now, spend)
         self.status.overage_available = True
+
+
+def _plan_error(exc: Exception) -> str:
+    """The error's type and HTTP status only: the vendor's message is not kept.
+
+    Bootstrap is the one response full of personal data, and an error body's text is
+    echoed into the exception by the client; the plan row and the log get neither.
+    """
+    status = getattr(exc, "status", None)
+    return f"{type(exc).__name__} {status}" if status else type(exc).__name__
 
 
 def _reset_clock(resets_at: str | None, now: float | None = None) -> str:

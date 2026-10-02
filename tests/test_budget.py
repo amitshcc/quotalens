@@ -10,6 +10,7 @@ difference to the result is not tested by asserting the result.
 from __future__ import annotations
 
 import time
+from datetime import UTC, datetime
 
 import pytest
 
@@ -19,7 +20,9 @@ from quotalens.budget import (
     WeeklyLimit,
     compute_budget,
     compute_budgets,
+    week_key,
     window_costs,
+    window_costs_by_week,
 )
 from quotalens.runway import MIN_COMPARE_WINDOWS, SESSION_LENGTH_S
 from quotalens.sessions import Delta, SessionWindow
@@ -345,19 +348,173 @@ def test_the_panel_says_session_not_window_in_its_own_words() -> None:
 def test_the_note_names_whichever_of_budget_and_clock_binds() -> None:
     plenty_of_budget = WeeklyLimit("seven_day", "Weekly", 5.0, NOW + 2 * SESSION_LENGTH_S, False)
     html = _panel([plenty_of_budget], clean_history(10.0))
-    assert "the clock is what runs out" in html  # 9.5 sessions of budget, 2 of clock
+    assert "The clock runs out first." in html  # 9.5 sessions of budget, 2 of clock
+    assert "The clock fits 2.0 more sessions" in html
 
     little_budget = WeeklyLimit("seven_day", "Weekly", 95.0, NOW + 20 * SESSION_LENGTH_S, False)
     html = _panel([little_budget], clean_history(10.0))
-    assert "the budget is what runs out" in html  # 0.5 of budget, 20 of clock
-    assert "There is time for 20.0 more sessions" in html
+    assert "The budget runs out first." in html  # 0.5 of budget, 20 of clock
+    assert "The clock fits 20.0 more sessions" in html
+    assert "The budget covers 0.5 at your measured cost." in html
 
 
 def test_the_note_still_gives_the_clock_when_the_budget_is_unknown() -> None:
     html = _panel([limit(75.0)], clean_history(10.0, n=2))
-    assert "There is time for" in html and "runs out" not in html
+    assert "The clock fits" in html and "runs out first" not in html
 
 
 def test_the_sub_cap_constraint_survives_the_rewording() -> None:
     html = _panel([limit(93.0), limit(100.0, "limit:fable", subcap=True)], clean_history(10.0))
     assert "none of the 7% left on Weekly — all models can be used on it" in html
+
+
+def _dual_history(all_cost: float, fable_cost: float, n: int = 5) -> list[SessionWindow]:
+    """``n`` windows that each cost ``all_cost`` to the pool and ``fable_cost`` to Fable."""
+    out = []
+    for i in range(n):
+        started = NOW - (i + 1) * SESSION_LENGTH_S
+        out.append(
+            SessionWindow(
+                started_at=started,
+                ends_at=started + SESSION_LENGTH_S,
+                is_current=False,
+                peak_pct=100.0,
+                final_pct=100.0,
+                samples=300,
+                first_ts=started,
+                last_ts=started + SESSION_LENGTH_S,
+                deltas={
+                    "seven_day": Delta(10.0, 10.0 + all_cost, False),
+                    "limit:fable": Delta(10.0, 10.0 + fable_cost, False),
+                },
+                covered_s=SESSION_LENGTH_S,
+            )
+        )
+    return out
+
+
+def test_the_constraint_names_the_meter_that_binds() -> None:
+    """All-models 7.8 vs Fable 8.7: the all-models meter binds. This pair must not be 'fixed'."""
+    from quotalens.budget import constraint_note
+
+    report = compute_budgets(
+        [limit(22.0), limit(13.0, "limit:fable", subcap=True)], _dual_history(10.0, 10.0), NOW
+    )
+    all_models, fable = report.budgets
+    assert all_models.full_windows == pytest.approx(7.8)
+    assert fable.full_windows == pytest.approx(8.7)
+    note = constraint_note(report.budgets)
+    assert note == (
+        "Weekly — all models is the limit that binds: 7.8 sessions. Fable alone would allow "
+        "8.7, so at your current model mix the Fable cap is not what stops you."
+    )
+
+
+def test_no_constraint_when_a_plan_has_a_single_meter() -> None:
+    """A Pro seat has no Fable meter, so there is nothing to compare and no note."""
+    from quotalens.budget import constraint_note
+
+    report = compute_budgets([limit(50.0)], clean_history(10.0), NOW)
+    assert constraint_note(report.budgets) == ""
+
+
+def test_the_budget_note_only_appears_with_a_fable_meter() -> None:
+    with_fable = _panel(
+        [limit(22.0), limit(13.0, "limit:fable", subcap=True)], _dual_history(10.0, 10.0)
+    )
+    assert "half the pool" in with_fable and "Why the two meters differ" in with_fable
+
+    without_fable = _panel([limit(50.0)], clean_history(10.0))
+    assert "half the pool" not in without_fable
+
+
+def test_the_note_says_unverified_when_the_subcap_check_has_fired() -> None:
+    from quotalens.dashboard import _budget_view
+    from quotalens.render import _budget
+
+    view = _budget_view(
+        compute_budgets(
+            [limit(22.0), limit(13.0, "limit:fable", subcap=True)], _dual_history(10.0, 10.0), NOW
+        ),
+        NOW,
+        subcap_unverified=True,
+    )
+    dash = object.__new__(_dash_type())
+    dash.budget_view = view
+    html = _budget(dash)
+    assert "may not hold for this account" in html
+
+
+def _dash_type():
+    from quotalens.dashboard import Dashboard
+
+    return Dashboard
+
+
+# -- cost per week, not one median for all time -----------------------------------
+
+# A Monday, so the week arithmetic is legible. 2026-01-05 is a Monday.
+MON_A = int(datetime(2026, 1, 5, 1, 0, 0, tzinfo=UTC).timestamp())
+MON_B = MON_A + 7 * 86400
+NOW_WK = MON_B + 30 * 86400  # long after both weeks, so every window is complete
+
+
+def at(started_at: int, weekly_pts: float, *, key: str = "seven_day") -> SessionWindow:
+    """A complete session window run to 100%, starting at ``started_at``."""
+    return SessionWindow(
+        started_at=started_at,
+        ends_at=started_at + SESSION_LENGTH_S,
+        is_current=False,
+        peak_pct=100.0,
+        final_pct=100.0,
+        samples=300,
+        first_ts=started_at,
+        last_ts=started_at + SESSION_LENGTH_S,
+        deltas={key: Delta(10.0, 10.0 + weekly_pts, False)},
+        covered_s=SESSION_LENGTH_S,
+    )
+
+
+def test_windows_are_grouped_by_the_reset_week_they_fall_in() -> None:
+    windows = [at(MON_A + 3600 + i * 20000, 10.0) for i in range(3)]
+    windows += [at(MON_B + 3600 + i * 20000, 20.0) for i in range(2)]
+    by_week = window_costs_by_week(windows, "seven_day", NOW_WK)
+
+    assert set(by_week) == {"2026-01-05", "2026-01-12"}
+    assert [c.per_full_window for c in by_week["2026-01-05"]] == [10.0, 10.0, 10.0]
+    assert [c.per_full_window for c in by_week["2026-01-12"]] == [20.0, 20.0]
+
+
+def test_a_window_that_straddles_a_reset_belongs_to_neither_week() -> None:
+    """Its weekly delta spans two pools, so it costs neither. Dropped, as the analysis did."""
+    inside_a = at(MON_A + 3600, 10.0)
+    straddler = at(MON_B - 3600, 10.0)  # begins in week A, ends after Monday 01:00 in week B
+    by_week = window_costs_by_week([inside_a, straddler], "seven_day", NOW_WK)
+
+    assert week_key(straddler.started_at) != week_key(straddler.ends_at - 1)
+    assert set(by_week) == {"2026-01-05"}
+    assert len(by_week["2026-01-05"]) == 1
+
+
+def test_the_per_window_exclusions_still_apply_within_a_week() -> None:
+    """A reset inside a window is dropped before the week bucket sees it."""
+    good = at(MON_A + 3600, 10.0)
+    started = MON_A + 3600 + SESSION_LENGTH_S + 600
+    reset_inside = SessionWindow(
+        started_at=started,
+        ends_at=started + SESSION_LENGTH_S,
+        is_current=False,
+        peak_pct=100.0,
+        final_pct=100.0,
+        samples=300,
+        first_ts=started,
+        last_ts=started + SESSION_LENGTH_S,
+        deltas={"seven_day": Delta(90.0, 5.0, True)},  # the weekly limit reset inside it
+        covered_s=SESSION_LENGTH_S,
+    )
+    by_week = window_costs_by_week([good, reset_inside], "seven_day", NOW_WK)
+    assert len(by_week["2026-01-05"]) == 1
+
+
+def test_a_week_with_no_costable_windows_is_absent() -> None:
+    assert window_costs_by_week([], "seven_day", NOW_WK) == {}

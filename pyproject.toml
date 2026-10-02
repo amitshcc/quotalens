@@ -1,6 +1,6 @@
 [project]
 name = "quotalens"
-version = "1.0"
+version = "2.0.0"
 description = "QuotaLens: local, self-hosted monitor for Claude subscription quota, with burn rate and history."
 readme = "README.md"
 license = "MIT"
@@ -42,6 +42,13 @@ dev = [
     "quotalens[browser]",
     "ruff==0.16.*",  # same pin the lint job uses; a floating ruff reformats on upgrade
 ]
+
+[project.urls]
+Homepage = "https://quotalens.com"
+Documentation = "https://quotalens.com/install"
+Repository = "https://github.com/amitshcc/quotalens"
+Issues = "https://github.com/amitshcc/quotalens/issues"
+Changelog = "https://github.com/amitshcc/quotalens/releases"
 
 [project.scripts]
 quotalens = "quotalens.cli:main"

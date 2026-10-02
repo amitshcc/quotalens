@@ -4,6 +4,7 @@
   "use strict";
   var root = document.documentElement;
   var KEY = "quotalens-theme";
+  var HIDE_KEY = "quotalens-hide"; // the last series choice, next to the theme
   root.dataset.js = "1"; // progressive enhancement: hides no-script-only controls
   try {
     var saved = localStorage.getItem(KEY);
@@ -25,6 +26,24 @@
   function setQuery(query, push) {
     var url = query ? "/?" + query : "/";
     if (push) history.pushState({ q: query }, "", url); else history.replaceState({ q: query }, "", url);
+    saveHide(query);
+  }
+  /* Persist the series choice next to the theme. Read back only when the URL carries
+     no hide= of its own, so a shared link always wins over the last local choice. */
+  function saveHide(query) {
+    try { localStorage.setItem(HIDE_KEY, new URLSearchParams(query).get("hide") || ""); }
+    catch (err) { /* private mode or blocked storage: the URL is the only state */ }
+  }
+  function restoreHide() {
+    try {
+      var params = new URLSearchParams(currentQuery());
+      if (params.has("hide")) return false;
+      var saved = localStorage.getItem(HIDE_KEY);
+      if (!saved) return false;
+      params.set("hide", saved);
+      navigate("/?" + params.toString(), false);
+      return true;
+    } catch (err) { return false; }
   }
   function fragmentUrl() {
     var q = currentQuery();
@@ -154,6 +173,16 @@
   // list is adding it to "the SPA swallows this click", so check what the link
   // is for before you extend it.
   document.addEventListener("click", function (ev) {
+    // Series chips are handled first, because shift-click is meaningful here (toggle one
+    // series in or out) rather than the new-tab gesture it is for every other link.
+    var chip = ev.target.closest ? ev.target.closest("a.sq") : null;
+    if (chip) {
+      if (ev.metaKey || ev.ctrlKey || ev.button !== 0) return; // still let new-tab clicks through
+      ev.preventDefault();
+      var toggle = chip.dataset.toggleHref;
+      navigate(ev.shiftKey && toggle ? toggle : chip.getAttribute("href"), true);
+      return;
+    }
     var target = ev.target.closest ? ev.target.closest("#t, a.rb, a.el-link, a.sess, th a[data-sort]") : null;
     if (!target) return;
     if (target.id === "t") { toggleTheme(); return; }
@@ -181,6 +210,7 @@
         var body = document.getElementById("sd-body");
         if (!dlg || !body) return;
         body.innerHTML = html;
+        setDialogMode("Settings", SETTINGS_SUB, false);
         if (!dlg.open) dlg.showModal();
       })
       .catch(function () { window.location.href = "/settings"; });
@@ -200,6 +230,54 @@
         var dlg = settingsDialog();
         if (dlg) dlg.close();
         navigate(window.location.pathname + window.location.search, false);
+      })
+      .catch(function () { form.submit(); });
+  }
+
+  /* About in the dialog: the same fragment the page serves. Settings' own Save is
+     disabled while it shows, and openSettings puts it back. */
+  var SETTINGS_SUB = "Changes take effect from the next poll.";
+  function setDialogMode(title, sub, saveDisabled) {
+    var t = document.getElementById("sd-title");
+    var s = document.getElementById("sd-sub");
+    var save = document.querySelector(".sfoot button[form=settings-form]");
+    if (t) t.textContent = title;
+    if (s) s.textContent = sub;
+    if (save) save.disabled = saveDisabled;
+  }
+  function openAbout() {
+    var dlg = settingsDialog();
+    if (!dlg || !dlg.showModal) return false;
+    fetch("/about?fragment=1", { headers: { "X-Requested-With": "fetch" } })
+      .then(function (r) { return r.text(); })
+      .then(function (html) {
+        var dlg2 = settingsDialog();
+        var body = document.getElementById("sd-body");
+        if (!dlg2 || !body) return;
+        body.innerHTML = html;
+        setDialogMode("About", "", true);
+        if (!dlg2.open) dlg2.showModal();
+      })
+      .catch(function () { window.location.href = "/about"; });
+    return true;
+  }
+  document.addEventListener("click", function (ev) {
+    var link = ev.target.closest && ev.target.closest("#about-link, footer a[href='/about']");
+    if (!link) return;
+    if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.button !== 0) return;
+    if (openAbout()) ev.preventDefault();
+  });
+
+  /* About. One fragment serves the page and the dialog; the check is a real form
+     and this only sends it in place, so with no JavaScript it posts and redirects. */
+  function submitAboutCheck(form) {
+    var btn = form.querySelector("button");
+    if (btn) { btn.disabled = true; btn.textContent = "Checking\u2026"; }
+    fetch("/about/check?fragment=1", { method: "POST" })
+      .then(function (r) { return r.text(); })
+      .then(function (html) {
+        var box = document.getElementById("about");
+        if (box) box.outerHTML = html;
       })
       .catch(function () { form.submit(); });
   }
@@ -253,6 +331,11 @@
   });
 
   document.addEventListener("submit", function (ev) {
+    if (ev.target && ev.target.id === "about-check-form") {
+      ev.preventDefault();
+      submitAboutCheck(ev.target);
+      return;
+    }
     var sform = ev.target.closest && ev.target.closest("#sd-body form");
     if (sform) { ev.preventDefault(); submitSettings(sform); return; }
     if (ev.target && ev.target.id === "poll-form") {
@@ -273,6 +356,7 @@
   document.addEventListener("DOMContentLoaded", function () {
     adoptServerCooldown();
     setInterval(function () { tick(); applyCooldown(); }, 1000);
+    restoreHide(); // apply the last series choice when the URL does not carry its own
     schedule();
   });
 })();

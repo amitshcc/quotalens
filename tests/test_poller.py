@@ -306,3 +306,61 @@ def test_overage_is_still_fetched_when_the_usage_payload_lacks_spend(
         asyncio.run(poller.poll_once())
     paths = [r.url.path for r in seen]
     assert sum(p.endswith("/overage_spend_limit") for p in paths) == 3  # the only source
+
+
+_GRANT_BLOCK = {
+    "utilization": 8.5,
+    "resets_at": "2026-11-05T07:59:00+00:00",
+    "limit_dollars": 250,
+    "used_dollars": 21.29,
+    "remaining_dollars": 228.71,
+}
+
+
+def test_poll_removes_misfiled_grant_rows(settings, store, secrets) -> None:
+    """A grant key stored as a quota window (by an older parser) goes on the next poll."""
+    from quotalens.parse import QuotaReading
+
+    misfiled = QuotaReading("iguana_necktie", "iguana necktie", 8.5, "2026-11-05T07:59:00+00:00")
+    for ts in (999_000, 999_060, 999_120):
+        store.record_quota(ts, [misfiled])
+    usage = {**USAGE_LIVE_2026_09, "iguana_necktie": _GRANT_BLOCK}
+    poller = _poller(settings, store, secrets, make_handler(usage=usage))
+
+    asyncio.run(poller.poll_once())
+
+    assert poller.status.state == "ok"
+    assert "iguana_necktie" not in store.windows()
+    assert [g.key for g in store.latest_grants()] == ["iguana_necktie"]
+    removed = store.recent_events(kind="grant_rows_removed")
+    assert [(e.ts, e.detail) for e in removed] == [
+        (1_000_000, "Cloud session credit: removed 3 rows stored as a quota window")
+    ]
+
+    asyncio.run(poller.poll_once())  # idempotent: nothing left, no second event
+    assert len(store.recent_events(kind="grant_rows_removed")) == 1
+
+
+def test_poll_with_an_out_of_range_grant_stores_no_grant_and_says_why(
+    settings, store, secrets
+) -> None:
+    from quotalens.dashboard import build_dashboard
+
+    usage = {**USAGE_LIVE_2026_09, "iguana_necktie": {**_GRANT_BLOCK, "limit_dollars": 1e18}}
+    poller = _poller(settings, store, secrets, make_handler(usage=usage))
+
+    asyncio.run(poller.poll_once())
+
+    assert poller.status.state == "ok"
+    assert store.latest_grants() == []
+    assert "iguana_necktie" not in store.windows()
+    assert {"key": "iguana_necktie", "reason": "credit amount out of range"} in (
+        poller.status.ignored_blocks
+    )
+    details = [e.detail for e in store.recent_events(kind="unrecognised_block")]
+    assert (
+        "usage payload has credit blocks with an amount out of range, ignored: iguana_necktie"
+        in details
+    )
+    dash = build_dashboard(settings, store, poller.status, 1_000_000, 20.0)
+    assert "Credit blocks with an amount out of range, ignored: iguana_necktie." in dash.diagnostics

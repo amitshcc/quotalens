@@ -174,6 +174,9 @@ class Settings:
     # None or "" means the user deselected every source. The default for an
     # absent key lives on the ConfigKey, not here. See status.selected_vendors.
     status_vendors: str | None = "claude,openai"
+    # On by default: one GET to pypi.org a day. QUOTALENS_NO_UPDATE_CHECK=1 wins
+    # over this. See quotalens.updates.
+    update_check: bool = True
 
     def with_overrides(self, **kwargs: object) -> Settings:
         """Return a copy with the given non-``None`` fields replaced."""
@@ -346,6 +349,14 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "str",
         "which vendors the status row covers, comma separated",
         lambda _p: "claude,openai",
+    ),
+    ConfigKey(
+        "update_check",
+        "update_check",
+        "UPDATE_CHECK",
+        "bool",
+        "ask pypi.org for the latest version once a day; nothing else is sent",
+        lambda _p: True,
     ),
     ConfigKey(
         "poll_enabled",

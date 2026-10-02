@@ -10,19 +10,29 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timedelta
 from itertools import pairwise
 from typing import Any
 
-from quotalens import credits, retention
+from quotalens import credits, plan, retention, subcap, updates, weeks
 from quotalens.alerts import ALERT_KIND, CLEARED_KIND, standing
 from quotalens.boost import BOOST_KIND, boosted_windows
 from quotalens.boost import recorded as recorded_boosts
-from quotalens.budget import Budget, BudgetReport, WeeklyLimit, compute_budgets
+from quotalens.budget import (
+    Budget,
+    BudgetReport,
+    WeeklyLimit,
+    compute_budgets,
+    week_key,
+    window_costs_by_week,
+)
 from quotalens.burn import BurnResult, burn_rate, min_trusted_span, split_at_resets
 from quotalens.config import Settings
-from quotalens.parse import SpendReading, humanize
+from quotalens.grants import GrantView, build_grant_views
+from quotalens.heatmap import Heatmap, compute_heatmap
+from quotalens.pace import Pace, compute_pace
+from quotalens.parse import GRANT_OUT_OF_RANGE, SpendReading, humanize
 from quotalens.poller import PollerStatus
 from quotalens.runway import HourBar, Runway, compute_runway, hour_strip, median_peak
 from quotalens.sessions import (
@@ -46,6 +56,7 @@ from quotalens.state import (
 )
 from quotalens.status import VendorStatus
 from quotalens.store import QuotaRow, Store
+from quotalens.surfaces import SurfaceSection, build_section, mostly_by_week
 from quotalens.views import (
     LOOKBACKS,
     RANGE_KEYS,
@@ -86,6 +97,11 @@ DISPLAY_LABELS = {
     "seven_day_oauth_apps": "Weekly — OAuth apps",
 }
 SHORT_LABELS = {"five_hour": "Session", "seven_day": "Weekly all"}
+# Last week's weekly-all line under this week's. Its toggle is a ``hide=`` key like a
+# series, so the picker's localStorage entry carries it with no second key.
+GHOST_KEY = "vs-last-week"
+GHOST_WINDOW = "seven_day"
+GHOST_LABEL = "last week"
 EM_DASH = "—"  # a value we do not have, never a zero standing in for unknown
 READOUT_OFF = "off"  # the readout has no value to colour, whatever the reason
 
@@ -129,6 +145,41 @@ def short_label(window: str, stored_label: str | None) -> str:
     if window.startswith("limit:"):
         return "Weekly " + _model_name(window, stored_label)
     return display_label(window, stored_label)
+
+
+# A window that stops arriving (a plan downgrade, a block the vendor retired, a key an
+# older parser misfiled) leaves the current views by itself: gone once it was absent from
+# this many consecutive good polls *and* its newest reading is this old. The session
+# window is exempt -- between sessions it legitimately has no window.
+GONE_AFTER_POLLS = 3
+GONE_AFTER_S = 15 * 60
+WINDOW_GONE_KIND = "window_gone"
+WINDOW_BACK_KIND = "window_back"
+
+
+def current_windows(latest: Sequence[QuotaRow], recent_polls: Sequence[int]) -> list[QuotaRow]:
+    """``latest`` without the windows that have stopped arriving.
+
+    ``recent_polls`` are the timestamps of the newest good polls (any order). Both
+    thresholds are measured against the newest poll, not the clock: a collector that
+    stopped is the epistemic state's business, and must not make every window "gone".
+    One rule for the meters, the budget, the picker, Weeks and subcap, so they cannot
+    disagree about which windows exist; the chart still draws a gone window's history.
+    """
+    polls = sorted(recent_polls, reverse=True)[:GONE_AFTER_POLLS]
+    if len(polls) < GONE_AFTER_POLLS:
+        return list(latest)
+    newest, oldest = polls[0], polls[-1]
+    return [
+        r
+        for r in latest
+        if r.window == RATE_WINDOW or r.ts >= oldest or newest - r.ts <= GONE_AFTER_S
+    ]
+
+
+def current_quota(store: Store) -> list[QuotaRow]:
+    """The newest reading of every window still arriving (see :func:`current_windows`)."""
+    return current_windows(store.latest_quota(), store.recent_poll_ts(GONE_AFTER_POLLS))
 
 
 def assign_slots(windows: list[str]) -> dict[str, int]:
@@ -301,6 +352,8 @@ class ChartView:
     projection_note: str = ""  # why there is none, when the range hides it
     projection_critical: bool = False
     cross: tuple[float, float, str] | None = None  # the 100% crossing, if before the reset
+    ghost: list[str] = field(default_factory=list)  # last week's weekly-all, shifted a week on
+    ghost_end: tuple[float, float] | None = None  # where its end label goes
 
 
 @dataclass
@@ -371,7 +424,33 @@ class BudgetRowView:
 class BudgetView:
     rows: list[BudgetRowView]
     binding: str  # which of budget and clock runs out first, in words
-    constraint: str  # how a spent sub-cap limits the headroom that is left
+    constraint: str  # which meter binds, shown under the table
+    note: str = ""  # the <details> caveat about the Fable half-of-pool model, when present
+
+
+@dataclass
+class WeekRowView:
+    """One week as a ledger row, every number already a string and in the reader's units."""
+
+    week_label: str
+    closed_text: str
+    used_primary: str  # "9% of week": what a full session cost that week (weekly-all median)
+    used_secondary: str  # "usually 8-11% and 13 sessions": p25-p75 and the sample
+    fable_primary: str  # "Fable 9%": only when the plan has a Fable meter, else ""
+    fable_secondary: str  # "usually 4-14% and 13 sessions", else ""
+    used_text: str  # of the weekly pool, at the close
+    left_text: str  # 100 minus closed_pct
+    reset_primary: str  # full sessions the budget table showed at that Monday's reset
+    reset_secondary: str  # "11.1 at last week's rate", the sharper signal
+    is_open: bool  # the current, still-collecting week
+    mostly_text: str = "—"  # top surface at the close, "Cowork 76%"; a dash before collection
+
+
+@dataclass
+class WeeksView:
+    rows: list[WeekRowView]
+    verdict: str
+    note: str  # the <details> caveat: why this never says "limit raised"
 
 
 @dataclass
@@ -380,6 +459,17 @@ class Control:
     label: str
     href: str
     active: bool
+
+
+@dataclass
+class SeriesChip:
+    """A chip above the chart that isolates one series (or, for All, shows every series)."""
+
+    key: str  # the window key, or "" for the All chip
+    label: str
+    href: str  # a plain click: show this series alone (All clears every hide)
+    toggle_href: str  # a shift-click: add or remove this series from what is shown
+    active: bool  # the series is currently visible (All: nothing is hidden)
 
 
 @dataclass
@@ -405,14 +495,27 @@ class Dashboard:
     range_controls: list[Control]
     lookback_controls: list[Control]
     refresh_controls: list[Control]
+    series_chips: list[SeriesChip]
     lookback_s: int
     history: HistoryView
     budget: BudgetReport | None = None  # the weekly limits, in session windows
     budget_view: BudgetView | None = None
+    weeks: WeeksView | None = None  # the ledger: one row per weekly reset
     cooldown_s: int = 0  # seconds until another forced poll is allowed
     events: list[dict[str, Any]] = field(default_factory=list)
     vendor_status: list[VendorStatus] = field(default_factory=list)
+    # The newer release PyPI last reported, or None. Says nothing on its own: it
+    # is a footer link and a dot on the gear, never a banner (WP-32).
+    update_latest: str | None = None
+    # The account's plan by name ("Max 20x", "Pro"), shown beside the mark. Informational
+    # only: nothing on the page branches on it; the readings shape the page (WP-34).
+    plan_label: str | None = None
     alert_standing: bool = False  # a burn alert fired and has not cleared
+    grants: list[GrantView] = field(default_factory=list)  # credit grants, not windows
+    surfaces: SurfaceSection | None = None  # the vendor's weekly split; None keeps the pointer
+    ghost_chip: SeriesChip | None = None  # "vs last week", on the week range when there is one
+    heatmap: Heatmap | None = None  # when in the week weekly-all is used; after Weeks
+    pace: Pace | None = None  # weekly-all at the reset, projected: an estimate
 
 
 # -- builders -------------------------------------------------------------------
@@ -451,6 +554,16 @@ def _display_host(host: str) -> str:
     return "localhost" if host in {"127.0.0.1", "::1"} else host
 
 
+def _plan_label(store: Store) -> str | None:
+    found = plan.stored(store)
+    return plan.named(found.label) if found is not None else None
+
+
+def _update_latest(store: Store) -> str | None:
+    state = updates.stored_state(store)
+    return state.latest if state.available else None
+
+
 def build_dashboard(
     settings: Settings,
     store: Store,
@@ -468,7 +581,10 @@ def build_dashboard(
     refresh_default = max(10, min(settings.poll_interval_s // 2, 30))
     refresh_s = view.refresh_s(refresh_default)
 
-    latest = store.latest_quota()
+    # Every window ever seen draws its history on the chart; only the ones still
+    # arriving get a meter, a chip, a budget row, a Weeks column.
+    seen = store.latest_quota()
+    latest = current_windows(seen, store.recent_poll_ts(GONE_AFTER_POLLS))
     # One conclusion, read from the events the poller wrote, and shared by the chart,
     # the meters, the history rows and the budget's cost estimate. Never re-derived.
     boosts = recorded_boosts(store)
@@ -478,15 +594,33 @@ def build_dashboard(
     # to have a sample straddling that instant, including one that rose.
     boost_windows = {
         row.window: [int(e.ts) for e in boosts if str(e.detail).startswith(row.label or row.window)]
-        for row in latest
+        for row in seen
     }
     order = _window_order(status, latest)
-    slots = assign_slots(order)
+    # Gone windows after the current ones, so a current meter keeps its colour.
+    slots = assign_slots(order + [r.window for r in seen if r.window not in order])
     oldest = store.oldest_ts()
     sessions_all = [window_from_row(r) for r in store.sessions(limit=500, order="recent")]
     current = next((w for w in sessions_all if w.is_current), None)
     session = (current.started_at, current.ends_at) if current else None
-    rng = resolve_range(view, oldest, now, session)
+    this_week, last_week = _weekly_windows(latest)
+    # A weekly-only series selection (session and everything non-weekly hidden) wants the
+    # Monday-to-Monday axis, so an auto range resolves to the current weekly window.
+    visible = [w for w in order if w not in view.hidden]
+    weekly_only = bool(visible) and all(weeks.is_weekly_window(w) for w in visible)
+    rng = resolve_range(
+        view,
+        oldest,
+        now,
+        session,
+        this_week=this_week,
+        last_week=last_week,
+        weekly_only=weekly_only,
+    )
+    # Chips in slot order (Session, Weekly all, then model limits), the order the meters
+    # are in, rather than the payload order the chart happens to receive.
+    chip_order = sorted(order, key=lambda w: slots.get(w, 9))
+    series_chips = _series_chips(chip_order, labels={r.window: r.label for r in latest}, view=view)
     # Fetch a little before the range so the reset split and the burn lookback have context.
     fetch_from = min(rng.start, now - max(lookback_s * 4, HERO_HOURS * 3600))
     if current:
@@ -502,6 +636,8 @@ def build_dashboard(
     # the ranges someone drags around a boost. Used only to complete that step; it is
     # never a point on the trace.
     prior_rows = {row.window: row for row in store.latest_quota_before(rng.start)}
+    ghost_rows = _ghost_rows(store, rng, last_week)
+    ghost_shown = GHOST_KEY not in view.hidden and GHOST_WINDOW not in view.hidden
 
     burns = {w: burn_rate(w, all_rows.get(w, []), lookback_s, now) for w in order}
     rate_burn = burns.get(RATE_WINDOW)
@@ -575,7 +711,7 @@ def build_dashboard(
         else f"The session reading stopped refreshing at {clock(session_row.ts)}.",
     )
     gap_threshold = STALE_AFTER_INTERVALS * settings.poll_interval_s
-    labels = {r.window: r.label for r in latest}
+    labels = {r.window: r.label for r in seen}
     prior_ts = max(
         (r.ts for rows in all_rows.values() for r in rows if r.ts < rng.start), default=None
     )
@@ -598,6 +734,7 @@ def build_dashboard(
         prior_ts,
         boost_windows,
         prior_rows,
+        ghost_rows if ghost_shown else None,
     )
     _mark_sessions(chart, sessions_all, rng, now)
     _mark_credits(chart, credit_runs, rng)
@@ -612,7 +749,7 @@ def build_dashboard(
     )
     page = listed if view.history_all else listed[:HISTORY_ROWS]
     history = _history_view(
-        page, labels, slots, view, settings.poll_interval_s, now, store, boost_ts
+        page, labels, assign_slots(order), view, settings.poll_interval_s, now, store, boost_ts
     )
     history.total = len(sessions_all)
     if len(sessions_all) > HISTORY_ROWS:
@@ -645,11 +782,21 @@ def build_dashboard(
     violation = store.recent_events(limit=1, kind=MODEL_VIOLATION_KIND)
     if violation:
         diagnostics.append(violation[0].detail)
+    subcap_detail = subcap.latest_detail(store) if _fable_key(latest) else None
+    if subcap_detail:
+        diagnostics.append(subcap_detail)
     if chart.projection_note:
         diagnostics.append(chart.projection_note)
-    if status.ignored_blocks:
-        keys = ", ".join(b["key"] for b in status.ignored_blocks)
-        diagnostics.append(f"Payload blocks without a reset time, not charted: {keys}.")
+    out_of_range = [b["key"] for b in status.ignored_blocks if b["reason"] == GRANT_OUT_OF_RANGE]
+    undated = [b["key"] for b in status.ignored_blocks if b["reason"] != GRANT_OUT_OF_RANGE]
+    if undated:
+        diagnostics.append(
+            f"Payload blocks without a reset time, not charted: {', '.join(undated)}."
+        )
+    if out_of_range:
+        diagnostics.append(
+            f"Credit blocks with an amount out of range, ignored: {', '.join(out_of_range)}."
+        )
     notes = _transient_notes(status, now)
 
     events = _event_rows(store, EVENT_ROWS)
@@ -684,6 +831,13 @@ def build_dashboard(
         burn=burn,
         chart=chart,
         spend=spend,
+        grants=build_grant_views(store.latest_grants(), now, withheld),
+        surfaces=build_section(
+            store,
+            now,
+            next((r.pct for r in latest if r.window == "seven_day"), None),
+            withheld,
+        ),
         polled_text=_polled_text(status.last_success_ts, now),
         last_success_ts=status.last_success_ts,
         health_message=epistemic.message,
@@ -704,13 +858,20 @@ def build_dashboard(
         refresh_controls=[
             Control(k, k, view.href(refresh_key=k), REFRESH[k] == refresh_s) for k in REFRESH
         ],
+        series_chips=series_chips,
+        ghost_chip=_ghost_chip(view) if ghost_rows else None,
         lookback_s=lookback_s,
         history=history,
         budget=budget,
-        budget_view=_budget_view(budget, now),
+        budget_view=_budget_view(budget, now, subcap_unverified=subcap.any_recorded(store)),
+        weeks=_weeks_view(store, latest, sessions_all, now, withheld, boost_ts),
+        pace=compute_pace(store, now, withheld),
+        heatmap=compute_heatmap(store, now),
         cooldown_s=cooldown_s,
         events=events,
         vendor_status=list(vendor_status or []),
+        update_latest=_update_latest(store),
+        plan_label=_plan_label(store),
         alert_standing=alert_standing,
     )
 
@@ -785,6 +946,74 @@ def _polled_text(last_ok: int | None, now: int) -> str:
     return f"polled {age}s ago" if age < 120 else f"last ok {clock(last_ok)}"
 
 
+WEEK_LENGTH_S = 7 * 86400
+
+
+def _weekly_windows(
+    latest: list[QuotaRow],
+) -> tuple[tuple[int, int] | None, tuple[int, int] | None]:
+    """(this_week, last_week) as (start, end) epochs, from the newest weekly resets_at.
+
+    The current weekly window runs from the newest weekly reset minus seven days to that
+    reset; last week is the seven days before it. ``None`` when no weekly reset is known.
+    """
+    resets = [
+        int(dt.timestamp())
+        for row in latest
+        if weeks.is_weekly_window(row.window) and (dt := parse_iso(row.resets_at)) is not None
+    ]
+    if not resets:
+        return None, None
+    end = max(resets)
+    this_week = (end - WEEK_LENGTH_S, end)
+    return this_week, (this_week[0] - WEEK_LENGTH_S, this_week[0])
+
+
+def _series_chips(order: list[str], labels: dict[str, str], view: ViewOptions) -> list[SeriesChip]:
+    """The picker above the chart: All, then one chip per chartable series in slot order.
+
+    Each chip's plain link isolates its series (every other one hidden); its ``toggle_href``
+    adds or removes just that one, for the shift-click path. All clears every hide. The
+    labels come from the readings, so a fourth weekly limit gets a fifth chip for free.
+    The last-week overlay is not a series: picking one, or All, leaves its toggle alone.
+    """
+    everyone = frozenset(order)
+    keep = view.hidden & {GHOST_KEY}
+    clear = view.href(hidden=keep)
+    chips = [SeriesChip("", "All", clear, clear, not (view.hidden - keep))]
+    for window in order:
+        chips.append(
+            SeriesChip(
+                window,
+                short_label(window, labels.get(window)),
+                view.href(hidden=(everyone - {window}) | keep),  # show this one alone
+                view.href(hidden=view.toggled(window)),  # add/remove just this one
+                window not in view.hidden,
+            )
+        )
+    return chips
+
+
+def _ghost_chip(view: ViewOptions) -> SeriesChip:
+    """The "vs last week" chip: on by default; a click flips it like a shift-clicked series."""
+    href = view.href(hidden=view.toggled(GHOST_KEY))
+    return SeriesChip(GHOST_KEY, "vs last week", href, href, GHOST_KEY not in view.hidden)
+
+
+def _ghost_rows(
+    store: Store, rng: ResolvedRange, last_week: tuple[int, int] | None
+) -> list[QuotaRow]:
+    """Last week's weekly-all readings, moved forward seven days onto this week's axis.
+
+    Only on the week range: both weeks run Monday 01:00Z to Monday, so the shift lines
+    up hour for hour. Any other range has no "same moment last week" to put under it.
+    """
+    if rng.key != "week" or last_week is None:
+        return []
+    rows = store.quota_series(last_week[0], window=GHOST_WINDOW, until_ts=last_week[1] - 1)
+    return [replace(r, ts=r.ts + WEEK_LENGTH_S) for r in rows]
+
+
 def weekly_limits(rows: list[QuotaRow], withheld: bool = False) -> list[WeeklyLimit]:
     """The weekly meters, as the budget needs them: value, reset time, and sub-cap.
 
@@ -817,23 +1046,40 @@ def _sessions_text(value: float | None) -> str:
 
 
 def _binding_note(item: Budget, now: int) -> str:
-    """Which of the two constraints runs out first. That is the finding, not the numbers."""
+    """The clock versus the budget, said as two facts, not one sum. Which runs out first."""
     if item.clock_windows is None or item.reset_ts is None:
         return ""
     when_text = when(local(item.reset_ts), now)
-    time_for = f"There is time for {item.clock_windows:.1f} more sessions before this resets "
     if item.full_windows is None:
-        return f"{time_for}{when_text}."
-    budget_for = f"and budget for {item.full_windows:.1f}"
-    verdict = (
-        "the clock is what runs out"
-        if item.clock_windows < item.full_windows
-        else "the budget is what runs out"
+        return f"The clock fits {item.clock_windows:.1f} more sessions before {when_text}."
+    binds = "budget" if item.full_windows < item.clock_windows else "clock"
+    return (
+        f"The clock fits {item.clock_windows:.1f} more sessions before {when_text}. "
+        f"The budget covers {item.full_windows:.1f} at your measured cost. "
+        f"The {binds} runs out first."
     )
-    return f"{time_for}{when_text}, {budget_for} — {verdict}."
 
 
-def _budget_view(report: BudgetReport | None, now: int) -> BudgetView | None:
+# The <details> note under the budget table, in the register of SUBCAP_NOTE. It names no
+# plan on purpose: it applies to every plan that includes a Fable meter, and to none that
+# does not (Pro and standard seats), which is why it is shown only when a Fable meter exists.
+BUDGET_SUBCAP_NOTE = (
+    "Fable usage counts toward the one weekly pool and may use up to 50% of it, so the "
+    "Fable meter's 100% is half the pool and it is consumed only by Fable models, while the "
+    "all-models meter is consumed by everything. At a model mix around half Fable the two "
+    "meters move at about the same speed, and the all-models meter — which starts from the "
+    "same 100% but drains from everything — runs out first. Fable would show fewer sessions "
+    "than all-models only when Fable is well over half of usage."
+)
+BUDGET_SUBCAP_UNVERIFIED = (
+    " The continuous check of this rule against your readings has fired, so it may not hold "
+    "for this account — see Diagnostics."
+)
+
+
+def _budget_view(
+    report: BudgetReport | None, now: int, subcap_unverified: bool = False
+) -> BudgetView | None:
     """Word the budget for the page. The derivation decides; this only names things.
 
     Every unknown carries its reason into the cell. "—" cannot be told apart from
@@ -887,7 +1133,176 @@ def _budget_view(report: BudgetReport | None, now: int) -> BudgetView | None:
         (b for b in report.budgets if not b.subcap and b.clock_windows is not None),
         None,
     )
-    return BudgetView(rows, _binding_note(primary, now) if primary else "", report.constraint)
+    # The half-of-pool caveat only makes sense — and is only true — where a Fable meter exists.
+    note = ""
+    if any(b.subcap for b in report.budgets):
+        note = BUDGET_SUBCAP_NOTE + (BUDGET_SUBCAP_UNVERIFIED if subcap_unverified else "")
+    return BudgetView(rows, _binding_note(primary, now) if primary else "", report.constraint, note)
+
+
+def _week_label(week: str) -> str:
+    """ "31 Aug - 7 Sep" for the Monday-anchored week whose key is ``week`` (an ISO date)."""
+    start = datetime.strptime(week, "%Y-%m-%d")
+    end = start + timedelta(days=7)
+    return f"{start.day} {start:%b} – {end.day} {end:%b}"
+
+
+def _spread_text(low: float | None, high: float | None, n: int) -> str:
+    """ "usually 8-11% and 13 sessions": the p25-p75 range and sample, phrased for a reader."""
+    if low is not None and high is not None:
+        return f"usually {low:.0f}–{high:.0f}% · {n} sessions"
+    return f"{n} sessions" if n else ""
+
+
+def _used_cell(
+    cost: float | None, low: float | None, high: float | None, n: int, collecting: bool
+) -> tuple[str, str]:
+    """(primary, secondary) for "One full session used": "9% of week" + the usual range."""
+    if cost is None:
+        return ("collecting" if collecting else EM_DASH), _spread_text(low, high, n)
+    return f"{cost:.0f}% of week", _spread_text(low, high, n)
+
+
+def _fable_cell(
+    cost: float | None, low: float | None, high: float | None, n: int, collecting: bool
+) -> tuple[str, str]:
+    """The Fable line in the same cell, prefixed "Fable" — only shown when a Fable meter exists."""
+    if cost is None:
+        return f"Fable {'collecting' if collecting else EM_DASH}", _spread_text(low, high, n)
+    return f"Fable {cost:.0f}%", _spread_text(low, high, n)
+
+
+def _mostly_text(top: dict[str, Any] | None) -> str:
+    """ "Cowork 76%": the week's largest surface; a dash for a week with no split stored."""
+    return EM_DASH if top is None else f"{top['label']} {top['percent']:.0f}%"
+
+
+def _reset_cells(at_reset: float | None, at_last_weeks_rate: float | None) -> tuple[str, str]:
+    """(primary, secondary): the figure the reader saw at the reset, then last week's rate."""
+    primary = EM_DASH if at_reset is None else f"{at_reset:.1f}"
+    rate = at_last_weeks_rate
+    secondary = "" if rate is None else f"{rate:.1f} at last week's rate"
+    return primary, secondary
+
+
+def _fable_key(latest: list[QuotaRow]) -> str | None:
+    return next((r.window for r in latest if is_subcapped(r.window)), None)
+
+
+def _weeks_view(
+    store: Store,
+    latest: list[QuotaRow],
+    sessions_all: list[SessionWindow],
+    now: int,
+    withheld: bool,
+    boost_ts: Sequence[int],
+) -> WeeksView | None:
+    """The ledger table: the current week first, then every closed week, most recent first.
+
+    Each week's cost is from the reset that closed it, but the "full sessions at reset"
+    figure is from the reset that opened it (see :func:`quotalens.weeks.week_rows`). The
+    current week's cost is computed live from the windows so far.
+    """
+    rows_data = {r["week"]: r for r in weeks.week_rows(store)}
+    mostly = mostly_by_week(store)
+    current_wk = week_key(now)
+    fable_key = _fable_key(latest)
+    has_fable = fable_key is not None
+
+    # Live figures for the still-open current week, from the windows in it so far.
+    by_week_all = window_costs_by_week(sessions_all, "seven_day", now, boost_ts)
+    live_all = weeks.summarize(by_week_all.get(current_wk, []))
+    live_fable = weeks.summarize(
+        window_costs_by_week(sessions_all, fable_key, now, boost_ts).get(current_wk, [])
+        if fable_key
+        else []
+    )
+    seven = next((r for r in latest if r.window == "seven_day"), None)
+    live_pct = None if withheld or seven is None else seven.pct
+
+    rows: list[WeekRowView] = []
+    for wk in sorted(set(rows_data) | {current_wk}, reverse=True):
+        data = rows_data.get(wk, {})
+        is_open = wk == current_wk
+        if is_open:
+            used_primary, used_secondary = _used_cell(
+                live_all.cost_per_full,
+                live_all.cost_low,
+                live_all.cost_high,
+                live_all.usable_windows,
+                True,
+            )
+            fable_primary, fable_secondary = (
+                _fable_cell(
+                    live_fable.cost_per_full,
+                    live_fable.cost_low,
+                    live_fable.cost_high,
+                    live_fable.usable_windows,
+                    True,
+                )
+                if has_fable
+                else ("", "")
+            )
+            closed_text = "collecting"
+            used_text = EM_DASH if live_pct is None else f"{live_pct:.0f}%"
+            left_text = EM_DASH if live_pct is None else f"{max(0.0, 100.0 - live_pct):.0f}%"
+        else:
+            used_primary, used_secondary = _used_cell(
+                data.get("weekly_all_cost"),
+                data.get("weekly_all_low"),
+                data.get("weekly_all_high"),
+                data.get("weekly_all_n", 0),
+                False,
+            )
+            fable_primary, fable_secondary = (
+                _fable_cell(
+                    data.get("fable_cost"),
+                    data.get("fable_low"),
+                    data.get("fable_high"),
+                    data.get("fable_n", 0),
+                    False,
+                )
+                if has_fable
+                else ("", "")
+            )
+            closed = data.get("closed_at")
+            closed_text = (
+                f"{day_month(local(int(closed)))} {clock(int(closed))}" if closed else EM_DASH
+            )
+            closed_pct = data.get("closed_pct")
+            left_pct = data.get("left_unused_pct")
+            used_text = EM_DASH if closed_pct is None else f"{closed_pct:.0f}%"
+            left_text = EM_DASH if left_pct is None else f"{left_pct:.0f}%"
+        reset_primary, reset_secondary = _reset_cells(
+            data.get("full_windows_at_reset"), data.get("full_windows_at_last_weeks_rate")
+        )
+        rows.append(
+            WeekRowView(
+                _week_label(wk) + (" · this week" if is_open else ""),
+                closed_text,
+                used_primary,
+                used_secondary,
+                fable_primary,
+                fable_secondary,
+                used_text,
+                left_text,
+                reset_primary,
+                reset_secondary,
+                is_open,
+                _mostly_text(mostly.get(wk)),
+            )
+        )
+    # Nothing to show: the only row is the current week with no cost and no reset figure.
+    only = rows[0]
+    empty = (
+        len(rows) == 1
+        and only.used_primary in (EM_DASH, "collecting")
+        and not only.used_secondary
+        and only.reset_primary == EM_DASH
+    )
+    if empty:
+        return None
+    return WeeksView(rows, weeks.verdict(list(rows_data.values())), weeks.LEDGER_NOTE)
 
 
 def _change_over_range(rows: list[QuotaRow], rng: ResolvedRange) -> str:
@@ -1180,13 +1595,15 @@ def _chart_view(
     prior_ts: int | None = None,
     boost_ts: Mapping[str, Sequence[int]] | None = None,
     prior_rows: Mapping[str, QuotaRow | None] | None = None,
+    ghost_rows: list[QuotaRow] | None = None,
 ) -> ChartView:
     start, end = rng.start, rng.end
     span = max(1, end - start)
     plot_w = CHART_W - CHART_L - CHART_R
     plot_h = CHART_H - CHART_T - CHART_B
     visible = {w: rows for w, rows in series_rows.items() if w in slots and rows}
-    max_pct = max((r.pct for rows in visible.values() for r in rows), default=0.0)
+    ghost_rows = ghost_rows or []
+    max_pct = max((r.pct for rows in [*visible.values(), ghost_rows] for r in rows), default=0.0)
     y_max = max(100.0, math.ceil(max_pct / 25) * 25)
 
     def x_of(ts: int) -> float:
@@ -1265,6 +1682,12 @@ def _chart_view(
     ]
     _spread_labels(series)
     series.sort(key=lambda s: -s.slot)  # draw the hero trace last, on top
+    ghost = [
+        "M" + " L".join(f"{x_of(r.ts):.1f} {y_of(r.pct):.1f}" for r in seg)
+        for segment in split_at_resets(ghost_rows)
+        if len(seg := _bucket(segment, bucket_s)) > 1
+    ]
+    ghost_end = (x_of(ghost_rows[-1].ts), y_of(ghost_rows[-1].pct)) if ghost else None
 
     timestamps = sorted({r.ts for rows in visible.values() for r in rows})
     # the future is not a gap; the left edge is, when we should have been collecting
@@ -1296,9 +1719,13 @@ def _chart_view(
         bool(series),
         gap_x,
         gap_minutes,
-        json.dumps(payload, separators=(",", ":")),
+        # Labels are the vendor's; "<" as < is the same JSON and cannot end the
+        # <script> block it is embedded in.
+        json.dumps(payload, separators=(",", ":")).replace("<", "\\u003c"),
         collecting,
         boost_marks=boost_marks,
+        ghost=ghost,
+        ghost_end=ghost_end,
     )
 
 
@@ -1446,9 +1873,11 @@ def _history_view(
     store: Store | None = None,
     boost_ts: Sequence[int] = (),
 ) -> HistoryView:
+    # A column per model limit still arriving (``slots`` holds the current windows): a
+    # window that stopped arriving keeps its history on the chart, not a blank column.
     keys = sorted(
-        {k for w in windows for k in w.deltas if k.startswith("limit:")},
-        key=lambda k: (slots.get(k, 99), k),
+        {k for w in windows for k in w.deltas if k.startswith("limit:") and k in slots},
+        key=lambda k: (slots[k], k),
     )
     columns = ["seven_day", *keys]
     headers = ["Weekly all", *(short_label(k, labels.get(k)) for k in keys)]
@@ -1590,6 +2019,7 @@ def as_json(dash: Dashboard) -> dict[str, Any]:
         },
         "lookback_s": dash.lookback_s,
         "hidden": sorted(dash.view.hidden),
+        "ghost": bool(dash.chart.ghost),  # last week's weekly-all line is drawn
         "gap_minutes": dash.chart.gap_minutes,
         "windows": [
             {
@@ -1637,6 +2067,28 @@ def as_json(dash: Dashboard) -> dict[str, Any]:
             "status": dash.spend.status_text,
         },
         "budget": None if dash.budget is None else dash.budget.as_dict(),
+        "weeks": None
+        if dash.weeks is None
+        else {
+            "verdict": dash.weeks.verdict,
+            "rows": [
+                {
+                    "week": r.week_label,
+                    "closed": r.closed_text,
+                    "one_full_session_used": r.used_primary,
+                    "used_spread": r.used_secondary,
+                    "fable_used": r.fable_primary,
+                    "fable_spread": r.fable_secondary,
+                    "used": r.used_text,
+                    "left_unused": r.left_text,
+                    "full_sessions_at_reset": r.reset_primary,
+                    "full_sessions_at_last_weeks_rate": r.reset_secondary,
+                    "open": r.is_open,
+                    "mostly": r.mostly_text,
+                }
+                for r in dash.weeks.rows
+            ],
+        },
         "notes": dash.notes,
         "diagnostics": dash.diagnostics,
         "events": dash.events,

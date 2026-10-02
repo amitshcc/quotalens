@@ -13,6 +13,7 @@ from quotalens.config import CLAUDE, MIN_POLL_INTERVAL_S, Provider
 from quotalens.dashboard import (
     CHART_H,
     CHART_W,
+    GHOST_LABEL,
     PLOT_RIGHT,
     RATE_WINDOW,
     ChartView,
@@ -20,12 +21,16 @@ from quotalens.dashboard import (
     Dashboard,
     SeriesView,
     SessionRowView,
+    WeekRowView,
     WindowView,
     clock,
 )
+from quotalens.grants import GrantView
+from quotalens.heatmap import DAYS, Heatmap
 from quotalens.runway import fmt_span
 from quotalens.settings_view import NOTIFY_GROUP, SettingsView
 from quotalens.status import StatusVendor, VendorStatus
+from quotalens.surfaces import SurfaceSection
 from quotalens.views import AUTO, RANGE_KEYS
 
 ICONS = (
@@ -226,12 +231,12 @@ def chip(kind: str, text: str) -> str:
     )
 
 
-def render_settings_page(view: SettingsView) -> str:
-    """The same shell, so the settings page inherits the theme and the tokens."""
+def render_shell(title: str, inner: str) -> str:
+    """A plain page in the dashboard's theme: the header with a way back, then ``inner``."""
     return (
         '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width,initial-scale=1">\n'
-        "<title>QuotaLens settings</title>\n"
+        f"<title>{e(title)}</title>\n"
         '<link rel="icon" href="/favicon.svg" type="image/svg+xml">\n'
         '<link rel="stylesheet" href="/static/tokens.css">\n'
         '<link rel="stylesheet" href="/static/app.css">\n'
@@ -242,14 +247,19 @@ def render_settings_page(view: SettingsView) -> str:
         '<button id="t" type="button" aria-label="Switch theme">'
         '<svg class="ic ic-sun" aria-hidden="true"><use href="#i-sun"/></svg>'
         '<svg class="ic ic-moon" aria-hidden="true"><use href="#i-moon"/></svg>'
-        "theme</button></div></header>"
+        "theme</button></div></header>" + inner + "</div></div>\n"
+        "</body>\n</html>\n"
+    )
+
+
+def render_settings_page(view: SettingsView) -> str:
+    """The same shell, so the settings page inherits the theme and the tokens."""
+    return render_shell(
+        "QuotaLens settings",
         # The dialog says this in its header; the page has no dialog header, so
         # it says it here. Once per surface, never once per field.
         '<p class="cap" id="sd-title">Settings</p>'
-        '<p class="far lede">Changes take effect from the next poll.</p>'
-        + render_settings(view)
-        + "</div></div>\n"
-        "</body>\n</html>\n"
+        '<p class="far lede">Changes take effect from the next poll.</p>' + render_settings(view),
     )
 
 
@@ -285,7 +295,25 @@ def render_app(dash: Dashboard) -> str:
     return _header(dash) + _main(dash)
 
 
+# A dot in the gear's top-right corner, outside the teeth, in the chrome colour:
+# neutral on purpose. The presentation attributes stand in for CSS, which has no
+# bytes left in its budget.
+UPDATE_DOT = '<circle cx="14.2" cy="1.8" r="1.7" fill="currentColor" stroke="none"/>'
+
+
+def _plan_suffix(dash: Dashboard) -> str:
+    """The plan as its own muted label after the name, nothing when unnamed.
+
+    No separator: DESIGN 6 has no middle dots; the brand's flex gap spaces it.
+    """
+    return f'<span class="plan">{e(dash.plan_label)}</span>' if dash.plan_label else ""
+
+
 def _header(dash: Dashboard) -> str:
+    dot = UPDATE_DOT if dash.update_latest else ""
+    # Without a viewBox the dot's coordinates are pixels and it falls outside an 11px icon.
+    box = ' viewBox="0 0 16 16"' if dot else ""
+    gear_title = "Settings (update available)" if dash.update_latest else "Settings"
     fallback = f"last ok {dash.polled_text[8:]}" if dash.polled_text.startswith("last ok") else ""
     ts = dash.last_success_ts or 0
     q = dash.view.query()
@@ -297,7 +325,8 @@ def _header(dash: Dashboard) -> str:
     )
     return (
         '<header><div class="wrap">'
-        f'<span class="brand">{header_mark(dash)}QuotaLens</span><span class="spacer"></span>'
+        f'<span class="brand">{header_mark(dash)}QuotaLens{_plan_suffix(dash)}</span>'
+        '<span class="spacer"></span>'
         f"{lost}{_alert_chip(dash)}{chip(dash.chip, dash.chip_text)}"
         f'<span class="lbl m" id="polled" data-ts="{ts}" data-fallback="{e(fallback)}">'
         f"{e(dash.polled_text)}</span>"
@@ -322,12 +351,12 @@ def _header(dash: Dashboard) -> str:
         # It is a button now, which since the dialog landed is also the honest
         # markup. The <a> stays for the no-JavaScript path and CSS shows exactly
         # one of them -- the same `.go` idiom the range form already uses.
-        '<a href="/settings" id="settings-link" class="go" title="Settings" '
-        'aria-label="Settings">'
-        '<svg class="ic" aria-hidden="true"><use href="#i-settings"/></svg></a>'
-        '<button type="button" id="settings-btn" class="jso" title="Settings" '
-        'aria-label="Settings">'
-        '<svg class="ic" aria-hidden="true"><use href="#i-settings"/></svg></button>'
+        f'<a href="/settings" id="settings-link" class="go" title="{gear_title}" '
+        f'aria-label="{gear_title}">'
+        f'<svg class="ic" aria-hidden="true"{box}><use href="#i-settings"/>{dot}</svg></a>'
+        f'<button type="button" id="settings-btn" class="jso" title="{gear_title}" '
+        f'aria-label="{gear_title}">'
+        f'<svg class="ic" aria-hidden="true"{box}><use href="#i-settings"/>{dot}</svg></button>'
         '<button id="t" type="button" aria-label="Switch theme">'
         '<svg class="ic ic-sun" aria-hidden="true"><use href="#i-sun"/></svg>'
         '<svg class="ic ic-moon" aria-hidden="true"><use href="#i-moon"/></svg>theme</button>'
@@ -351,7 +380,9 @@ def _main(dash: Dashboard) -> str:
         + _toolbar(dash)
         + _chart(dash)
         + _history(dash)
-        + _attribution()
+        + _weeks(dash)
+        + _heatmap(dash.heatmap)
+        + _attribution(dash.surfaces)
         + "</div>"
         + _side(dash)
         + "</div>"
@@ -516,6 +547,18 @@ def _budget(dash: Dashboard) -> str:
     notes = "".join(
         f'<p class="far">{e(text)}</p>' for text in (view.binding, view.constraint) if text
     )
+    if dash.pace is not None and dash.pace.shown:
+        # Under the table, in words, and always with its spread and what it rests on.
+        notes += (
+            f'<p class="pace">{e(dash.pace.sentence)} '
+            f'<span class="far">{e(dash.pace.basis)}</span></p>'
+        )
+    note = (
+        '<details class="wk-note"><summary>Why the two meters differ</summary>'
+        f'<p class="far">{e(view.note)}</p></details>'
+        if view.note
+        else ""
+    )
     return (
         '<section class="screen budget"><table>'
         "<caption>What your remaining weekly headroom will buy, in 5-hour sessions</caption>"
@@ -524,7 +567,7 @@ def _budget(dash: Dashboard) -> str:
         '<th class="n">Full sessions left</th>'
         '<th class="n">At your typical session</th>'
         '<th class="n">Each full session costs</th></tr></thead>'
-        f"<tbody>{''.join(rows)}</tbody></table>{notes}</section>"
+        f"<tbody>{''.join(rows)}</tbody></table>{notes}{note}</section>"
     )
 
 
@@ -611,11 +654,38 @@ def _toolbar(dash: Dashboard) -> str:
     """
     return (
         '<nav class="toolbar" aria-label="Chart controls">'
+        + _series_picker(dash)
         + _range_form(dash)
         + _controls("lookback", dash.lookback_controls, "lookback")
         + '<span class="spacer"></span>'
         + _controls("refresh", dash.refresh_controls, "auto")
         + "</nav>"
+    )
+
+
+def _series_picker(dash: Dashboard) -> str:
+    """Chips left of the range control: click shows one series, shift-click toggles it.
+
+    Real links onto the existing ``hide=`` URLs, so the picker works with no JavaScript;
+    ``app.js`` intercepts them like every other view link and reads ``data-toggle-href``
+    for the shift-click path.
+    """
+    chips = dash.series_chips + ([dash.ghost_chip] if dash.ghost_chip else [])
+    if not dash.series_chips:
+        return ""
+    links = []
+    for c in chips:
+        cls = "sq on" if c.active else "sq"
+        current = ' aria-current="true"' if c.active else ""
+        # No data-series here: it would print the raw window key (e.g. limit:fable) in the
+        # page, which the display never does. The hrefs carry the key URL-encoded instead.
+        links.append(
+            f'<a class="{cls}" href="{e(c.href)}" data-toggle-href="{e(c.toggle_href)}"{current}>'
+            f"{e(c.label)}</a>"
+        )
+    return (
+        '<span class="ctl series" role="group" aria-label="series">'
+        f'<span class="lbl">series</span>{"".join(links)}</span>'
     )
 
 
@@ -697,8 +767,11 @@ def _chart(dash: Dashboard) -> str:
             for x, t in c.x_ticks
         )
         # After the traces, so the mark is never under a line, and last so it sits
-        # above the grid it stands in.
-        inner = gaps + grid + xt + "".join(_series(s) for s in c.series) + _boost_marks(c)
+        # above the grid it stands in. Last week's line goes first of all, beneath the
+        # hatching and the boost mark, so it can never cover either.
+        inner = (
+            _ghost(c) + gaps + grid + xt + "".join(_series(s) for s in c.series) + _boost_marks(c)
+        )
     return (
         '<section class="screen chart" aria-label="All windows, selected range">'
         f'<script type="application/json" id="chart-data">{c.data_json}</script>'
@@ -715,6 +788,23 @@ def _chart(dash: Dashboard) -> str:
         '<div id="boost-tip" class="readout-box bt" aria-hidden="true" hidden></div>'
         "</section>"
     )
+
+
+def _ghost(c: ChartView) -> str:
+    """Last week's weekly-all line: the weekly-all hue at the muted opacity a hidden
+    series label takes, dashed, and labelled at its own end like every other series."""
+    if not c.ghost:
+        return ""
+    paths = "".join(
+        f'<path d="{d}" class="series-ghost" stroke="var(--s2)" stroke-opacity=".45" '
+        'stroke-width="var(--trace-dim)"/>'
+        for d in c.ghost
+    )
+    label = ""
+    if c.ghost_end:
+        x, y = c.ghost_end
+        label = f'<text x="{x + 9:.1f}" y="{y + 4:.1f}" class="ax">{e(GHOST_LABEL)}</text>'
+    return f'<g aria-label="Weekly all, last week">{paths}{label}</g>'
 
 
 BOOST_COLOUR = "#E13A54"  # illustration, not a state; DESIGN.md §1 and §8
@@ -910,7 +1000,135 @@ def _spark(r: SessionRowView) -> str:
     )
 
 
-def _attribution(provider: Provider = CLAUDE) -> str:
+def _weeks(dash: Dashboard) -> str:
+    """The ledger, below History: one row per weekly reset, most recent first.
+
+    The cost per session is the week's median with its p25-p75 spread and n, in the same
+    monospace secondary style the budget table uses. The verdict compares the two newest
+    complete weeks; the note says why that is all it says.
+    """
+    w = dash.weeks
+    if w is None or not w.rows:
+        return ""
+    body = "".join(_week_row(r) for r in w.rows)
+    verdict = f'<p class="wk-verdict">{e(w.verdict)}</p>' if w.verdict else ""
+    note = (
+        '<details class="wk-note"><summary>What a shift here means</summary>'
+        f'<p class="far">{e(w.note)}</p></details>'
+    )
+    return (
+        '<section class="screen weeks"><div class="hsc"><table>'
+        "<caption>Weeks — one row per week, most recent first. "
+        "“One full session used” is how much of the week a full 5-hour session cost, "
+        "as a median with its usual range</caption>"
+        "<thead><tr><th>Week</th><th>Closed at</th>"
+        '<th class="n">One full session used</th>'
+        '<th class="n">Used</th><th class="n">Left unused</th>'
+        '<th class="n">Full sessions at reset</th>'
+        '<th class="n">Mostly</th></tr></thead>'
+        f"<tbody>{body}</tbody></table></div>{verdict}{note}</section>"
+    )
+
+
+# The heatmap is drawn 1:1, like the chart, so its 11px labels stay 11px. Scaled to a
+# phone's width they were 4px; instead it scrolls sideways in `.hsc`, as the Weeks
+# table above it does. 880 fits the left column from a 1264px-wide window up.
+HEAT_W = 880
+HEAT_L, HEAT_T, HEAT_CELL_H, HEAT_GAP = 40, 16, 16, 2
+HEAT_CELL_W = (HEAT_W - HEAT_L) / 24
+# Achromatic: --txt at rising opacity, one step per ramp level. Zero is the grid
+# colour, so an empty hour still reads as a collected one; never amber. The first
+# step starts at .28 because at .18 it could not be told from zero on the dark screen.
+HEAT_OPACITY = (0.28, 0.48, 0.7, 0.92)
+
+
+def _heat_fill(level: int | None) -> str:
+    if level is None:
+        return 'fill="url(#gap)"'
+    if level == 0:
+        return 'fill="var(--grid)"'
+    return f'fill="var(--txt)" fill-opacity="{HEAT_OPACITY[level - 1]}"'
+
+
+def _heatmap(heat: Heatmap | None) -> str:
+    """When you use it: weekly-all points per hour, weekday by local hour, 7 x 24.
+
+    Fills are SVG presentation attributes and the hatch is the chart's own pattern,
+    so the section adds no CSS. Every cell carries its figure in a ``<title>``.
+    """
+    if heat is None:
+        return ""
+    head = '<section class="screen pointers heat"><p class="cap">When you use it</p>'
+    if heat.collecting:
+        return (
+            head + f'<p class="far">Collecting: {heat.weeks_used} of 2 complete weeks so far. '
+            "This shows when in the week you use your quota once there are two.</p></section>"
+        )
+    rows_h = 7 * (HEAT_CELL_H + HEAT_GAP)
+    legend_y = HEAT_T + rows_h + 14
+    height = legend_y + 12
+    cells, ticks = [], []
+    for h in range(0, 24, 3):
+        x = HEAT_L + h * HEAT_CELL_W
+        ticks.append(f'<text x="{x:.1f}" y="11" class="ax">{h:02d}</text>')
+    for d, day in enumerate(DAYS):
+        y = HEAT_T + d * (HEAT_CELL_H + HEAT_GAP)
+        ticks.append(f'<text x="0" y="{y + 12}" class="ax">{day}</text>')
+        for h, value in enumerate(heat.cells[d]):
+            x = HEAT_L + h * HEAT_CELL_W
+            what = "not collected" if value is None else f"{value:.1f} points/hour"
+            cells.append(
+                f'<rect x="{x:.1f}" y="{y}" width="{HEAT_CELL_W - HEAT_GAP:.1f}" '
+                f'height="{HEAT_CELL_H}" {_heat_fill(heat.level(value))}>'
+                f"<title>{day} {h:02d}:00: {what}</title></rect>"
+            )
+    # The legend, in points per hour: each swatch is labelled with its upper edge.
+    legend = [f'<text x="0" y="{legend_y + 9}" class="ax">points/hour</text>']
+    x = HEAT_L + 64
+    for level, label in [(0, "0"), *((k + 1, f"≤{v:g}") for k, v in enumerate(heat.edges()))]:
+        if level == len(heat.edges()):
+            label = f">{heat.edges()[-2]:g}"  # the top step also holds everything above it
+        legend.append(
+            f'<rect x="{x:.1f}" y="{legend_y}" width="12" height="10" {_heat_fill(level)}/>'
+            f'<text x="{x + 16:.1f}" y="{legend_y + 9}" class="ax">{e(label)}</text>'
+        )
+        x += 64
+    weeks = f"{heat.weeks_used} complete week{'s' if heat.weeks_used != 1 else ''}"
+    label = (
+        f"Weekly — all models points gained per hour, by weekday and local hour, averaged "
+        f"over the last {weeks}"
+    )
+    return (
+        head + f'<div class="hsc"><svg width="{HEAT_W}" height="{height}" '
+        f'viewBox="0 0 {HEAT_W} {height}" role="img" aria-label="{e(label)}">'
+        f"{''.join(ticks)}{''.join(cells)}{''.join(legend)}</svg></div>"
+        f'<p class="far">{e(label)}, in {e(heat.tz or "local time")}. '
+        "An hour the collector missed is left out of its average, not counted as zero.</p>"
+        "</section>"
+    )
+
+
+def _week_row(r: WeekRowView) -> str:
+    mark = ' <span class="far">collecting</span>' if r.is_open else ""
+    # "One full session used": weekly-all primary + its usual range, then a Fable line
+    # in the same cell when the plan has a Fable meter.
+    used = f'<span class="rt">{e(r.used_primary)}</span>{_note(r.used_secondary)}'
+    if r.fable_primary:
+        used += f'<br><span class="rt">{e(r.fable_primary)}</span>{_note(r.fable_secondary)}'
+    reset = f'<span class="rt">{e(r.reset_primary)}</span>{_note(r.reset_secondary)}'
+    return (
+        f'<tr class="{"r-open" if r.is_open else ""}">'
+        f'<th scope="row">{e(r.week_label)}{mark}</th>'
+        f'<td class="m">{e(r.closed_text)}</td>'
+        f'<td class="n">{used}</td>'
+        f'<td class="n">{e(r.used_text)}</td>'
+        f'<td class="n">{e(r.left_text)}</td>'
+        f'<td class="n">{reset}</td>'
+        f'<td class="n">{e(r.mostly_text)}</td></tr>'
+    )
+
+
+def _attribution(surfaces: SurfaceSection | None = None, provider: Provider = CLAUDE) -> str:
     """Where attribution actually lives, since it is not going to live here.
 
     ``docs/MVP-SCOPE.md`` puts per-project attribution out indefinitely, so the slot
@@ -919,6 +1137,8 @@ def _attribution(provider: Provider = CLAUDE) -> str:
     second provider's own command joins this list without the prose around it
     changing.
     """
+    if surfaces is not None:
+        return _surface_section(surfaces, provider)
     return (
         '<section class="screen pointers">'
         '<p class="cap">Where the quota went</p>'
@@ -935,6 +1155,66 @@ def _attribution(provider: Provider = CLAUDE) -> str:
         "every surface you use, so a local log can show that a project correlates with "
         "a climb, but it cannot attribute pooled quota to that project.</p>"
         "</section>"
+    )
+
+
+def _surface_section(sec: SurfaceSection, provider: Provider) -> str:
+    """The vendor's own split of this week's usage: one stacked bar and a table of shares.
+
+    Colours are SVG presentation attributes (``var(--s2)`` and so on), the way the
+    sparkline does it, so the page needs no inline style and the stylesheet no new rule.
+    The command pointer stays, as one line under the figures.
+    """
+    total = sum(r.percent for r in sec.rows) or 1.0
+    x, rects, body = 0.0, [], []
+    for r in sec.rows:
+        width = r.percent / total * 100
+        fill = f"var({r.colour})"
+        if width > 0:
+            rects.append(f'<rect x="{x:.2f}" width="{width:.2f}" height="1" fill="{fill}"/>')
+        x += width
+        swatch = (
+            f'<svg width="8" height="8" viewBox="0 0 1 1" aria-hidden="true">'
+            f'<rect width="1" height="1" fill="{fill}"/></svg> '
+        )
+        body.append(
+            f'<tr><th scope="row">{swatch}{e(r.label)}</th>'
+            f'<td class="n">{e(r.share_text)}</td>'
+            f'<td class="n">{e(r.limit_text or "—")}</td></tr>'
+        )
+    return (
+        '<section class="screen pointers">'
+        '<p class="cap">Where the quota went</p>'
+        '<svg width="100%" height="8" viewBox="0 0 100 1" preserveAspectRatio="none" '
+        f'role="img" aria-label="Share of this week\'s usage by surface">{"".join(rects)}</svg>'
+        "<table><thead><tr><th>Surface</th>"
+        '<th class="n">Share of this week</th>'
+        '<th class="n">≈ of the week\'s limit</th></tr></thead>'
+        f"<tbody>{''.join(body)}</tbody></table>"
+        "<p class=\"far\">Anthropic's own split of this week's usage, "
+        f"as of {e(clock(sec.as_of_ts))}."
+        " ≈ is share × Weekly — all models; an estimate.</p>"
+        f"<p>For per-skill and per-project detail: <code>{e(provider.usage_command)}</code></p>"
+        "</section>"
+    )
+
+
+def _grant_block(g: GrantView) -> str:
+    """A credit grant under Usage credits: figure, a thin neutral bar, what is left, when it ends.
+
+    The bar is an SVG rect rather than a styled element, so nothing here needs an inline
+    style, and it takes the ordinary hairline colour: amber is the session window and
+    nothing else, and a credit is not a window.
+    """
+    bar = (
+        '<div class="bar"><svg width="100%" height="4" viewBox="0 0 100 1" '
+        'preserveAspectRatio="none" aria-hidden="true">'
+        f'<rect width="{g.bar_pct:.1f}" height="1"/></svg></div>'
+    )
+    detail = f'<p class="far">{e(g.detail)}</p>' if g.detail else ""
+    return (
+        f'<div class="rule"></div><dl class="grant"><dt>{e(g.label)}</dt>'
+        f'<dd class="m">{e(g.figure)}</dd></dl>{bar}{detail}'
     )
 
 
@@ -967,6 +1247,7 @@ def _side(dash: Dashboard) -> str:
             f'<div class="v m spend-pct"{style}>{pct}</div>{bar}'
             + (f'<p class="far">{e(s.status_text)}</p>' if s.status_text else "")
         )
+    spend += "".join(_grant_block(g) for g in dash.grants)
     diag = ""
     if dash.diagnostics:
         diag = '<div class="rule"></div><dl><dt>Diagnostics</dt><dd></dd></dl>' + "".join(
@@ -1077,12 +1358,18 @@ def _vendor_logo(vendor: StatusVendor) -> str:
     return f'<img class="vl" src="{e(url)}" alt="" aria-hidden="true" width="16" height="16">'
 
 
+def _update_hint(dash: Dashboard) -> str:
+    if not dash.update_latest:
+        return ""
+    return f' \u00b7 <a href="/about">{e(dash.update_latest)} available</a>'
+
+
 def _footer(dash: Dashboard) -> str:
     return (
         "<footer>"
         f'<span><span class="far">Address</span> {e(dash.footer["bind"])}</span>'
         f'<span><span class="far">Database</span> {e(dash.footer["db"])}</span>'
-        f"<span>QuotaLens {e(__version__)}</span></footer>"
+        f'<span><a href="/about">QuotaLens {e(__version__)}</a>{_update_hint(dash)}</span></footer>'
     )
 
 
@@ -1231,6 +1518,7 @@ def render_settings_dialog() -> str:
         # dialog into one form would put retention inside the same submit, which
         # is exactly what must not happen.
         '<footer class="sfoot">'
+        '<a href="/about" id="about-link">About</a>'
         '<form method="dialog"><button value="cancel">Cancel</button></form>'
         '<button type="submit" form="settings-form">Save changes</button>'
         "</footer></dialog>"
@@ -1392,6 +1680,16 @@ def render_settings(view: SettingsView) -> str:
         '<p class="cap">Sources</p>',
         _checkbox_group(view),
         "</div></div>",
+        '<p class="cap">Updates</p>',
+        '<div class="grp">',
+        _field(
+            "update_check",
+            "Check for updates daily",
+            view.values["update_check"],
+            note="Asks pypi.org for the latest version once a day. Nothing else is sent.",
+            kind="checkbox",
+        ),
+        "</div>",
         '<p class="cap">Advanced — command line only</p>',
         _readonly(
             "Port",

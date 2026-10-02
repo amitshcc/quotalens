@@ -696,3 +696,193 @@ def test_the_boost_tooltip_does_not_repeat_itself_to_a_screen_reader(
     with TestClient(app) as tc:
         html = tc.get("/").text
     assert '<div id="boost-tip" class="readout-box bt" aria-hidden="true" hidden>' in html
+
+
+# -- credit grants --------------------------------------------------------------
+
+
+def _grant_row(store, now: int, expires_in: int, **over) -> str:
+    """Store one grant expiring ``expires_in`` seconds from ``now``; returns its local "4 Nov"."""
+    from quotalens.parse import CreditGrant
+
+    expires = datetime.fromtimestamp(now + expires_in, UTC)
+    fields = dict(
+        key="iguana_necktie",
+        label="Cloud session credit",
+        used_minor=2129,
+        limit_minor=25000,
+        remaining_minor=22871,
+        pct=8.5,
+        expires_at=expires.isoformat(),
+        locked_reason=None,
+    )
+    store.record_grants(now, [CreditGrant(**{**fields, **over})])
+    local = expires.astimezone()
+    return f"{local.day} {local:%b}"
+
+
+def _grant_page(settings, store, secrets, now: int) -> str:
+    _seed(store, now)
+    app = create_app(settings, store, secrets)
+    st = app.state.qw.poller.status
+    st.state, st.last_success_ts = "ok", now
+    with TestClient(app) as tc:
+        return tc.get("/").text
+
+
+def test_grant_row_renders(settings, store, secrets) -> None:
+    now = int(time.time())
+    day = _grant_row(store, now, 36 * 86400)
+    html = _grant_page(settings, store, secrets, now)
+    assert "Cloud session credit" in html
+    assert "$21.29 of $250" in html
+    assert f"$228.71 left · expires {day}" in html
+    assert '<rect width="8.5"' in html
+    assert "locked" not in html.split("Cloud session credit")[1].split("</aside>")[0]
+
+
+def test_grant_row_shows_why_it_is_locked(settings, store, secrets) -> None:
+    now = int(time.time())
+    _grant_row(store, now, 36 * 86400, locked_reason="org_disabled")
+    html = _grant_page(settings, store, secrets, now)
+    assert "· locked: org_disabled" in html
+
+
+def test_expired_grant_row(settings, store, secrets) -> None:
+    now = int(time.time())
+    day = _grant_row(store, now, -2 * 86400)
+    html = _grant_page(settings, store, secrets, now)
+    assert f"expired {day} · $228.71 unused" in html
+    assert "left ·" not in html.split("Cloud session credit")[1].split("</aside>")[0]
+
+
+def test_grant_row_absent_after_7_days(settings, store, secrets) -> None:
+    now = int(time.time())
+    _grant_row(store, now, -8 * 86400)
+    html = _grant_page(settings, store, secrets, now)
+    assert "Cloud session credit" not in html
+    assert store.latest_grants()  # the row stays in the database
+
+
+def _this_week_breakdown(store, now: int, rows=None):
+    from quotalens.budget import week_key
+    from quotalens.parse import SurfaceBreakdown, SurfaceShare
+
+    monday = datetime.fromisoformat(week_key(now)).replace(hour=1, tzinfo=UTC)
+    shares = rows or [
+        SurfaceShare("claude_code", "Claude Code", 23.0),
+        SurfaceShare("chat", "Chats", 1.0),
+        SurfaceShare("cowork", "Cowork", 76.0),
+        SurfaceShare("other", "Other", 0.0),
+    ]
+    iso = datetime.fromtimestamp(now, UTC).isoformat()
+    store.record_breakdown(now, SurfaceBreakdown(iso, monday.isoformat(), shares))
+
+
+def test_where_quota_went_breakdown(settings, store, secrets) -> None:
+    now = int(time.time())
+    _this_week_breakdown(store, now)
+    html = _grant_page(settings, store, secrets, now)
+    section = html.split("Where the quota went")[1].split("</section>")[0]
+    assert "Share of this week" in section
+    # the seeded Weekly - all models meter reads 38%: 76% of it is 29% of the limit
+    assert "Cowork" in section and "76%" in section and "≈ 29%" in section
+    assert section.index("Claude Code") < section.index("Chats") < section.index("Cowork")
+    assert "Anthropic's own split of this week's usage, as of " in section
+    assert "≈ is share × Weekly — all models; an estimate." in section
+    assert "For per-skill and per-project detail: <code>claude /usage</code>" in section
+    assert 'fill="var(--s2)"' in section and 'fill="var(--txt-far)"' in section  # other = muted
+    assert "var(--s1)" not in section and "style=" not in section  # amber is the session only
+
+
+def test_where_quota_went_fallback(settings, store, secrets) -> None:
+    now = int(time.time())
+    html = _grant_page(settings, store, secrets, now)  # no split stored
+    assert "what spent it" in html and "Share of this week" not in html
+    # a split stored for an earlier week is not where this week's quota went
+    _this_week_breakdown(store, now - 14 * 86400)
+    assert "Share of this week" not in _grant_page(settings, store, secrets, now)
+
+
+# -- the plan beside the mark (WP-34) -------------------------------------------------
+
+
+def _brand(settings, store, secrets) -> str:
+    now = int(time.time())
+    _seed(store, now)
+    app = create_app(settings, store, secrets)
+    app.state.qw.poller.status.state = "ok"
+    app.state.qw.poller.status.last_success_ts = now
+    with TestClient(app) as tc:
+        html = tc.get("/").text
+    brand = r'<span class="brand">.*?</svg>[^<]*(?:<span class="plan">[^<]*</span>)?</span>'
+    return re.search(brand, html, re.S).group(0)
+
+
+def test_header_names_the_plan_beside_the_mark(settings, store, secrets) -> None:
+    store.write_plan(1, "Max 20x", "default_claude_max_20x", '["chat","claude_max"]', None, None)
+    brand = _brand(settings, store, secrets)
+    assert brand.endswith('</svg>QuotaLens<span class="plan">Max 20x</span></span>')
+    assert "\u00b7" not in brand  # DESIGN 6: no middle-dot separators
+
+
+def test_header_plan_label_is_muted_by_the_secondary_text_token() -> None:
+    css = resources.files("quotalens.web").joinpath("app.css").read_text()
+    rule = re.search(r"([^{}]*\.plan\b[^{}]*)\{([^}]*)\}", css)
+    assert rule is not None and rule.group(2).strip() == "color:var(--txt-dim)"
+
+
+def test_header_says_nothing_without_a_plan(settings, store, secrets) -> None:
+    assert _brand(settings, store, secrets).endswith("</svg>QuotaLens</span>")
+
+
+def test_header_says_nothing_for_a_plan_it_cannot_name(settings, store, secrets) -> None:
+    store.write_plan(1, "raw_tier_x", "raw_tier_x", '["claude_ultra"]', None, None)
+    assert _brand(settings, store, secrets).endswith("</svg>QuotaLens</span>")
+
+
+def test_the_plan_changes_nothing_but_the_header(settings, store, secrets) -> None:
+    # Informational only: a Pro label over Max readings still draws the Fable meter.
+    store.write_plan(1, "Pro", "default_claude_pro", '["chat","claude_pro"]', None, None)
+    now = int(time.time())
+    _seed(store, now)
+    app = create_app(settings, store, secrets)
+    app.state.qw.poller.status.state = "ok"
+    app.state.qw.poller.status.last_success_ts = now
+    with TestClient(app) as tc:
+        html = tc.get("/").text
+    assert 'QuotaLens<span class="plan">Pro</span>' in html
+    assert html.count('class="meter"') == 3 and ">Weekly — Fable " in html
+
+
+def test_a_vendor_label_cannot_close_the_chart_data_script(settings, store, secrets) -> None:
+    """Series labels come from the payload and go into a <script type="application/json">.
+
+    ``json.dumps`` leaves ``</script>`` as is, so a label carrying it would end the
+    block and the rest would run as markup -- and no CSP header stands behind it.
+    """
+    import json
+    import re
+
+    now = int(time.time())
+    evil = "Fable</script><img src=x>"
+    for i in range(3):
+        store.record_quota(
+            now - (2 - i) * 60,
+            [
+                QuotaReading("five_hour", "5-hour", 20 + i, None, "normal", True),
+                QuotaReading("limit:fable", evil, 30, "r3", "normal", False),
+            ],
+        )
+    app = create_app(settings, store, secrets)
+    app.state.qw.poller.status.state = "ok"
+    app.state.qw.poller.status.last_success_ts = now
+    with TestClient(app) as tc:
+        html = tc.get("/").text
+
+    block = re.search(r'<script type="application/json" id="chart-data">(.*?)</script>', html, re.S)
+    assert block is not None
+    assert "<" not in block.group(1)
+    labels = [s["label"] for s in json.loads(block.group(1))["series"]]
+    assert any("</script><img src=x>" in label for label in labels), labels
+    assert "<img src=x>" not in html

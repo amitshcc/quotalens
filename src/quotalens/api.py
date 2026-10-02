@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from dataclasses import field as dc_field
@@ -25,7 +25,20 @@ from fastapi.responses import (
     StreamingResponse,
 )
 
-from quotalens import __version__, notify, origin_guard, retention, status
+from quotalens import (
+    __version__,
+    credits,
+    grants,
+    notify,
+    origin_guard,
+    plan,
+    retention,
+    status,
+    surfaces,
+    updates,
+    weeks,
+)
+from quotalens.about_view import build_about, render_about, render_about_page
 from quotalens.burn import burn_rate
 from quotalens.config import (
     CONFIG_KEYS_BY_NAME,
@@ -38,6 +51,7 @@ from quotalens.config import (
 from quotalens.dashboard import (
     as_json,
     build_dashboard,
+    current_quota,
     display_label,
     window_has_lapsed,
     window_is_stale,
@@ -50,9 +64,11 @@ from quotalens.export import (
     json_stream,
     resolve,
 )
+from quotalens.heatmap import compute_heatmap
 from quotalens.metrics import CONTENT_TYPE as METRICS_CONTENT_TYPE
 from quotalens.metrics import collect as collect_metrics
 from quotalens.metrics import render as render_metrics
+from quotalens.pace import compute_pace
 from quotalens.poller import ClientFactory, Poller, spend_as_dict
 from quotalens.render import (
     favicon_svg,
@@ -64,7 +80,7 @@ from quotalens.render import (
 from quotalens.secrets import Redactor, SecretStore, global_redactor
 from quotalens.sessions import rebuild as rebuild_sessions
 from quotalens.settings_view import PANEL_KEYS, apply_form, build_view, shrink_impact
-from quotalens.state import collector_state
+from quotalens.state import OK, collector_state
 from quotalens.status import StatusWatcher, selected_vendors
 from quotalens.store import Store
 from quotalens.views import ViewOptions, parse_view
@@ -154,6 +170,22 @@ async def _watch_status(watcher: StatusWatcher) -> None:
         await asyncio.sleep(STATUS_TICK_S)
 
 
+BACKFILL_FAILED_KIND = "backfill_failed"
+
+
+def _guarded_backfill(store: Store, name: str, backfill: Callable[[], Any]) -> None:
+    """Run one startup backfill; a failure becomes an event and a log line, never a crash."""
+    try:
+        backfill()
+    except Exception as exc:
+        detail = f"{name}: {type(exc).__name__}"
+        log.warning("startup backfill failed, serving without it: %s", detail)
+        try:
+            store.record_event(BACKFILL_FAILED_KIND, detail, ts=int(time.time()))
+        except Exception:  # the store itself is failing; the log line is all there is
+            log.exception("could not record backfill_failed")
+
+
 def create_app(
     settings: Settings,
     store: Store,
@@ -174,9 +206,22 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        # keep_underivable: retention may have removed the quota rows behind older
-        # windows, and this table is then the only record of them.
-        rebuild_sessions(store, int(time.time()), keep_underivable=True)
+        # Each is derived and idempotent, so a failure costs only its own table until
+        # the next start: it is recorded (name and exception type, never payload
+        # text) and the server starts anyway. One odd stored sample must not take
+        # the dashboard down.
+        for name, backfill in (
+            # keep_underivable: retention may have removed the quota rows behind older
+            # windows, and this table is then the only record of them.
+            ("sessions", lambda: rebuild_sessions(store, int(time.time()), keep_underivable=True)),
+            # Weekly resets are recomputable from the samples and needed by the ledger,
+            # so they backfill on start the way session windows do rather than waiting
+            # for a command. Idempotent: a repeat start writes nothing.
+            ("weeks", lambda: weeks.backfill(store, int(time.time()))),
+            ("grants", lambda: credits.backfill_grants(store)),
+            ("breakdown", lambda: credits.backfill_breakdown(store)),
+        ):
+            _guarded_backfill(store, name, backfill)
         if settings.poll_enabled:
             poller.start()
         status_task = asyncio.create_task(_watch_status(watcher))
@@ -283,6 +328,27 @@ def create_app(
         return HTMLResponse(
             _settings_html(view, bool(fragment)), headers={"Cache-Control": "no-store"}
         )
+
+    def _about_html(fragment: bool, note: str = "") -> HTMLResponse:
+        view = build_about(state.settings, state.store, note=note)
+        html = render_about(view) if fragment else render_about_page(view)
+        return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+    @app.get("/about", response_class=HTMLResponse, include_in_schema=False)
+    def about_page(fragment: int = 0) -> HTMLResponse:
+        return _about_html(bool(fragment))
+
+    @app.post("/about/check", include_in_schema=False)
+    async def about_check(request: Request) -> Response:
+        """The button: skips the 24 h rule, not the 60 s one, and says when refused."""
+        now = int(time.time())
+        wait = updates.manual_wait(state.store, now)
+        if not wait:
+            await asyncio.to_thread(updates.check, state.store, now, True)
+        note = f"Checked a moment ago; try again in {wait} s." if wait else ""
+        if _wants_fragment(request):
+            return _about_html(True, note)
+        return RedirectResponse(url="/about", status_code=303)
 
     @app.post("/settings", include_in_schema=False)
     async def settings_save(request: Request) -> Response:
@@ -458,10 +524,24 @@ def create_app(
     def events(
         limit: int = Query(50, ge=1, le=500),
         kind: str | None = Query(None, max_length=40),
+        after_id: int | None = Query(None, ge=0),
     ) -> dict[str, Any]:
-        """Anomalies, threshold crossings and poll failures, newest first."""
-        rows = state.store.recent_events(limit=limit, kind=kind)
-        return {"events": [e.as_dict() for e in rows], "now_ts": int(time.time())}
+        """Anomalies, threshold crossings and poll failures, newest first.
+
+        With ``after_id`` (exclusive) they come in the order written, and ``next_after_id``
+        is the cursor to pass back. Every row carries its ``id``.
+        """
+        now = int(time.time())
+        if after_id is None:
+            rows = state.store.recent_events(limit=limit, kind=kind)
+            return {"events": [e.as_dict() for e in rows], "now_ts": now}
+        rows = state.store.events_after(after_id, limit, kind)
+        next_after_id = rows[-1].id if rows else after_id
+        return {
+            "events": [e.as_dict() for e in rows],
+            "next_after_id": next_after_id,
+            "now_ts": now,
+        }
 
     @app.get("/api/export.csv", include_in_schema=True)
     def export_csv(
@@ -506,9 +586,15 @@ def create_app(
         overall = "never_polled" if never_polled else poller_status.state
         now = int(time.time())
         collector = collector_state(poller_status, state.settings.poll_interval_s, now)
+        update = updates.stored_state(state.store)
+        found = plan.stored(state.store)
         return {
             "status": overall,
             "version": __version__,
+            "profile": state.settings.profile or "default",
+            "latest_version": update.latest,
+            "update_checked_ts": update.checked_ts,
+            "plan": found.as_dict() if found is not None else None,
             "now_ts": now,
             "started_ts": poller_status.started_ts,
             "uptime_s": now - poller_status.started_ts,
@@ -529,10 +615,41 @@ def create_app(
             ),
         }
 
+    def _version_body(accepted: bool | None = None, retry_in_s: int = 0) -> dict[str, Any]:
+        update = updates.stored_state(state.store)
+        body: dict[str, Any] = {
+            "current": update.current,
+            "latest": update.latest,
+            "checked_ts": update.checked_ts,
+            "error": update.error,
+            "update_available": update.available,
+            "upgrade_command": updates.upgrade_command(),
+        }
+        if accepted is not None:
+            body["accepted"] = accepted
+            body["retry_in_s"] = retry_in_s
+        return body
+
+    @app.get("/api/version")
+    def version() -> dict[str, Any]:
+        """The installed version and what PyPI last said; read from the database, no request."""
+        return _version_body()
+
+    @app.post("/api/version/check")
+    async def version_check() -> dict[str, Any]:
+        """Ask PyPI now. Skips the 24 h rule, not the 60 s one (`accepted` says which)."""
+        now = int(time.time())
+        wait = updates.manual_wait(state.store, now)
+        if not wait:
+            await asyncio.to_thread(updates.check, state.store, now, True)
+        return _version_body(accepted=not wait, retry_in_s=wait)
+
     @app.get("/api/quota/current")
     def quota_current() -> dict[str, Any]:
         """The latest reading per window, and whether each one is still current.
 
+        A window that has stopped arriving (absent from the last three good polls and
+        silent for 15 minutes) is not listed; its history stays in `/api/quota/series`.
         `pct` is null unless the reading is current, and the value moves to
         `last_pct` when it is not. A consumer reading `pct` therefore cannot reach
         the conclusion the page stopped reaching: that a window which closed at
@@ -540,7 +657,7 @@ def create_app(
         say which of the three reasons applies.
         """
         now = int(time.time())
-        rows = state.store.latest_quota()
+        rows = current_quota(state.store)  # a window that stopped arriving is not listed
         readings = []
         for r in rows:
             lapsed = window_has_lapsed(r, now)
@@ -595,6 +712,65 @@ def create_app(
             "now_ts": dash.now,
             **({} if report is None else report.as_dict()),
         }
+
+    @app.get("/api/weeks")
+    def weeks_ledger() -> dict[str, Any]:
+        """One row per weekly reset, most recent first, plus the two-week verdict.
+
+        Its own route rather than a key on the budget payload: the budget answers a
+        question about the week you are in, this answers one about the weeks behind you,
+        and it changes on a different clock. Same rows as ``table=weeks`` in the export.
+        """
+        rows = weeks.week_rows(state.store)
+        # `mostly` is additive and API-only: the export keeps its documented columns.
+        mostly = surfaces.mostly_by_week(state.store)
+        shown = [{**r, "mostly": mostly.get(r["week"])} for r in rows]
+        return {"now_ts": int(time.time()), "weeks": shown, "verdict": weeks.verdict(rows)}
+
+    @app.get("/api/breakdown")
+    def surface_breakdown() -> dict[str, Any]:
+        """The newest stored split of a week's usage by surface; ``breakdown`` is null before one.
+
+        Shares are of that week's usage, not of the limit; ``of_limit`` is the estimate
+        (share x Weekly-all percent, whole percent) and is null unless the split is this week's.
+        """
+        now = int(time.time())
+        weekly = next((r.pct for r in current_quota(state.store) if r.window == "seven_day"), None)
+        return {
+            "now_ts": now,
+            "breakdown": surfaces.snapshot_dict(state.store, now, weekly),
+        }
+
+    @app.get("/api/pace")
+    def weekly_pace() -> dict[str, Any]:
+        """Weekly — all models at the reset, projected from the week so far. An estimate.
+
+        ``shown`` is false below 24 hours into the week, without a complete prior week, or
+        while the collector's readings are withheld; ``reason`` says which. The figures are
+        the central estimate and its spread, never one number alone.
+        """
+        now = int(time.time())
+        collector = collector_state(state.poller.status, state.settings.poll_interval_s, now)
+        pace = compute_pace(state.store, now, withheld=collector.kind != OK)
+        return {"now_ts": now, **pace.as_dict()}
+
+    @app.get("/api/heatmap")
+    def usage_heatmap() -> dict[str, Any]:
+        """Average weekly-all points gained per local hour, Monday first, over the last four
+        complete weeks. ``collecting`` until there are two; a null hour was never collected."""
+        now = int(time.time())
+        return {"now_ts": now, **compute_heatmap(state.store, now).as_dict()}
+
+    @app.get("/api/credits")
+    def credit_grants() -> dict[str, Any]:
+        """Credit grants (the cloud-session credit): dollars as floats, expiry as given.
+
+        Not quota windows, so not in ``/api/quota``. Expired grants stay for a week, like
+        the page; the rows remain in the database and in ``table=credits``.
+        """
+        now = int(time.time())
+        rows = [r for r in state.store.latest_grants() if grants.is_visible(r, now)]
+        return {"grants": [grants.grant_as_dict(r) for r in rows]}
 
     @app.get("/api/burn")
     def burn(

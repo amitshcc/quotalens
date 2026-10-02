@@ -21,6 +21,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 PCT_KEYS = ("utilization", "percent", "pct", "percentage", "usage_percent")
@@ -49,6 +50,41 @@ class QuotaReading:
 
 
 @dataclass(frozen=True)
+class CreditGrant:
+    """A dollar credit with an expiry (the Claude Code cloud-session credit), not a quota window.
+
+    Money is minor units of USD: the block says ``limit_dollars`` and carries no currency.
+    """
+
+    key: str
+    label: str
+    used_minor: int
+    limit_minor: int
+    remaining_minor: int
+    pct: float  # percentage points of the limit used
+    expires_at: str | None  # the block's ``resets_at``: for a grant that is its expiry
+    locked_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class SurfaceShare:
+    """One surface's share of this week's usage (shares sum to ~100, not of the limit)."""
+
+    key: str
+    label: str
+    percent: float
+
+
+@dataclass(frozen=True)
+class SurfaceBreakdown:
+    """The vendor's own weekly split by surface (``seven_day_breakdown``)."""
+
+    as_of: str | None
+    window_started_at: str | None
+    rows: list[SurfaceShare]
+
+
+@dataclass(frozen=True)
 class IgnoredBlock:
     key: str
     reason: str
@@ -59,6 +95,8 @@ class UsageParse:
     readings: list[QuotaReading]
     ignored: list[IgnoredBlock] = field(default_factory=list)
     fallback_used: bool = False  # readings came from the generic tree walk
+    grants: list[CreditGrant] = field(default_factory=list)
+    breakdown: SurfaceBreakdown | None = None
 
 
 @dataclass(frozen=True)
@@ -100,6 +138,11 @@ def _money_or_none(minor: int, reading: SpendReading) -> str | None:
         return format_money(minor, reading.exponent, reading.currency)
     except ValueError:
         return None
+
+
+GRANT_CURRENCY = "USD"
+_GRANT_LABELS = {"iguana_necktie": "Cloud session credit"}
+KNOWN_GRANT_KEYS = tuple(_GRANT_LABELS)
 
 
 class ParseError(ValueError):
@@ -160,6 +203,142 @@ def _pct_of(obj: dict[str, Any]) -> float | None:
     return None
 
 
+def _limit_dollars(obj: dict[str, Any]) -> float | None:
+    limit = _as_number(obj.get("limit_dollars"))
+    return limit if limit is not None and limit > 0 else None
+
+
+# No credit grant is this large: a block claiming one is a broken payload, and its amount
+# in cents would not fit a SQLite integer (audit A7: 1e308 raised OverflowError).
+MAX_GRANT_DOLLARS = 10_000_000
+GRANT_OUT_OF_RANGE = "credit amount out of range"
+_GRANT_AMOUNTS = ("limit_dollars", "used_dollars", "remaining_dollars")
+
+
+def _raw_number(value: Any) -> float | None:
+    """A JSON number as given, infinities and NaN included (``json`` accepts them)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def grant_out_of_range(obj: dict[str, Any]) -> bool:
+    """A grant-shaped block with an amount no grant has, or one that is not finite."""
+    amounts = (_raw_number(obj.get(key)) for key in _GRANT_AMOUNTS)
+    return any(a is not None and not abs(a) <= MAX_GRANT_DOLLARS for a in amounts)
+
+
+def is_grant_block(obj: Any, key: str = "") -> bool:
+    """A credit grant is recognised by shape: a positive ``limit_dollars``, not by its codename.
+
+    The one exception is a window we already know by name (``five_hour`` and the
+    weeklies): a dollar-denominated variant of those is still a window.
+    """
+    if key in _WINDOW_LABELS or not isinstance(obj, dict):
+        return False
+    limit = _raw_number(obj.get("limit_dollars"))
+    return limit is not None and not limit <= 0  # positive, or a non-finite amount
+
+
+def grant_label(key: str) -> str:
+    return _GRANT_LABELS.get(key) or f"{key.replace('_', ' ')} (unrecognised)"
+
+
+def _minor(dollars: float) -> int:
+    return round(dollars * 100)
+
+
+def _grant_from_block(key: str, block: dict[str, Any]) -> CreditGrant | None:
+    limit = _limit_dollars(block)
+    if limit is None or grant_out_of_range(block):
+        return None
+    used = _as_number(block.get("used_dollars"))
+    remaining = _as_number(block.get("remaining_dollars"))
+    if used is None and remaining is None:
+        return None  # nothing to say about how much of it is gone
+    if used is None:
+        used = limit - (remaining or 0.0)
+    if remaining is None:
+        remaining = limit - used
+    pct = _pct_of(block)
+    return CreditGrant(
+        key=key,
+        label=grant_label(key),
+        used_minor=_minor(used),
+        limit_minor=_minor(limit),
+        remaining_minor=_minor(remaining),
+        pct=pct if pct is not None else round(used / limit * 100, 2),
+        expires_at=_reset_of(block),
+        locked_reason=_as_str(block.get("locked_reason")),
+    )
+
+
+def parse_grants(payload: Any) -> list[CreditGrant]:
+    """Every credit grant in a ``/usage`` payload; empty for anything else."""
+    if not isinstance(payload, dict):
+        return []
+    found = (
+        _grant_from_block(key, value)
+        for key, value in payload.items()
+        if key != "limits" and is_grant_block(value, key)
+    )
+    return [grant for grant in found if grant is not None]
+
+
+BREAKDOWN_KEY = "seven_day_breakdown"
+
+
+def _whole_hour(value: str | None) -> str | None:
+    """``window_started_at`` rounded to the nearest whole hour, UTC, as an ISO string.
+
+    The vendor derives it from a reset time that carries a fresh sub-second jitter on every
+    poll (``01:00:00.176587``, then ``01:00:00.898435``), so as given it names a different
+    "week" each minute. The week itself starts on an hour; rounding gives it one name.
+    Anything that does not parse is kept as given.
+    """
+    if value is None:
+        return None
+    try:
+        start = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return value
+    if start.tzinfo is None:
+        return value
+    start = (start.astimezone(UTC) + timedelta(minutes=30)).replace(
+        minute=0, second=0, microsecond=0
+    )
+    return start.isoformat()
+
+
+def parse_breakdown(payload: Any) -> SurfaceBreakdown | None:
+    """The per-surface weekly split, or None when absent or unusable. Never raises.
+
+    Percentages are kept as given: a sum other than 100 is the vendor's rounding,
+    not ours to correct. Rows without a key or a number are skipped.
+    """
+    block = payload.get(BREAKDOWN_KEY) if isinstance(payload, dict) else None
+    rows_raw = block.get("rows") if isinstance(block, dict) else None
+    if not isinstance(rows_raw, list):
+        return None
+    rows: list[SurfaceShare] = []
+    for raw in rows_raw:
+        if not isinstance(raw, dict):
+            continue
+        key = _as_str(raw.get("key"))
+        percent = _pct_of(raw)
+        if key is None or percent is None:
+            continue
+        label = _as_str(raw.get("display_name")) or key
+        rows.append(SurfaceShare(key, label, percent))
+    if not rows:
+        return None
+    return SurfaceBreakdown(
+        as_of=_as_str(block.get("as_of")),
+        window_started_at=_whole_hour(_as_str(block.get("window_started_at"))),
+        rows=rows,
+    )
+
+
 def _severity_of(obj: dict[str, Any]) -> str | None:
     raw = _as_str(obj.get("severity"))
     return raw.lower() if raw and raw.lower() in SEVERITIES else None
@@ -189,6 +368,10 @@ def _top_level_windows(payload: dict[str, Any]) -> tuple[list[QuotaReading], lis
     ignored: list[IgnoredBlock] = []
     for key, value in payload.items():
         if key == "limits" or key in NOT_A_WINDOW or not isinstance(value, dict):
+            continue
+        if is_grant_block(value, key):
+            if grant_out_of_range(value):
+                ignored.append(IgnoredBlock(key, GRANT_OUT_OF_RANGE))  # neither grant nor window
             continue
         pct = _pct_of(value)
         if pct is None:
@@ -272,6 +455,8 @@ def _walk(node: Any, path: tuple[str, ...], out: list[QuotaReading], depth: int)
     if depth > MAX_WALK_DEPTH:
         return
     if isinstance(node, dict):
+        if is_grant_block(node, path[-1] if path else ""):
+            return  # a dollar credit, not a quota window
         pct = _pct_of(node)
         if pct is not None and path:
             key = "/".join(path)
@@ -292,12 +477,16 @@ def parse_usage(payload: Any) -> UsageParse:
         raise ParseError(f"usage payload is {type(payload).__name__}, expected object")
     readings, ignored = _top_level_windows(payload)
     readings = _fold_limits(payload, readings, ignored)
+    grants = parse_grants(payload)
+    breakdown = parse_breakdown(payload)
     if readings:
-        return UsageParse(_dedupe(readings), ignored)
+        return UsageParse(_dedupe(readings), ignored, grants=grants, breakdown=breakdown)
     fallback: list[QuotaReading] = []
     _walk(payload, (), fallback, 0)
     if fallback:
-        return UsageParse(_dedupe(fallback), ignored, fallback_used=True)
+        return UsageParse(
+            _dedupe(fallback), ignored, fallback_used=True, grants=grants, breakdown=breakdown
+        )
     keys = sorted(str(k) for k in payload)[:20]
     raise ParseError(f"usage payload had no recognizable quota fields; top-level keys: {keys}")
 

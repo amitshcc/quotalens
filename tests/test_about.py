@@ -1,0 +1,256 @@
+"""The About page: works with JavaScript off and reports what the check found."""
+
+from __future__ import annotations
+
+import json
+import re
+
+import pytest
+from fastapi.testclient import TestClient
+
+from quotalens import __version__, status, updates
+from quotalens.api import create_app
+from quotalens.render import ICONS, UPDATE_DOT
+
+EVIL = "https://evil.example"
+PYPI_NEWER = {"info": {"version": "99.0.0"}}
+
+
+@pytest.fixture
+def app(settings, store, secrets, tmp_path):
+    return create_app(settings, store, secrets, config_dir=tmp_path)
+
+
+@pytest.fixture
+def pypi(monkeypatch):
+    """What PyPI answers; the test sets ``pypi.answer`` and reads ``pypi.calls``."""
+
+    class Fake:
+        answer: object = PYPI_NEWER
+        calls = 0
+
+    fake = Fake()
+
+    def fetch(url, timeout_s=5.0, headers=None):
+        if url != updates.PYPI_URL:  # the vendor-status watcher shares this function
+            return {"status": {"indicator": "none", "description": ""}}
+        fake.calls += 1
+        if isinstance(fake.answer, Exception):
+            raise fake.answer
+        return fake.answer
+
+    monkeypatch.setattr(status, "fetch", fetch)
+    return fake
+
+
+def test_about_page_no_js(app) -> None:
+    with TestClient(app) as tc:
+        res = tc.get("/about")
+    html = res.text
+    assert res.status_code == 200 and html.startswith("<!doctype html>")
+    assert "Local monitor for your Claude subscription quota." in html
+    assert "never sends a prompt" in html
+    assert __version__ in html and "not checked yet" in html
+    assert 'action="/about/check"' in html and "Check for updates" in html
+    for label in ("Python", "Installed with", "Data directory", "Database", "Profile"):
+        assert f"<label>{label}</label>" in html
+    for label in ("Port", "Poll interval", "Schema version", "Website", "Source", "Licence"):
+        assert f"<label>{label}</label>" in html
+    assert "Unofficial; not affiliated with or endorsed by Anthropic." in html
+    assert "#the-terms-stated-plainly" in html
+    assert '<script src="/static/app.js">' in html  # enhancement only; nothing inline
+    # The icon sprite carries its own hidden-size attribute on every page; the About
+    # markup itself must add no inline style or handler.
+    assert "style=" not in html.replace(ICONS, "") and "onclick" not in html
+
+
+def test_about_fragment(app) -> None:
+    with TestClient(app) as tc:
+        res = tc.get("/about?fragment=1")
+    assert res.status_code == 200 and "<html" not in res.text
+    assert res.text.startswith('<section class="sset" id="about"')
+
+
+def test_about_check_post_origin_guarded(app, pypi) -> None:
+    with TestClient(app) as tc:
+        refused = tc.post("/about/check", headers={"Origin": EVIL}, follow_redirects=False)
+        assert refused.status_code == 403 and pypi.calls == 0
+        ok = tc.post(
+            "/about/check", headers={"Origin": "http://127.0.0.1:8787"}, follow_redirects=False
+        )
+    assert ok.status_code == 303 and ok.headers["location"] == "/about" and pypi.calls == 1
+
+
+def test_about_shows_update_available(app, pypi, monkeypatch) -> None:
+    monkeypatch.delenv(updates.ENV_OPT_OUT, raising=False)
+    with TestClient(app) as tc:
+        tc.post("/about/check", follow_redirects=False)
+        html = tc.get("/about").text
+    assert "99.0.0 available" in html
+    assert 'href="https://github.com/amitshcc/quotalens/releases/tag/v99.0.0"' in html
+    assert updates.upgrade_command() in html
+
+
+def test_about_up_to_date_and_unreachable(app, pypi) -> None:
+    pypi.answer = {"info": {"version": __version__}}
+    with TestClient(app) as tc:
+        tc.post("/about/check", follow_redirects=False)
+        assert f"{__version__} \u2014 you\u2019re up to date" in tc.get("/about").text
+        assert "available" not in tc.get("/about").text
+
+
+def test_about_failure_is_quiet(app, pypi, store) -> None:
+    pypi.answer = status.StatusFetchError("HTTP 503")
+    with TestClient(app) as tc:
+        tc.post("/about/check", follow_redirects=False)
+        html = tc.get("/about").text
+    assert re.search(r"Couldn\u2019t reach PyPI at \d\d:\d\d\.", html)
+    assert store.recent_events(kind="poll_error") == []  # never an alarm
+
+
+def test_about_check_is_rate_limited_and_says_so(app, pypi) -> None:
+    with TestClient(app) as tc:
+        tc.post("/about/check?fragment=1")
+        second = tc.post("/about/check?fragment=1")
+    assert pypi.calls == 1
+    assert "try again in" in second.text
+
+
+def test_about_no_external_requests_in_html(app) -> None:
+    with TestClient(app) as tc:
+        html = tc.get("/about").text
+    assert html.count('class="fform"') == 1  # one grid, so every label column lines up
+    assert not re.findall(r'\bsrc="https?://', html)
+    assert not re.findall(r'<link[^>]+href="https?://', html)
+    allowed = {
+        "https://quotalens.com",
+        "https://github.com/amitshcc/quotalens",
+        "https://github.com/amitshcc/quotalens/issues/new/choose",
+        "https://github.com/amitshcc/quotalens#the-terms-stated-plainly",
+    }
+    assert set(re.findall(r'href="(https?://[^"]+)"', html)) == allowed
+
+
+def test_about_csp_matches_the_dashboard(app) -> None:
+    # No Content-Security-Policy header is sent today (both sides are None); this
+    # pins that /about neither adds one nor differs from /.
+    with TestClient(app) as tc:
+        assert tc.get("/about").headers.get("content-security-policy") == tc.get("/").headers.get(
+            "content-security-policy"
+        )
+
+
+# -- the entry points -----------------------------------------------------------
+
+
+def _footer(html: str) -> str:
+    return re.search(r"<footer>.*?</footer>", html, re.S).group(0)
+
+
+def test_footer_links_about(app) -> None:
+    with TestClient(app) as tc:
+        html = tc.get("/").text
+    assert f'<a href="/about">QuotaLens {__version__}</a>' in _footer(html)
+    assert "available" not in _footer(html)
+    assert "Settings (update available)" not in html and UPDATE_DOT not in html
+
+
+def test_footer_update_hint(app, pypi) -> None:
+    with TestClient(app) as tc:
+        tc.post("/about/check", follow_redirects=False)
+        html = tc.get("/").text
+        fragment = tc.get("/api/dashboard/fragment").text
+    assert '<a href="/about">99.0.0 available</a>' in _footer(html)
+    header = html.split("</header>")[0]
+    assert header.count(UPDATE_DOT) == 2  # the gear link and the gear button
+    assert (
+        header.count('aria-hidden="true" viewBox="0 0 16 16"><use href="#i-settings"/>') == 2
+    )  # else the dot is drawn in pixels and clipped
+    assert "amber" not in UPDATE_DOT and "warn" not in UPDATE_DOT
+    assert "Settings (update available)" in header
+    assert "99.0.0 available" in fragment  # the refresh keeps it
+
+
+def test_settings_dialog_links_about(app) -> None:
+    with TestClient(app) as tc:
+        html = tc.get("/").text
+    dialog = re.search(r"<dialog.*?</dialog>", html, re.S).group(0)
+    assert '<a href="/about" id="about-link">About</a>' in dialog
+
+
+# -- the API --------------------------------------------------------------------
+
+
+def test_api_version_and_health(app, pypi, monkeypatch) -> None:
+    monkeypatch.setattr(updates, "upgrade_command", lambda prefix=None: "pip install -U quotalens")
+    with TestClient(app) as tc:
+        before = tc.get("/api/version").json()
+        assert before == {
+            "current": __version__,
+            "latest": None,
+            "checked_ts": None,
+            "error": None,
+            "update_available": False,
+            "upgrade_command": "pip install -U quotalens",
+        }
+        assert tc.get("/api/health").json()["latest_version"] is None
+        checked = tc.post("/api/version/check").json()
+        assert checked["accepted"] is True and checked["latest"] == "99.0.0"
+        assert checked["update_available"] is True and checked["checked_ts"]
+        health = tc.get("/api/health").json()
+        assert health["latest_version"] == "99.0.0"
+        assert health["update_checked_ts"] == checked["checked_ts"]
+        again = tc.post("/api/version/check").json()
+    assert again["accepted"] is False and 0 < again["retry_in_s"] <= 60
+    assert pypi.calls == 1  # the second press never left the machine
+
+
+def test_api_version_check_is_origin_guarded(app, pypi) -> None:
+    with TestClient(app) as tc:
+        res = tc.post("/api/version/check", headers={"Origin": EVIL})
+    assert res.status_code == 403 and pypi.calls == 0
+
+
+# -- the plan (WP-34) ----------------------------------------------------------------
+
+
+def _store_plan(store, label, tier, capabilities) -> None:
+    store.write_plan(1_000_000, label, tier, json.dumps(capabilities), "stripe_subscription", None)
+
+
+def test_about_says_plan_not_reported_before_bootstrap_answered(app) -> None:
+    with TestClient(app) as tc:
+        html = tc.get("/about").text
+        health = tc.get("/api/health").json()
+    assert "<label>Plan</label><code>not reported</code>" in html
+    assert health["plan"] is None
+
+
+def test_about_and_health_show_the_plan(app, store) -> None:
+    _store_plan(store, "Max 20x", "default_claude_max_20x", ["chat", "claude_max"])
+    with TestClient(app) as tc:
+        html = tc.get("/about").text
+        fragment = tc.get("/about?fragment=1").text
+        health = tc.get("/api/health").json()
+    assert "<label>Plan</label><code>Max 20x (from your account)</code>" in html
+    assert "Max 20x (from your account)" in fragment
+    assert health["plan"] == {
+        "label": "Max 20x",
+        "tier": "default_claude_max_20x",
+        "capabilities": ["chat", "claude_max"],
+    }
+    assert "stripe_subscription" not in json.dumps(health)  # stored, not published
+
+
+def test_about_shows_an_unnamed_plan_by_its_tier(app, store) -> None:
+    _store_plan(store, "default_claude_ultra_9x", "default_claude_ultra_9x", ["claude_ultra"])
+    with TestClient(app) as tc:
+        html = tc.get("/about").text
+    assert "<label>Plan</label><code>default_claude_ultra_9x (from your account)</code>" in html
+
+
+def test_a_plan_label_is_escaped(app, store) -> None:
+    _store_plan(store, "<b>x</b>", "<b>x</b>", ["claude_ultra"])
+    with TestClient(app) as tc:
+        html = tc.get("/about").text
+    assert "<b>x</b>" not in html and "&lt;b&gt;x&lt;/b&gt;" in html
