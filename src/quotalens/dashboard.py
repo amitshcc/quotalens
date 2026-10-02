@@ -32,7 +32,7 @@ from quotalens.config import Settings
 from quotalens.grants import GrantView, build_grant_views
 from quotalens.heatmap import Heatmap, compute_heatmap
 from quotalens.pace import Pace, compute_pace
-from quotalens.parse import SpendReading, humanize
+from quotalens.parse import GRANT_OUT_OF_RANGE, SpendReading, humanize
 from quotalens.poller import PollerStatus
 from quotalens.runway import HourBar, Runway, compute_runway, hour_strip, median_peak
 from quotalens.sessions import (
@@ -787,9 +787,16 @@ def build_dashboard(
         diagnostics.append(subcap_detail)
     if chart.projection_note:
         diagnostics.append(chart.projection_note)
-    if status.ignored_blocks:
-        keys = ", ".join(b["key"] for b in status.ignored_blocks)
-        diagnostics.append(f"Payload blocks without a reset time, not charted: {keys}.")
+    out_of_range = [b["key"] for b in status.ignored_blocks if b["reason"] == GRANT_OUT_OF_RANGE]
+    undated = [b["key"] for b in status.ignored_blocks if b["reason"] != GRANT_OUT_OF_RANGE]
+    if undated:
+        diagnostics.append(
+            f"Payload blocks without a reset time, not charted: {', '.join(undated)}."
+        )
+    if out_of_range:
+        diagnostics.append(
+            f"Credit blocks with an amount out of range, ignored: {', '.join(out_of_range)}."
+        )
     notes = _transient_notes(status, now)
 
     events = _event_rows(store, EVENT_ROWS)

@@ -13,6 +13,7 @@ from quotalens.parse import (
     SurfaceShare,
     format_money,
     overage_pct,
+    parse_grants,
     parse_spend,
     parse_usage,
 )
@@ -466,3 +467,34 @@ def test_breakdown_week_name_ignores_subsecond_jitter() -> None:
         )
     }
     assert names == {"2026-09-28T01:00:00+00:00"}
+
+
+# -- grant amounts are bounded (WP-35) ---------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "amounts",
+    [
+        {"limit_dollars": 1e18, "used_dollars": 1.0},
+        {"limit_dollars": 10_000_001, "used_dollars": 1.0},
+        {"limit_dollars": float("inf"), "used_dollars": 1.0},
+        {"limit_dollars": 250, "used_dollars": 1e308},
+        {"limit_dollars": 250, "remaining_dollars": -1e18},
+    ],
+)
+def test_grant_limit_out_of_range_is_an_ignored_block(amounts) -> None:
+    payload = copy.deepcopy(USAGE_LIVE_2026_09)
+    payload["iguana_necktie"] = {"utilization": 1, "resets_at": "2026-11-05T07:59:00Z", **amounts}
+    parsed = parse_usage(payload)
+    assert parsed.grants == []
+    assert parse_grants(payload) == []
+    assert "iguana_necktie" not in {r.window for r in parsed.readings}
+    assert ("iguana_necktie", "credit amount out of range") in {
+        (b.key, b.reason) for b in parsed.ignored
+    }
+
+
+def test_grant_limit_at_the_bound_is_a_grant() -> None:
+    payload = copy.deepcopy(USAGE_LIVE_2026_09)
+    payload["iguana_necktie"] = {"limit_dollars": 10_000_000, "used_dollars": 2.5}
+    assert [g.limit_minor for g in parse_usage(payload).grants] == [1_000_000_000]

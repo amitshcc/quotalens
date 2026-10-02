@@ -251,3 +251,33 @@ def test_health_version_matches_package(settings, store, secrets) -> None:
 
     with _client(settings, store, secrets) as tc:
         assert tc.get("/api/health").json()["version"] == quotalens.__version__ == "2.0.0"
+
+
+# -- startup backfills never stop the app (WP-35) ----------------------------------------
+
+
+def test_backfill_failure_does_not_stop_startup(settings, store, secrets, monkeypatch) -> None:
+    from quotalens import credits
+
+    def broken(_store) -> int:
+        raise ValueError("payload text that must not reach the event")
+
+    ran = []
+    monkeypatch.setattr(credits, "backfill_grants", broken)
+    monkeypatch.setattr(credits, "backfill_breakdown", lambda s: ran.append("breakdown") or 0)
+    with _client(settings, store, secrets) as tc:
+        assert tc.get("/api/health").status_code == 200
+    failed = store.recent_events(kind="backfill_failed")
+    assert [e.detail for e in failed] == ["grants: ValueError"]
+    assert ran == ["breakdown"]  # the next backfill still ran
+
+
+def test_pathological_stored_sample_does_not_stop_startup(settings, store, secrets) -> None:
+    """A7: one stored sample with an absurd credit amount used to raise in the lifespan."""
+    window = {"utilization": 10, "resets_at": "2026-09-30T12:00:00+00:00"}
+    block = {"utilization": 1, "resets_at": "2026-11-05T07:59:00+00:00", "limit_dollars": 1e308}
+    block |= {"used_dollars": 1e308}
+    store.record_sample(100, "usage", {"five_hour": window, "iguana_necktie": block})
+    with _client(settings, store, secrets) as tc:
+        assert tc.get("/api/credits").json() == {"grants": []}
+    assert store.recent_events(kind="backfill_failed") == []

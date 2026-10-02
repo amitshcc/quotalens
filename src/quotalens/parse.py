@@ -208,13 +208,36 @@ def _limit_dollars(obj: dict[str, Any]) -> float | None:
     return limit if limit is not None and limit > 0 else None
 
 
+# No credit grant is this large: a block claiming one is a broken payload, and its amount
+# in cents would not fit a SQLite integer (audit A7: 1e308 raised OverflowError).
+MAX_GRANT_DOLLARS = 10_000_000
+GRANT_OUT_OF_RANGE = "credit amount out of range"
+_GRANT_AMOUNTS = ("limit_dollars", "used_dollars", "remaining_dollars")
+
+
+def _raw_number(value: Any) -> float | None:
+    """A JSON number as given, infinities and NaN included (``json`` accepts them)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def grant_out_of_range(obj: dict[str, Any]) -> bool:
+    """A grant-shaped block with an amount no grant has, or one that is not finite."""
+    amounts = (_raw_number(obj.get(key)) for key in _GRANT_AMOUNTS)
+    return any(a is not None and not abs(a) <= MAX_GRANT_DOLLARS for a in amounts)
+
+
 def is_grant_block(obj: Any, key: str = "") -> bool:
     """A credit grant is recognised by shape: a positive ``limit_dollars``, not by its codename.
 
     The one exception is a window we already know by name (``five_hour`` and the
     weeklies): a dollar-denominated variant of those is still a window.
     """
-    return key not in _WINDOW_LABELS and isinstance(obj, dict) and _limit_dollars(obj) is not None
+    if key in _WINDOW_LABELS or not isinstance(obj, dict):
+        return False
+    limit = _raw_number(obj.get("limit_dollars"))
+    return limit is not None and not limit <= 0  # positive, or a non-finite amount
 
 
 def grant_label(key: str) -> str:
@@ -227,7 +250,7 @@ def _minor(dollars: float) -> int:
 
 def _grant_from_block(key: str, block: dict[str, Any]) -> CreditGrant | None:
     limit = _limit_dollars(block)
-    if limit is None:
+    if limit is None or grant_out_of_range(block):
         return None
     used = _as_number(block.get("used_dollars"))
     remaining = _as_number(block.get("remaining_dollars"))
@@ -344,12 +367,11 @@ def _top_level_windows(payload: dict[str, Any]) -> tuple[list[QuotaReading], lis
     readings: list[QuotaReading] = []
     ignored: list[IgnoredBlock] = []
     for key, value in payload.items():
-        if (
-            key == "limits"
-            or key in NOT_A_WINDOW
-            or not isinstance(value, dict)
-            or is_grant_block(value, key)
-        ):
+        if key == "limits" or key in NOT_A_WINDOW or not isinstance(value, dict):
+            continue
+        if is_grant_block(value, key):
+            if grant_out_of_range(value):
+                ignored.append(IgnoredBlock(key, GRANT_OUT_OF_RANGE))  # neither grant nor window
             continue
         pct = _pct_of(value)
         if pct is None:

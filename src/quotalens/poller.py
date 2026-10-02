@@ -35,7 +35,14 @@ from quotalens.client import (
     RateLimitedError,
 )
 from quotalens.config import PRUNE_EVERY_S, Settings
-from quotalens.parse import ParseError, SpendReading, UsageParse, parse_spend, parse_usage
+from quotalens.parse import (
+    GRANT_OUT_OF_RANGE,
+    ParseError,
+    SpendReading,
+    UsageParse,
+    parse_spend,
+    parse_usage,
+)
 from quotalens.secrets import Redactor, SecretStore, SecretStoreError
 from quotalens.sessions import (
     MODEL_VIOLATION_KIND,
@@ -904,12 +911,17 @@ class Poller:
             )
         ignored = frozenset(b.key for b in parsed.ignored)
         if ignored and ignored != self._last_ignored:
-            self._store.record_event(
-                "unrecognised_block",
-                "usage payload has blocks without resets_at, not charted: "
-                + ", ".join(sorted(ignored)),
-                ts=now,
-            )
+            undated = sorted(b.key for b in parsed.ignored if b.reason != GRANT_OUT_OF_RANGE)
+            out_of_range = sorted(b.key for b in parsed.ignored if b.reason == GRANT_OUT_OF_RANGE)
+            for prefix, keys in (
+                ("usage payload has blocks without resets_at, not charted: ", undated),
+                (
+                    "usage payload has credit blocks with an amount out of range, ignored: ",
+                    out_of_range,
+                ),
+            ):
+                if keys:
+                    self._store.record_event("unrecognised_block", prefix + ", ".join(keys), ts=now)
         self._last_ignored = ignored
 
     @staticmethod

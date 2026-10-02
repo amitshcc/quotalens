@@ -337,3 +337,28 @@ def test_poll_removes_misfiled_grant_rows(settings, store, secrets) -> None:
 
     asyncio.run(poller.poll_once())  # idempotent: nothing left, no second event
     assert len(store.recent_events(kind="grant_rows_removed")) == 1
+
+
+def test_poll_with_an_out_of_range_grant_stores_no_grant_and_says_why(
+    settings, store, secrets
+) -> None:
+    from quotalens.dashboard import build_dashboard
+
+    usage = {**USAGE_LIVE_2026_09, "iguana_necktie": {**_GRANT_BLOCK, "limit_dollars": 1e18}}
+    poller = _poller(settings, store, secrets, make_handler(usage=usage))
+
+    asyncio.run(poller.poll_once())
+
+    assert poller.status.state == "ok"
+    assert store.latest_grants() == []
+    assert "iguana_necktie" not in store.windows()
+    assert {"key": "iguana_necktie", "reason": "credit amount out of range"} in (
+        poller.status.ignored_blocks
+    )
+    details = [e.detail for e in store.recent_events(kind="unrecognised_block")]
+    assert (
+        "usage payload has credit blocks with an amount out of range, ignored: iguana_necktie"
+        in details
+    )
+    dash = build_dashboard(settings, store, poller.status, 1_000_000, 20.0)
+    assert "Credit blocks with an amount out of range, ignored: iguana_necktie." in dash.diagnostics

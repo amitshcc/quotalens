@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from dataclasses import field as dc_field
@@ -170,6 +170,22 @@ async def _watch_status(watcher: StatusWatcher) -> None:
         await asyncio.sleep(STATUS_TICK_S)
 
 
+BACKFILL_FAILED_KIND = "backfill_failed"
+
+
+def _guarded_backfill(store: Store, name: str, backfill: Callable[[], Any]) -> None:
+    """Run one startup backfill; a failure becomes an event and a log line, never a crash."""
+    try:
+        backfill()
+    except Exception as exc:
+        detail = f"{name}: {type(exc).__name__}"
+        log.warning("startup backfill failed, serving without it: %s", detail)
+        try:
+            store.record_event(BACKFILL_FAILED_KIND, detail, ts=int(time.time()))
+        except Exception:  # the store itself is failing; the log line is all there is
+            log.exception("could not record backfill_failed")
+
+
 def create_app(
     settings: Settings,
     store: Store,
@@ -190,15 +206,22 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        # keep_underivable: retention may have removed the quota rows behind older
-        # windows, and this table is then the only record of them.
-        rebuild_sessions(store, int(time.time()), keep_underivable=True)
-        # Weekly resets are recomputable from the samples and needed by the ledger, so
-        # they backfill on start the way session windows do rather than waiting for a
-        # command. Idempotent: a repeat start writes nothing.
-        weeks.backfill(store, int(time.time()))
-        credits.backfill_grants(store)
-        credits.backfill_breakdown(store)
+        # Each is derived and idempotent, so a failure costs only its own table until
+        # the next start: it is recorded (name and exception type, never payload
+        # text) and the server starts anyway. One odd stored sample must not take
+        # the dashboard down.
+        for name, backfill in (
+            # keep_underivable: retention may have removed the quota rows behind older
+            # windows, and this table is then the only record of them.
+            ("sessions", lambda: rebuild_sessions(store, int(time.time()), keep_underivable=True)),
+            # Weekly resets are recomputable from the samples and needed by the ledger,
+            # so they backfill on start the way session windows do rather than waiting
+            # for a command. Idempotent: a repeat start writes nothing.
+            ("weeks", lambda: weeks.backfill(store, int(time.time()))),
+            ("grants", lambda: credits.backfill_grants(store)),
+            ("breakdown", lambda: credits.backfill_breakdown(store)),
+        ):
+            _guarded_backfill(store, name, backfill)
         if settings.poll_enabled:
             poller.start()
         status_task = asyncio.create_task(_watch_status(watcher))
