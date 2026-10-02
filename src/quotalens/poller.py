@@ -420,7 +420,8 @@ class Poller:
         for grant in parsed.grants:
             removed = self._store.delete_quota_window(grant.key)
             if removed:
-                detail = f"{grant.key}: {removed} quota rows"
+                # The label, not the key: the vendor's codename is what this cleans off the page.
+                detail = f"{grant.label}: removed {removed} rows stored as a quota window"
                 self._store.record_event("grant_rows_removed", detail, ts=now)
                 log.info("removed misfiled grant rows: %s", detail)
 

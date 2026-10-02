@@ -333,7 +333,9 @@ def test_poll_removes_misfiled_grant_rows(settings, store, secrets) -> None:
     assert "iguana_necktie" not in store.windows()
     assert [g.key for g in store.latest_grants()] == ["iguana_necktie"]
     removed = store.recent_events(kind="grant_rows_removed")
-    assert [(e.ts, e.detail) for e in removed] == [(1_000_000, "iguana_necktie: 3 quota rows")]
+    assert [(e.ts, e.detail) for e in removed] == [
+        (1_000_000, "Cloud session credit: removed 3 rows stored as a quota window")
+    ]
 
     asyncio.run(poller.poll_once())  # idempotent: nothing left, no second event
     assert len(store.recent_events(kind="grant_rows_removed")) == 1
