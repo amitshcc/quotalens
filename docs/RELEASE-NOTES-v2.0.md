@@ -60,6 +60,15 @@ every reset. QuotaLens now writes each week down as it closes.
   boost detector, and shows it under Usage credits in dollars, with what is left
   and when it expires. An event, and a desktop notification if they are on,
   seven days and one day before expiry while money is left on it.
+- **A meter that stops arriving goes by itself.** When a limit is no longer in
+  the payload (a Max → Pro change takes the Fable meter with it) its meter,
+  budget row, chart chip and Weeks column go once it has been missing from three
+  polls in a row and for 15 minutes. Its history stays on the chart. The session
+  window is exempt, since between sessions it has no window. Events
+  `window_gone` and, if it comes back, `window_back`.
+- **The credit is never a meter, whoever wrote it.** Any poll that sees the
+  cloud-session credit also deletes quota rows stored under its key, for example
+  rows left by an older copy of QuotaLens polling the same database.
 - **Your plan, beside the mark.** The header shows it as a muted label after the
   name (*QuotaLens* Max 5x, or Pro, Team, …), and About has a Plan row. It comes from `/api/bootstrap` once a
   day; only capabilities, rate-limit tier and billing type are kept. Nothing on
@@ -90,13 +99,17 @@ All additive. Nothing that existed in 1.0 changed shape.
 | `GET /api/version`, `POST /api/version/check` | `{current, latest, checked_ts, error, update_available, upgrade_command}`; the POST asks now, at most once a minute |
 | `GET /api/health` | New fields: `profile` (`"default"` when none), `latest_version`, `update_checked_ts`, `plan` (`{label, tier, capabilities}` or null) |
 | `GET /api/events?after_id=<id>` | Exclusive, in the order written, with `next_after_id` to page forward; every event row carries its `id`. Without `after_id`, newest first as before |
-| Event kinds | `week_reset` (JSON detail: the closed week's figures), `subcap_violation`, `credit_grant_seen`, `credit_grant_expiring`, `update_available` |
+| Event kinds | `week_reset` (JSON detail: the closed week's figures), `subcap_violation`, `credit_grant_seen`, `credit_grant_expiring`, `update_available`, `window_gone` / `window_back`, `grant_rows_removed`, `backfill_failed` (`<name>: <ExceptionType>`) |
+| `GET /api/quota/current` | Same shape; a window that has stopped arriving is no longer listed (its readings stay in `/api/quota/series`) |
 | Export tables | `table=weeks`, `table=credits`, `table=surfaces` on `/api/export.csv` and `.json` |
 | `GET /about`, `POST /about/check` | The About page (`?fragment=1` for the dialog) and its check button |
 | CLI | `quotalens profiles list [--json]` |
 
-The database moves from schema 5 to schema 9 on first start, forward only:
-tables `credit_grant`, `surface_share`, `update_check` and `plan` are added.
+The database moves from schema 5 to schema 11 on first start, forward only:
+tables `credit_grant`, `surface_share`, `update_check` and `plan` are added, and
+`event` gains an `id` (its existing row ids, kept). A credit is stored when it
+changes, plus once a day, rather than on every poll, and the rows from before
+are thinned to the first of each run of identical readings.
 Weeks are backfilled from the readings already stored, and grants and the
 surface split from the raw samples still kept. One thing is removed: readings of the cloud-session credit that 1.0
 stored as if it were a quota window, which are re-read from the raw samples as
@@ -148,6 +161,12 @@ Terms clause that bears on that risk is quoted in full in the README's *"The
 Terms, stated plainly"*. **You are the one accepting that risk.**
 
 ## Known limits
+
+- **Startup does not depend on the history being tidy.** Rebuilding sessions,
+  Weeks, credits and the surface split from stored data is wrapped: a failure is
+  a `backfill_failed` event and the dashboard starts anyway. A credit amount no
+  credit could have (over $10,000,000, or not a number) is ignored and listed in
+  Diagnostics, never stored.
 
 - **The cost of a session is a ratio, not a ceiling.** The payload carries no
   limit anywhere, so the Weeks ledger can show a session getting cheaper
