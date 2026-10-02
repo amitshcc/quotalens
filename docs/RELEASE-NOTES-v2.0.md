@@ -60,8 +60,8 @@ every reset. QuotaLens now writes each week down as it closes.
   boost detector, and shows it under Usage credits in dollars, with what is left
   and when it expires. An event, and a desktop notification if they are on,
   seven days and one day before expiry while money is left on it.
-- **Your plan, beside the mark.** The header reads *QuotaLens · Max 5x* (or
-  Pro, Team, …), and About has a Plan row. It comes from `/api/bootstrap` once a
+- **Your plan, beside the mark.** The header shows it as a muted label after the
+  name (*QuotaLens* Max 5x, or Pro, Team, …), and About has a Plan row. It comes from `/api/bootstrap` once a
   day; only capabilities, rate-limit tier and billing type are kept. Nothing on
   the page changes with it — the meters are whatever the readings contain.
 - **About, and a daily update check.** `/about` shows the version, the latest

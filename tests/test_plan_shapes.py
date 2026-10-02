@@ -249,7 +249,9 @@ def test_pro_page_shows_only_what_pro_has(pro_page) -> None:
     import re
 
     html, api = pro_page
-    assert "QuotaLens · Pro<" in html  # the plan reached the page, and changed nothing else
+    assert (
+        'QuotaLens<span class="plan">Pro</span>' in html
+    )  # the plan reached the page, and changed nothing else
     assert "fable" not in html.lower()
     assert "half of weekly pool" not in html
     assert _chips(html) == ["All", "Session", "Weekly all"]
@@ -279,7 +281,7 @@ def test_pro_page_shows_only_what_pro_has(pro_page) -> None:
 
 def test_max_page_shows_the_sub_capped_meter(max_page) -> None:
     html, api = max_page
-    assert "QuotaLens · Max 20x<" in html
+    assert 'QuotaLens<span class="plan">Max 20x</span>' in html
     assert ">Weekly — Fable " in html  # the meter
     assert "half of weekly pool" in html  # the note
     assert _chips(html) == ["All", "Session", "Weekly all", "Weekly Fable"]

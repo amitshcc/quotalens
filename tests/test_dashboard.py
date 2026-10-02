@@ -815,14 +815,21 @@ def _brand(settings, store, secrets) -> str:
     app.state.qw.poller.status.last_success_ts = now
     with TestClient(app) as tc:
         html = tc.get("/").text
-    return re.search(r'<span class="brand">.*?</span>', html, re.S).group(0)
+    brand = r'<span class="brand">.*?</svg>[^<]*(?:<span class="plan">[^<]*</span>)?</span>'
+    return re.search(brand, html, re.S).group(0)
 
 
 def test_header_names_the_plan_beside_the_mark(settings, store, secrets) -> None:
     store.write_plan(1, "Max 20x", "default_claude_max_20x", '["chat","claude_max"]', None, None)
     brand = _brand(settings, store, secrets)
-    assert brand.endswith("</svg>QuotaLens · Max 20x</span>")
-    assert re.search(r"QuotaLens · [^<]*", brand).group(0) == "QuotaLens · Max 20x"
+    assert brand.endswith('</svg>QuotaLens<span class="plan">Max 20x</span></span>')
+    assert "\u00b7" not in brand  # DESIGN 6: no middle-dot separators
+
+
+def test_header_plan_label_is_muted_by_the_secondary_text_token() -> None:
+    css = resources.files("quotalens.web").joinpath("app.css").read_text()
+    rule = re.search(r"([^{}]*\.plan\b[^{}]*)\{([^}]*)\}", css)
+    assert rule is not None and rule.group(2).strip() == "color:var(--txt-dim)"
 
 
 def test_header_says_nothing_without_a_plan(settings, store, secrets) -> None:
@@ -844,7 +851,7 @@ def test_the_plan_changes_nothing_but_the_header(settings, store, secrets) -> No
     app.state.qw.poller.status.last_success_ts = now
     with TestClient(app) as tc:
         html = tc.get("/").text
-    assert "QuotaLens · Pro<" in html
+    assert 'QuotaLens<span class="plan">Pro</span>' in html
     assert html.count('class="meter"') == 3 and ">Weekly — Fable " in html
 
 

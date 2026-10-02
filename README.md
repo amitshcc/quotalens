@@ -373,8 +373,8 @@ events are `credit_grant_seen` and `credit_grant_expiring`.
 
 ## Your plan
 
-The header reads **QuotaLens · Max 5x** (or Max 20x, Pro, Team, Enterprise,
-Free), and About has a Plan row. The plan is not in the usage payload; it comes
+The header shows the plan as a muted label after the name, **QuotaLens** Max 5x
+(or Max 20x, Pro, Team, Enterprise, Free), and About has a Plan row. The plan is not in the usage payload; it comes
 from `/api/bootstrap`, asked on the first good poll after start and then once a
 day. Only three fields of that response are kept: the organisation's
 capabilities, its rate-limit tier and its billing type. No names, no emails, no

@@ -302,8 +302,11 @@ UPDATE_DOT = '<circle cx="14.2" cy="1.8" r="1.7" fill="currentColor" stroke="non
 
 
 def _plan_suffix(dash: Dashboard) -> str:
-    """`` · Max 20x`` after the name, in the same text node; nothing when unnamed."""
-    return f" \u00b7 {e(dash.plan_label)}" if dash.plan_label else ""
+    """The plan as its own muted label after the name, nothing when unnamed.
+
+    No separator: DESIGN 6 has no middle dots; the brand's flex gap spaces it.
+    """
+    return f'<span class="plan">{e(dash.plan_label)}</span>' if dash.plan_label else ""
 
 
 def _header(dash: Dashboard) -> str:
