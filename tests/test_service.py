@@ -346,7 +346,7 @@ def test_no_source_file_uses_a_platform_specific_strftime_code() -> None:
     offenders = [
         f"{path.name}:{n}"
         for path in sorted(src.rglob("*.py"))
-        for n, line in enumerate(path.read_text().splitlines(), 1)
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
         if "strftime" in line and ("%-" in line or "%#" in line)
     ]
     assert offenders == [], f"non-portable strftime codes: {offenders}"

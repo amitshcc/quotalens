@@ -31,6 +31,8 @@ dependencies = [
 test = [
     "pytest>=8",
     "httpx>=0.27",
+    # Windows has no system IANA database; the heatmap test names Asia/Kolkata.
+    'tzdata; sys_platform == "win32"',
 ]
 # A real browser, for the one thing string assertions cannot check: whether the
 # favicon actually draws. See tests/test_favicon_render.py.
