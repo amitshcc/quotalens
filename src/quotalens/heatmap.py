@@ -23,6 +23,7 @@ import math
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime, tzinfo
 from itertools import pairwise
 from typing import Any
 
@@ -84,14 +85,28 @@ class Heatmap:
         }
 
 
-def _cell(ts: int) -> tuple[int, int]:
+def _offset(ts: int, tz: tzinfo | None) -> int:
+    """Seconds east of UTC at ``ts``: in ``tz``, or in the process's local zone."""
+    if tz is None:
+        return time.localtime(ts).tm_gmtoff
+    offset = datetime.fromtimestamp(ts, tz).utcoffset()
+    return int(offset.total_seconds()) if offset is not None else 0
+
+
+def _cell(ts: int, tz: tzinfo | None = None) -> tuple[int, int]:
     """(weekday, hour) in local time, Monday = 0."""
-    local = ts + time.localtime(ts).tm_gmtoff
+    local = ts + _offset(ts, tz)
     return (local // 86400 + EPOCH_WEEKDAY) % 7, (local // HOUR_S) % 24
 
 
-def _week_cells(rows: Sequence[QuotaRow]) -> tuple[list[list[float]], list[list[float]]]:
-    """(points gained, seconds collected) per cell for one week of readings."""
+def _week_cells(
+    rows: Sequence[QuotaRow], tz: tzinfo | None = None
+) -> tuple[list[list[float]], list[list[float]]]:
+    """(points gained, seconds collected) per cell for one week of readings.
+
+    ``tz`` defaults to the process's local zone; tests pass one so the
+    half-hour-zone split is checked without changing the process timezone.
+    """
     gained = [[0.0] * 24 for _ in DAYS]
     seen = [[0.0] * 24 for _ in DAYS]
     for a, b in pairwise(rows):
@@ -103,9 +118,9 @@ def _week_cells(rows: Sequence[QuotaRow]) -> tuple[list[list[float]], list[list[
         t = a.ts
         while t < b.ts:
             # The next *local* hour edge: in a half-hour zone (India) it is not a UTC one.
-            off = time.localtime(t).tm_gmtoff
+            off = _offset(t, tz)
             edge = min(b.ts, ((t + off) // HOUR_S + 1) * HOUR_S - off)
-            d, h = _cell(t)
+            d, h = _cell(t, tz)
             seen[d][h] += edge - t
             gained[d][h] += delta * (edge - t) / span
             t = edge
