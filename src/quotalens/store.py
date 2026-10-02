@@ -26,7 +26,12 @@ from quotalens.parse import (
 )
 from quotalens.retention import TS_COLUMN
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
+
+# A credit grant is stored when any stored field changes, plus once a day while it does
+# not, so "still there" stays visible without a row per poll.
+GRANT_HEARTBEAT_S = 24 * 3600
+_GRANT_COLUMNS = "label, used_minor, limit_minor, remaining_minor, expires_at, locked_reason"
 
 # Statements that bring an older database up to each version, in order.
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
@@ -58,6 +63,19 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
         "DROP TABLE event",
         "ALTER TABLE event_v10 RENAME TO event",
         "CREATE INDEX IF NOT EXISTS event_ts ON event (ts)",
+    ),
+    # credit_grant used to get a row per poll. Keep the first row of each run of identical
+    # rows per key; the (key, ts) index is created by the CREATE statements.
+    11: (
+        "DELETE FROM credit_grant WHERE rowid IN (SELECT rid FROM ("
+        "SELECT rowid AS rid, ROW_NUMBER() OVER w AS n, "
+        "label = LAG(label) OVER w AND used_minor = LAG(used_minor) OVER w "
+        "AND limit_minor = LAG(limit_minor) OVER w "
+        "AND remaining_minor = LAG(remaining_minor) OVER w "
+        "AND expires_at IS LAG(expires_at) OVER w "
+        "AND locked_reason IS LAG(locked_reason) OVER w AS same "
+        "FROM credit_grant WINDOW w AS (PARTITION BY key ORDER BY ts)"
+        ") WHERE n > 1 AND same)",
     ),
 }
 
@@ -125,7 +143,7 @@ CREATE TABLE IF NOT EXISTS session_window (
     deltas TEXT NOT NULL,
     covered_s INTEGER NOT NULL DEFAULT 0
 );
--- one row per credit grant per poll; money in minor units of USD
+-- a credit grant when it changes, plus one row a day; money in minor units of USD
 CREATE TABLE IF NOT EXISTS credit_grant (
     ts INTEGER NOT NULL,
     key TEXT NOT NULL,
@@ -137,6 +155,7 @@ CREATE TABLE IF NOT EXISTS credit_grant (
     locked_reason TEXT,
     PRIMARY KEY (ts, key)
 );
+CREATE INDEX IF NOT EXISTS credit_grant_key_ts ON credit_grant (key, ts);
 -- the vendor's weekly split by surface; one row per surface, only when a value changes
 CREATE TABLE IF NOT EXISTS surface_share (
     ts INTEGER NOT NULL,
@@ -272,6 +291,23 @@ def _session_row(w: Any) -> tuple[Any, ...]:
         json.dumps({k: d.as_dict() for k, d in w.deltas.items()}),
         w.covered_s,
     )
+
+
+def grant_fields(grant: Any) -> tuple[Any, ...]:
+    """The stored fields of a grant (a ``CreditGrant`` or a ``GrantRow``), for "did it change"."""
+    return (
+        grant.label,
+        grant.used_minor,
+        grant.limit_minor,
+        grant.remaining_minor,
+        grant.expires_at,
+        grant.locked_reason,
+    )
+
+
+def grant_due(prev_ts: int, prev_fields: tuple[Any, ...], ts: int, fields: tuple[Any, ...]) -> bool:
+    """A grant reading is stored when it differs from the row before it, or a day after it."""
+    return fields != prev_fields or ts - prev_ts >= GRANT_HEARTBEAT_S
 
 
 def _backfill_keysig(cur: sqlite3.Cursor) -> None:
@@ -462,6 +498,29 @@ class Store:
         return len(rows)
 
     def record_grants(self, ts: int, grants: Iterable[CreditGrant]) -> int:
+        """Store each grant that differs from its newest row, or whose newest row is a day old.
+
+        The poller's write: an unchanged grant costs nothing per poll. Returns rows written.
+        """
+        with self._tx() as cur:
+            newest = {
+                r["key"]: r
+                for r in cur.execute(
+                    f"SELECT g.ts, g.key, {_GRANT_COLUMNS} FROM credit_grant g "
+                    "JOIN (SELECT key, MAX(ts) AS ts FROM credit_grant GROUP BY key) m "
+                    "ON g.key = m.key AND g.ts = m.ts"
+                ).fetchall()
+            }
+        due = [
+            g
+            for g in grants
+            if (row := newest.get(g.key)) is None
+            or grant_due(row["ts"], grant_fields(GrantRow(**dict(row))), ts, grant_fields(g))
+        ]
+        return self.insert_grants(ts, due)
+
+    def insert_grants(self, ts: int, grants: Iterable[CreditGrant]) -> int:
+        """Write these grant rows as given (the backfill decides which for itself)."""
         rows = [
             (
                 ts,
@@ -475,6 +534,8 @@ class Store:
             )
             for g in grants
         ]
+        if not rows:
+            return 0
         with self._tx() as cur:
             cur.executemany(
                 "INSERT OR REPLACE INTO credit_grant "

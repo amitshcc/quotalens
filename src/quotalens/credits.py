@@ -39,6 +39,7 @@ from itertools import pairwise
 from typing import Any
 
 from quotalens.parse import parse_breakdown, parse_grants
+from quotalens.store import GrantRow, grant_due, grant_fields
 
 SPEND_KIND = "credits_spend"
 # Two polls further apart than this had a collection gap between them, so the
@@ -192,22 +193,41 @@ def recorded_starts(events: list) -> set[int]:
 def backfill_grants(store: Any) -> int:
     """Re-derive credit grants from the stored ``usage`` samples. Safe to run twice.
 
-    The poller records a grant on every poll from now on; this gives the history that
-    was stored before it knew the shape, the way ``boost.backfill`` does for boosts.
-    A ``(ts, key)`` already present is left alone, so a repeat start writes nothing.
-    Returns the number of rows written.
+    Gives the history that was stored before the poller knew the shape, the way
+    ``boost.backfill`` does for boosts, under the poller's rule: a row when a grant
+    changes, plus one a day. The samples are replayed in time order *among the stored
+    rows*, so a sample identical to the row before it writes nothing, and a ``(ts, key)``
+    already present is left alone. Returns the number of rows written.
     """
-    have = {(r["ts"], r["key"]) for r in store.query("SELECT ts, key FROM credit_grant")}
-    written = 0
+    stored = store.query(
+        "SELECT ts, key, label, used_minor, limit_minor, remaining_minor, expires_at, "
+        "locked_reason FROM credit_grant"
+    )
+    have = {(r["ts"], r["key"]) for r in stored}
+    # (ts, is_sample, key, fields, grant): stored rows sort before a sample at the same ts.
+    timeline: list[tuple[int, bool, str, tuple[Any, ...], Any]] = [
+        (r["ts"], False, r["key"], grant_fields(GrantRow(**dict(r))), None) for r in stored
+    ]
     for row in store.query("SELECT ts, payload FROM sample WHERE source = 'usage' ORDER BY ts"):
         try:
             payload = json.loads(row["payload"])
         except (ValueError, TypeError):
             continue
-        fresh = [g for g in parse_grants(payload) if (row["ts"], g.key) not in have]
-        if fresh:
-            written += store.record_grants(row["ts"], fresh)
-    return written
+        for grant in parse_grants(payload):
+            if (row["ts"], grant.key) not in have:
+                have.add((row["ts"], grant.key))
+                timeline.append((row["ts"], True, grant.key, grant_fields(grant), grant))
+    timeline.sort(key=lambda t: (t[0], t[1]))
+    last: dict[str, tuple[int, tuple[Any, ...]]] = {}
+    due: dict[int, list[Any]] = {}
+    for ts, is_sample, key, fields, grant in timeline:
+        before = last.get(key)
+        if is_sample and before is not None and not grant_due(*before, ts, fields):
+            continue
+        if is_sample:
+            due.setdefault(ts, []).append(grant)
+        last[key] = (ts, fields)
+    return sum(store.insert_grants(ts, grants) for ts, grants in due.items())
 
 
 def backfill_breakdown(store: Any) -> int:
