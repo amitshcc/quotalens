@@ -123,8 +123,32 @@ def test_v1_database_is_migrated_without_losing_rows(tmp_path) -> None:
         7,
         8,
         9,
+        10,
     ]
     conn.close()
+    store.close()
+
+
+def test_event_ids_survive_the_migration_and_vacuum(tmp_path) -> None:
+    """The /api/events cursor is the event id: v10 keeps the old rowids and VACUUM keeps ids."""
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(V1_SCHEMA)
+    for ts in (30, 10, 20):
+        conn.execute("INSERT INTO event VALUES (?, 'k', ?)", (ts, f"d{ts}"))
+    conn.execute("DELETE FROM event WHERE ts = 10")  # a hole, as a prune leaves
+    conn.commit()
+    before = conn.execute("SELECT rowid, ts FROM event ORDER BY rowid").fetchall()
+    conn.close()
+
+    store = Store(path)
+    assert [(e.id, e.ts) for e in store.events_after(0)] == before == [(1, 30), (3, 20)]
+    store.record_event("k", "new", ts=5)
+    store.vacuum()
+    assert [(e.id, e.ts) for e in store.events_after(0)] == [(1, 30), (3, 20), (4, 5)]
+    store.delete_events("k", [5])
+    store.record_event("k", "again", ts=6)
+    assert store.events_after(3)[0].id == 5  # an id is never reused
     store.close()
 
 

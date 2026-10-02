@@ -26,7 +26,7 @@ from quotalens.parse import (
 )
 from quotalens.retention import TS_COLUMN
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 # Statements that bring an older database up to each version, in order.
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
@@ -48,6 +48,17 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
     7: (),  # surface_share is created by the CREATE statements
     8: (),  # update_check is created by the CREATE statements
     9: (),  # plan is created by the CREATE statements
+    # The event id is the /api/events cursor. A bare rowid may be renumbered by VACUUM,
+    # so the table is rebuilt with an explicit, never-reused key that keeps every rowid.
+    10: (
+        "DROP TABLE IF EXISTS event_v10",
+        "CREATE TABLE event_v10 (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "ts INTEGER NOT NULL, kind TEXT NOT NULL, detail TEXT NOT NULL)",
+        "INSERT INTO event_v10 (id, ts, kind, detail) SELECT rowid, ts, kind, detail FROM event",
+        "DROP TABLE event",
+        "ALTER TABLE event_v10 RENAME TO event",
+        "CREATE INDEX IF NOT EXISTS event_ts ON event (ts)",
+    ),
 }
 
 _SCHEMA = """
@@ -152,8 +163,9 @@ CREATE TABLE IF NOT EXISTS plan (
     plan_billing_type TEXT,
     error TEXT
 );
--- detected climbs, threshold crossings, poll failures
+-- detected climbs, threshold crossings, poll failures; id is the /api/events cursor
 CREATE TABLE IF NOT EXISTS event (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts INTEGER NOT NULL,
     kind TEXT NOT NULL,
     detail TEXT NOT NULL
@@ -234,9 +246,10 @@ class EventRow:
     ts: int
     kind: str
     detail: str
+    id: int | None = None  # ascending in insertion order, never reused
 
     def as_dict(self) -> dict[str, Any]:
-        return {"ts": self.ts, "kind": self.kind, "detail": self.detail}
+        return {"id": self.id, "ts": self.ts, "kind": self.kind, "detail": self.detail}
 
 
 _SESSION_UPSERT = (
@@ -769,25 +782,31 @@ class Store:
         return [OverageRow(**dict(r)) for r in rows]
 
     def recent_events(self, limit: int = 20, kind: str | None = None) -> list[EventRow]:
-        sql = "SELECT ts, kind, detail FROM event"
+        sql = "SELECT id, ts, kind, detail FROM event"
         params: list[Any] = []
         if kind is not None:
             sql += " WHERE kind = ?"
             params.append(kind)
-        sql += " ORDER BY ts DESC, rowid DESC LIMIT ?"
+        sql += " ORDER BY ts DESC, id DESC LIMIT ?"
         params.append(limit)
         with self._tx() as cur:
             rows = cur.execute(sql, params).fetchall()
         return [EventRow(**dict(r)) for r in rows]
 
-    def events_since(self, since: int, limit: int = 50, kind: str | None = None) -> list[EventRow]:
-        """Events with ``ts > since``, oldest first, so a follower can page forward."""
-        sql = "SELECT ts, kind, detail FROM event WHERE ts > ?"
-        params: list[Any] = [since]
+    def events_after(
+        self, after_id: int, limit: int = 50, kind: str | None = None
+    ) -> list[EventRow]:
+        """Events with ``id > after_id`` in the order they were written, for a follower.
+
+        By id, not ts: a ``week_reset`` is written back-dated to the week's close, and
+        two events can share a ts, so a ts cursor can step past either for good.
+        """
+        sql = "SELECT id, ts, kind, detail FROM event WHERE id > ?"
+        params: list[Any] = [after_id]
         if kind is not None:
             sql += " AND kind = ?"
             params.append(kind)
-        sql += " ORDER BY ts ASC, rowid ASC LIMIT ?"
+        sql += " ORDER BY id ASC LIMIT ?"
         params.append(limit)
         with self._tx() as cur:
             rows = cur.execute(sql, params).fetchall()

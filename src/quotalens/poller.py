@@ -436,7 +436,7 @@ class Poller:
         polls = self._store.recent_poll_ts(GONE_AFTER_POLLS)
         current = {r.window for r in current_windows(seen, polls)}
         marks = self._store.query(
-            "SELECT kind, detail FROM event WHERE kind IN (?, ?) ORDER BY ts, rowid",
+            "SELECT kind, detail FROM event WHERE kind IN (?, ?) ORDER BY id",
             (WINDOW_GONE_KIND, WINDOW_BACK_KIND),
         )
         was_gone = {

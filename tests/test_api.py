@@ -180,31 +180,62 @@ def test_breakdown_endpoint(settings, store, secrets) -> None:
     ]
 
 
-def test_events_since_exclusive_ascending(settings, store, secrets) -> None:
+def test_events_after_id_exclusive_ascending(settings, store, secrets) -> None:
     for ts, kind in [(100, "a"), (200, "b"), (200, "a"), (300, "a")]:
         store.record_event(kind, f"d{ts}", ts=ts)
     with _client(settings, store, secrets) as tc:
-        body = tc.get("/api/events", params={"since": 100}).json()
-        paged = tc.get("/api/events", params={"since": 100, "limit": 1}).json()
-        kinded = tc.get("/api/events", params={"since": 0, "kind": "b"}).json()
-        empty = tc.get("/api/events", params={"since": 300}).json()
-        bad = tc.get("/api/events", params={"since": -1})
-    assert [e["ts"] for e in body["events"]] == [200, 200, 300]
-    assert [e["kind"] for e in body["events"]] == ["b", "a", "a"]
-    assert body["next_since"] == 300
-    assert len(paged["events"]) == 1 and paged["next_since"] == 200
-    assert [e["kind"] for e in kinded["events"]] == ["b"]
-    assert empty["events"] == [] and empty["next_since"] == 300
+        body = tc.get("/api/events", params={"after_id": 1}).json()
+        paged = tc.get("/api/events", params={"after_id": 1, "limit": 1}).json()
+        kinded = tc.get("/api/events", params={"after_id": 0, "kind": "b"}).json()
+        empty = tc.get("/api/events", params={"after_id": 4}).json()
+        bad = tc.get("/api/events", params={"after_id": -1})
+    assert [e["id"] for e in body["events"]] == [2, 3, 4]
+    assert [(e["ts"], e["kind"]) for e in body["events"]] == [(200, "b"), (200, "a"), (300, "a")]
+    assert body["next_after_id"] == 4
+    assert len(paged["events"]) == 1 and paged["next_after_id"] == 2
+    assert [e["kind"] for e in kinded["events"]] == ["b"] and kinded["next_after_id"] == 2
+    assert empty["events"] == [] and empty["next_after_id"] == 4
     assert bad.status_code == 422
+    assert "next_since" not in body
 
 
-def test_events_without_since_unchanged(settings, store, secrets) -> None:
+def test_events_back_dated_week_reset_reaches_a_follower_past_its_ts(
+    settings, store, secrets
+) -> None:
+    """A week_reset is written with ts = the week's close, after later events exist."""
+    store.record_event("poll_error", "timeout", ts=1_000)
+    store.record_event("poll_error", "timeout", ts=2_000)
+    with _client(settings, store, secrets) as tc:
+        first = tc.get("/api/events", params={"after_id": 0}).json()
+        cursor = first["next_after_id"]
+        store.record_event("week_reset", "{}", ts=900)  # back-dated behind both
+        second = tc.get("/api/events", params={"after_id": cursor}).json()
+    assert [e["ts"] for e in first["events"]] == [1_000, 2_000]
+    assert [(e["kind"], e["ts"]) for e in second["events"]] == [("week_reset", 900)]
+
+
+def test_events_sharing_a_ts_across_a_page_boundary_are_both_delivered(
+    settings, store, secrets
+) -> None:
+    store.record_event("week_reset", "seven_day", ts=5_000)
+    store.record_event("week_reset", "limit:fable", ts=5_000)
+    seen = []
+    with _client(settings, store, secrets) as tc:
+        cursor = 0
+        for _ in range(3):
+            page = tc.get("/api/events", params={"after_id": cursor, "limit": 1}).json()
+            seen += [e["detail"] for e in page["events"]]
+            cursor = page["next_after_id"]
+    assert seen == ["seven_day", "limit:fable"]
+
+
+def test_events_without_a_cursor_newest_first_with_ids(settings, store, secrets) -> None:
     for ts in (100, 200, 300):
         store.record_event("a", "d", ts=ts)
     with _client(settings, store, secrets) as tc:
         body = tc.get("/api/events").json()
-    assert [e["ts"] for e in body["events"]] == [300, 200, 100]
-    assert "next_since" not in body
+    assert [(e["id"], e["ts"]) for e in body["events"]] == [(3, 300), (2, 200), (1, 100)]
+    assert "next_after_id" not in body and "next_since" not in body
 
 
 def test_health_has_profile(settings, store, secrets) -> None:

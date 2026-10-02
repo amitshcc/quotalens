@@ -89,7 +89,7 @@ All additive. Nothing that existed in 1.0 changed shape.
 | `GET /api/credits` | `grants`: `{key, label, used, limit, remaining, pct, expires_at, locked_reason}`, dollars as floats; expired grants listed for 7 days |
 | `GET /api/version`, `POST /api/version/check` | `{current, latest, checked_ts, error, update_available, upgrade_command}`; the POST asks now, at most once a minute |
 | `GET /api/health` | New fields: `profile` (`"default"` when none), `latest_version`, `update_checked_ts`, `plan` (`{label, tier, capabilities}` or null) |
-| `GET /api/events?since=<ts>` | Exclusive, oldest first, with `next_since` to page forward. Without `since`, unchanged |
+| `GET /api/events?after_id=<id>` | Exclusive, in the order written, with `next_after_id` to page forward; every event row carries its `id`. Without `after_id`, newest first as before |
 | Event kinds | `week_reset` (JSON detail: the closed week's figures), `subcap_violation`, `credit_grant_seen`, `credit_grant_expiring`, `update_available` |
 | Export tables | `table=weeks`, `table=credits`, `table=surfaces` on `/api/export.csv` and `.json` |
 | `GET /about`, `POST /about/check` | The About page (`?fragment=1` for the dialog) and its check button |
