@@ -51,6 +51,7 @@ from quotalens.config import (
 from quotalens.dashboard import (
     as_json,
     build_dashboard,
+    current_quota,
     display_label,
     window_has_lapsed,
     window_is_stale,
@@ -620,6 +621,8 @@ def create_app(
     def quota_current() -> dict[str, Any]:
         """The latest reading per window, and whether each one is still current.
 
+        A window that has stopped arriving (absent from the last three good polls and
+        silent for 15 minutes) is not listed; its history stays in `/api/quota/series`.
         `pct` is null unless the reading is current, and the value moves to
         `last_pct` when it is not. A consumer reading `pct` therefore cannot reach
         the conclusion the page stopped reaching: that a window which closed at
@@ -627,7 +630,7 @@ def create_app(
         say which of the three reasons applies.
         """
         now = int(time.time())
-        rows = state.store.latest_quota()
+        rows = current_quota(state.store)  # a window that stopped arriving is not listed
         readings = []
         for r in rows:
             lapsed = window_has_lapsed(r, now)

@@ -679,6 +679,18 @@ class Store:
             ).fetchall()
         return [_row_to_quota(r) for r in rows]
 
+    def recent_poll_ts(self, limit: int) -> list[int]:
+        """The timestamps of the newest ``limit`` polls that stored a reading, newest first.
+
+        Every reading of one poll shares its ``ts``, so a distinct ``ts`` is one good
+        poll. Read from the primary key's leading column: no scan.
+        """
+        with self._tx() as cur:
+            rows = cur.execute(
+                "SELECT DISTINCT ts FROM quota ORDER BY ts DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [int(r["ts"]) for r in rows]
+
     def latest_quota_before(self, ts: int) -> list[QuotaRow]:
         """Most recent reading for every window strictly before ``ts``.
 

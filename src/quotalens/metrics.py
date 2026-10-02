@@ -87,6 +87,7 @@ def collect(settings: object, store: object, status: object, now: int) -> list[F
     from quotalens.burn import burn_rate
     from quotalens.dashboard import (
         RATE_WINDOW,
+        current_quota,
         parse_iso,
         weekly_limits,
         window_has_lapsed,
@@ -108,7 +109,7 @@ def collect(settings: object, store: object, status: object, now: int) -> list[F
 
     quota = Family("quota_percent", "gauge", "Percentage of a quota window consumed.")
     resets = Family("window_resets_at_seconds", "gauge", "Unix time at which a window resets.")
-    latest = store.latest_quota()
+    latest = current_quota(store)  # a window that stopped arriving has no gauge
 
     def is_live(row: object) -> bool:
         """The one test for "this row is a current reading", for every gauge here.

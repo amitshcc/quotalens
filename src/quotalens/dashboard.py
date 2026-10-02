@@ -147,6 +147,41 @@ def short_label(window: str, stored_label: str | None) -> str:
     return display_label(window, stored_label)
 
 
+# A window that stops arriving (a plan downgrade, a block the vendor retired, a key an
+# older parser misfiled) leaves the current views by itself: gone once it was absent from
+# this many consecutive good polls *and* its newest reading is this old. The session
+# window is exempt -- between sessions it legitimately has no window.
+GONE_AFTER_POLLS = 3
+GONE_AFTER_S = 15 * 60
+WINDOW_GONE_KIND = "window_gone"
+WINDOW_BACK_KIND = "window_back"
+
+
+def current_windows(latest: Sequence[QuotaRow], recent_polls: Sequence[int]) -> list[QuotaRow]:
+    """``latest`` without the windows that have stopped arriving.
+
+    ``recent_polls`` are the timestamps of the newest good polls (any order). Both
+    thresholds are measured against the newest poll, not the clock: a collector that
+    stopped is the epistemic state's business, and must not make every window "gone".
+    One rule for the meters, the budget, the picker, Weeks and subcap, so they cannot
+    disagree about which windows exist; the chart still draws a gone window's history.
+    """
+    polls = sorted(recent_polls, reverse=True)[:GONE_AFTER_POLLS]
+    if len(polls) < GONE_AFTER_POLLS:
+        return list(latest)
+    newest, oldest = polls[0], polls[-1]
+    return [
+        r
+        for r in latest
+        if r.window == RATE_WINDOW or r.ts >= oldest or newest - r.ts <= GONE_AFTER_S
+    ]
+
+
+def current_quota(store: Store) -> list[QuotaRow]:
+    """The newest reading of every window still arriving (see :func:`current_windows`)."""
+    return current_windows(store.latest_quota(), store.recent_poll_ts(GONE_AFTER_POLLS))
+
+
 def assign_slots(windows: list[str]) -> dict[str, int]:
     """Slot 1 is always five_hour, 2 seven_day, 3-5 model limits in order, 6 the rest."""
     slots: dict[str, int] = {}
@@ -546,7 +581,10 @@ def build_dashboard(
     refresh_default = max(10, min(settings.poll_interval_s // 2, 30))
     refresh_s = view.refresh_s(refresh_default)
 
-    latest = store.latest_quota()
+    # Every window ever seen draws its history on the chart; only the ones still
+    # arriving get a meter, a chip, a budget row, a Weeks column.
+    seen = store.latest_quota()
+    latest = current_windows(seen, store.recent_poll_ts(GONE_AFTER_POLLS))
     # One conclusion, read from the events the poller wrote, and shared by the chart,
     # the meters, the history rows and the budget's cost estimate. Never re-derived.
     boosts = recorded_boosts(store)
@@ -556,10 +594,11 @@ def build_dashboard(
     # to have a sample straddling that instant, including one that rose.
     boost_windows = {
         row.window: [int(e.ts) for e in boosts if str(e.detail).startswith(row.label or row.window)]
-        for row in latest
+        for row in seen
     }
     order = _window_order(status, latest)
-    slots = assign_slots(order)
+    # Gone windows after the current ones, so a current meter keeps its colour.
+    slots = assign_slots(order + [r.window for r in seen if r.window not in order])
     oldest = store.oldest_ts()
     sessions_all = [window_from_row(r) for r in store.sessions(limit=500, order="recent")]
     current = next((w for w in sessions_all if w.is_current), None)
@@ -672,7 +711,7 @@ def build_dashboard(
         else f"The session reading stopped refreshing at {clock(session_row.ts)}.",
     )
     gap_threshold = STALE_AFTER_INTERVALS * settings.poll_interval_s
-    labels = {r.window: r.label for r in latest}
+    labels = {r.window: r.label for r in seen}
     prior_ts = max(
         (r.ts for rows in all_rows.values() for r in rows if r.ts < rng.start), default=None
     )
@@ -710,7 +749,7 @@ def build_dashboard(
     )
     page = listed if view.history_all else listed[:HISTORY_ROWS]
     history = _history_view(
-        page, labels, slots, view, settings.poll_interval_s, now, store, boost_ts
+        page, labels, assign_slots(order), view, settings.poll_interval_s, now, store, boost_ts
     )
     history.total = len(sessions_all)
     if len(sessions_all) > HISTORY_ROWS:
@@ -743,7 +782,7 @@ def build_dashboard(
     violation = store.recent_events(limit=1, kind=MODEL_VIOLATION_KIND)
     if violation:
         diagnostics.append(violation[0].detail)
-    subcap_detail = subcap.latest_detail(store)
+    subcap_detail = subcap.latest_detail(store) if _fable_key(latest) else None
     if subcap_detail:
         diagnostics.append(subcap_detail)
     if chart.projection_note:
@@ -1827,9 +1866,11 @@ def _history_view(
     store: Store | None = None,
     boost_ts: Sequence[int] = (),
 ) -> HistoryView:
+    # A column per model limit still arriving (``slots`` holds the current windows): a
+    # window that stopped arriving keeps its history on the chart, not a blank column.
     keys = sorted(
-        {k for w in windows for k in w.deltas if k.startswith("limit:")},
-        key=lambda k: (slots.get(k, 99), k),
+        {k for w in windows for k in w.deltas if k.startswith("limit:") and k in slots},
+        key=lambda k: (slots[k], k),
     )
     columns = ["seven_day", *keys]
     headers = ["Weekly all", *(short_label(k, labels.get(k)) for k in keys)]

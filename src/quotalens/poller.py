@@ -386,6 +386,7 @@ class Poller:
             ("notify", lambda n, pa: self._check_notify(n, previous, pa)),
             ("credits", lambda n, _pa: self._check_credits(n)),
             ("grants", lambda n, pa: self._check_grants(n, pa)),
+            ("windows", lambda n, _pa: self._check_gone_windows(n)),
         ):
             try:
                 check(now, parsed)
@@ -415,6 +416,46 @@ class Poller:
                 detail = f"{grant.key}: {removed} quota rows"
                 self._store.record_event("grant_rows_removed", detail, ts=now)
                 log.info("removed misfiled grant rows: %s", detail)
+
+    def _check_gone_windows(self, now: int) -> None:
+        """One ``window_gone`` when a window stops arriving, one ``window_back`` if it returns.
+
+        The rule is the dashboard's (:func:`quotalens.dashboard.current_windows`), so the
+        event and the meter vanishing are one conclusion. A window's state is its newest
+        gone/back event; none means it has never been gone.
+        """
+        from quotalens.dashboard import (
+            GONE_AFTER_POLLS,
+            WINDOW_BACK_KIND,
+            WINDOW_GONE_KIND,
+            current_windows,
+            display_label,
+        )
+
+        seen = self._store.latest_quota()
+        polls = self._store.recent_poll_ts(GONE_AFTER_POLLS)
+        current = {r.window for r in current_windows(seen, polls)}
+        marks = self._store.query(
+            "SELECT kind, detail FROM event WHERE kind IN (?, ?) ORDER BY ts, rowid",
+            (WINDOW_GONE_KIND, WINDOW_BACK_KIND),
+        )
+        was_gone = {
+            str(m["detail"]).split(": ", 1)[0]: m["kind"] == WINDOW_GONE_KIND for m in marks
+        }
+        for row in seen:
+            gone = row.window not in current
+            if gone == was_gone.get(row.window, False):
+                continue
+            name = display_label(row.window, row.label)
+            if gone:
+                kind = WINDOW_GONE_KIND
+                detail = (
+                    f"{row.window}: {name} stopped arriving, last reading {_local_clock(row.ts)}"
+                )
+            else:
+                kind, detail = WINDOW_BACK_KIND, f"{row.window}: {name} is arriving again"
+            self._store.record_event(kind, detail, ts=now)
+            log.info("%s: %s", kind, detail)
 
     def _check_boost(self, now: int, previous: list[QuotaRow], parsed: UsageParse) -> None:
         """Record a raised limit once, where the readings arrive.
