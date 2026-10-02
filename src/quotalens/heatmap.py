@@ -141,7 +141,9 @@ def build(weeks: Sequence[Sequence[QuotaRow]]) -> Heatmap:
 
 def compute_heatmap(store: Any, now: int) -> Heatmap:
     """The heatmap for the weeks before the current weekly-all window; cached per week."""
-    bounds = week_bounds(store.latest_quota())
+    from quotalens.dashboard import current_quota  # dashboard imports this module
+
+    bounds = week_bounds(current_quota(store))
     if bounds is None:
         return build([])
     start = bounds[0] if bounds[1] > now else bounds[1]  # a reset already passed: that week ended

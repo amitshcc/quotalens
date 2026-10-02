@@ -265,7 +265,9 @@ def compute_pace(store: Any, now: int, withheld: bool = False) -> Pace:
     """The pace for the current week, read from the store."""
     if withheld:
         return Pace(False, HIDDEN_WITHHELD)
-    latest = store.latest_quota()
+    from quotalens.dashboard import current_quota  # dashboard imports this module
+
+    latest = current_quota(store)  # a weekly window that stopped arriving has no pace
     bounds = week_bounds(latest)
     row = next((r for r in latest if r.window == PACE_WINDOW), None)
     if bounds is None or row is None:

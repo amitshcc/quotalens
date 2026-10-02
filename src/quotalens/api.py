@@ -735,7 +735,7 @@ def create_app(
         (share x Weekly-all percent, whole percent) and is null unless the split is this week's.
         """
         now = int(time.time())
-        weekly = next((r.pct for r in state.store.latest_quota() if r.window == "seven_day"), None)
+        weekly = next((r.pct for r in current_quota(state.store) if r.window == "seven_day"), None)
         return {
             "now_ts": now,
             "breakdown": surfaces.snapshot_dict(state.store, now, weekly),

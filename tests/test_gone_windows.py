@@ -238,3 +238,18 @@ def test_window_back_when_it_returns(account, settings, store, secrets) -> None:
     assert len(store.recent_events(kind=WINDOW_BACK_KIND)) == 1
     html, _ = _page(settings, store, secrets, poller)
     assert "Weekly Fable" in _chips(html)
+
+
+def test_pace_and_heatmap_read_only_current_windows(store) -> None:
+    """A weekly window that stopped arriving anchors neither the pace nor the heatmap."""
+    from quotalens.heatmap import compute_heatmap
+    from quotalens.pace import HIDDEN_NO_READING, compute_pace
+
+    weekly = QuotaReading("seven_day", "7-day", 40.0, "2026-10-05T01:00:00+00:00")
+    session = QuotaReading("five_hour", "5-hour", 10.0, "2026-10-01T05:00:00+00:00")
+    store.record_quota(T0, [weekly, session])
+    for k in range(1, 5):
+        store.record_quota(T0 + k * 600, [session])  # 40 min of polls without it
+    pace = compute_pace(store, T0 + 2400)
+    assert (pace.shown, pace.reason) == (False, HIDDEN_NO_READING)
+    assert compute_heatmap(store, T0 + 2400).collecting
